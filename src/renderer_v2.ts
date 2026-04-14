@@ -11,6 +11,8 @@ import { createActionBar } from './renderer/components/ActionBar';
 import { showImportModal } from './renderer/features/import';
 import { createTransactionBanner } from './renderer/components/TransactionBanner';
 import { parseBreadcrumbFromSql } from './renderer/utils/sqlParsing';
+import { addResultToHistory, getResultHistory, renderTabStrip } from './renderer/components/ResultTabStrip';
+import { renderTransposeTable } from './renderer/components/TransposeView';
 
 // Register Chart.js components
 Chart.register(...registerables);
@@ -98,6 +100,16 @@ export const activate: ActivationFunction = context => {
       const selectedIndices = new Set<number>();
       const modifiedCells = new Map<string, { originalValue: any, newValue: any }>();
       const rowsMarkedForDeletion = new Set<number>();
+
+      // FK lookup pending callbacks — keyed by requestId
+      const fkCallbacks = new Map<string, (rows: any[], cols: string[]) => void>();
+
+      // Result history for tab strip — persists across re-renders in same output element
+      const historyEntry = {
+        columns, rows: currentRows, columnTypes, tableInfo,
+        command, rowCount, executionTime, query, timestamp: Date.now()
+      };
+      const resultHistory = addResultToHistory(element, historyEntry);
 
       // Main Container
       const mainContainer = document.createElement('div');
@@ -611,8 +623,28 @@ export const activate: ActivationFunction = context => {
         }
       };
 
-      // Listen for messages from extension (e.g., saveSuccess)
+      // Listen for messages from extension host
       context.onDidReceiveMessage?.((message: any) => {
+        // FK lookup response — resolve the waiting dropdown callback
+        if (message.type === 'fkLookupResponse') {
+          const cb = fkCallbacks.get(message.requestId);
+          if (cb) {
+            cb(message.rows || [], message.columns || []);
+            fkCallbacks.delete(message.requestId);
+          }
+          return;
+        }
+
+        // In-grid insert row result
+        if (message.type === 'insertSuccess') {
+          tableRenderer.replaceInsertRow(message.tempId, message.actualRow);
+          return;
+        }
+        if (message.type === 'insertFailed') {
+          tableRenderer.markInsertFailed(message.tempId, message.error || 'Insert failed');
+          return;
+        }
+
         if (message.type === 'saveSuccess') {
           console.log('Renderer: Received saveSuccess, clearing modified cells and removing deleted rows');
 
@@ -676,9 +708,12 @@ export const activate: ActivationFunction = context => {
         explainTab = createTab('Explain Plan', 'explain', false, () => switchTab('explain'));
       }
 
+      const transposeTab = createTab('⇄ Transpose', 'transpose', false, () => switchTab('transpose'));
+
       tabs.appendChild(tableTab);
       tabs.appendChild(chartTab);
       if (explainTab) tabs.appendChild(explainTab);
+      tabs.appendChild(transposeTab);
       if (!json.error) {
         contentContainer.appendChild(tabs);
       }
@@ -694,18 +729,21 @@ export const activate: ActivationFunction = context => {
       // TABLE RENDERER
       const tableRenderer = new TableRenderer(viewContainer, {
         onSelectionChange: (indices) => {
-          console.log('[renderer_v2] onSelectionChange called, indices:', Array.from(indices));
-          // Sync local state with TableRenderer's state
           selectedIndices.clear();
           indices.forEach(i => selectedIndices.add(i));
-          console.log('[renderer_v2] local selectedIndices after sync:', selectedIndices.size);
-
           updateActionsVisibility();
         },
-        onDataChange: (rowIndex, col, newVal, originalVal) => {
+        onDataChange: (_rowIndex, _col, _newVal, _originalVal) => {
           updateSaveButtonVisibility();
           updateActionsVisibility();
-        }
+        },
+        onInsertRow: (values, tempId) => {
+          context.postMessage?.({ type: 'insertRow', tableInfo, values, tempId });
+        },
+        onFkLookup: (requestId, fkSchema, fkTable, fkColumn, searchText, callback) => {
+          fkCallbacks.set(requestId, callback);
+          context.postMessage?.({ type: 'fkLookup', requestId, fkSchema, fkTable, fkColumn, searchText, limit: 50 });
+        },
       });
 
       // Store for cleanup on disposal
@@ -795,35 +833,47 @@ export const activate: ActivationFunction = context => {
 
       // Switch Tab Logic
       let currentMode = 'table';
+      const allTabs = () => [tableTab, chartTab, transposeTab, ...(explainTab ? [explainTab] : [])];
+      const setActiveTab = (activeTab: HTMLElement) => {
+        allTabs().forEach(t => {
+          t.style.borderBottom = '2px solid transparent';
+          t.style.opacity = '0.6';
+        });
+        activeTab.style.borderBottom = '2px solid var(--vscode-focusBorder)';
+        activeTab.style.opacity = '1';
+      };
+
       const switchTab = (mode: string) => {
         currentMode = mode;
         viewContainer.innerHTML = '';
 
         if (mode === 'table') {
-          tableTab.style.borderBottom = '2px solid var(--vscode-focusBorder)';
-          tableTab.style.opacity = '1';
-          // Reset chart tab style
-          chartTab.style.borderBottom = '2px solid transparent';
-          chartTab.style.opacity = '0.6';
-          // Show actions bar if needed
+          setActiveTab(tableTab);
           updateActionsVisibility();
-
           tableRenderer.render({
             columns,
             rows: currentRows,
             originalRows,
             columnTypes,
             tableInfo,
+            foreignKeys: tableInfo?.foreignKeys,
             initialSelectedIndices: selectedIndices,
             modifiedCells
           });
+        } else if (mode === 'transpose') {
+          setActiveTab(transposeTab);
+          updateActionsVisibility();
+          const transposeEl = renderTransposeTable(columns, currentRows, (v: any) => {
+            if (v === null || v === undefined) return 'NULL';
+            if (typeof v === 'object') return JSON.stringify(v);
+            return String(v);
+          });
+          viewContainer.appendChild(transposeEl);
         } else if (mode === 'explain') {
           // Explain Mode
-          if (tableTab) { tableTab.style.borderBottom = '2px solid transparent'; tableTab.style.opacity = '0.6'; }
-          if (chartTab) { chartTab.style.borderBottom = '2px solid transparent'; chartTab.style.opacity = '0.6'; }
-          if (explainTab) { explainTab.style.borderBottom = '2px solid var(--vscode-focusBorder)'; explainTab.style.opacity = '1'; }
+          setActiveTab(explainTab || tableTab);
 
-          updateActionsVisibility(); // Should probably hide most actions
+          updateActionsVisibility();
 
           const explainWrapper = document.createElement('div');
           explainWrapper.style.cssText = 'flex: 1; overflow: auto; height: 100%; display: flex; flex-direction: column;';
@@ -840,13 +890,7 @@ export const activate: ActivationFunction = context => {
           }
 
         } else {
-          // Hide table specific styles
-          tableTab.style.borderBottom = '2px solid transparent';
-          tableTab.style.opacity = '0.6';
-          if (explainTab) { explainTab.style.borderBottom = '2px solid transparent'; explainTab.style.opacity = '0.6'; }
-
-          chartTab.style.borderBottom = '2px solid var(--vscode-focusBorder)';
-          chartTab.style.opacity = '1';
+          setActiveTab(chartTab);
           updateActionsVisibility();
 
           const chartWrapper = document.createElement('div');
@@ -883,6 +927,33 @@ export const activate: ActivationFunction = context => {
       } else {
         if (rowCount === 0) mainContainer.innerHTML += '<div style="padding:12px">Query returned no data</div>';
       }
+
+      // Result history tab strip — rendered above mainContainer when >1 result exists
+      const tabStripEl = renderTabStrip(element, resultHistory, 0, (selectedIndex) => {
+        // Re-render with a previous result's data
+        const entry = getResultHistory(element)[selectedIndex];
+        if (!entry) return;
+        element.innerHTML = '';
+        // Re-trigger renderOutputItem with the historical data by re-building the output
+        // For now: show history entry as a read-only view
+        const histContainer = document.createElement('div');
+        histContainer.style.cssText = 'padding:6px 12px;font-size:11px;color:var(--vscode-descriptionForeground);border-bottom:1px solid var(--vscode-widget-border);background:var(--vscode-editor-background);';
+        histContainer.textContent = `Showing result from ${new Date(entry.timestamp).toLocaleTimeString()} — ${(entry.rowCount ?? entry.rows?.length ?? 0).toLocaleString()} rows`;
+        element.appendChild(histContainer);
+
+        const histTableContainer = document.createElement('div');
+        histTableContainer.style.cssText = 'max-height:400px;overflow:auto;';
+        const histRenderer = new TableRenderer(histTableContainer, {});
+        histRenderer.render({
+          columns: entry.columns,
+          rows: entry.rows || [],
+          originalRows: entry.rows || [],
+          columnTypes: entry.columnTypes,
+          tableInfo: entry.tableInfo,
+        });
+        element.appendChild(histTableContainer);
+      });
+      if (tabStripEl) element.appendChild(tabStripEl);
 
       element.appendChild(mainContainer);
 

@@ -127,6 +127,56 @@ describe('ConnectionManager additional coverage', () => {
     expect((SSHService.getInstance() as any).createStream.calledOnce).to.be.true;
   });
 
+  it('falls back to .pgpass passwords when SecretStorage has none', async () => {
+    secretStorageStub.getPassword.resolves(undefined);
+    const resolvePgPass = pgPassUtils.resolvePgPassPassword as sinon.SinonStub;
+    resolvePgPass.onFirstCall().returns(undefined);
+    resolvePgPass.onSecondCall().returns('pgpass-secret');
+
+    const manager = ConnectionManager.getInstance();
+    const config = await (manager as any).createClientConfig({
+      id: 'c1',
+      host: 'localhost',
+      port: 5432,
+      username: 'postgres',
+      database: 'appdb',
+    });
+
+    expect(config.password).to.equal('pgpass-secret');
+    expect(resolvePgPass.calledTwice).to.be.true;
+  });
+
+  it('surfaces SSH failures when creating client config', async () => {
+    secretStorageStub.getPassword.resolves('stored-password');
+    sandbox.stub(SSHService, 'getInstance').returns({
+      createStream: sandbox.stub().rejects(new Error('tunnel failed')),
+    } as any);
+    const errorStub = sandbox.stub(ErrorService.getInstance(), 'showError');
+
+    const manager = ConnectionManager.getInstance();
+
+    try {
+      await (manager as any).createClientConfig({
+        id: 'c1',
+        host: 'localhost',
+        port: 5432,
+        username: 'postgres',
+        database: 'appdb',
+        ssh: {
+          enabled: true,
+          host: 'ssh.example.com',
+          port: 22,
+          username: 'tunnel',
+        },
+      });
+      expect.fail('Expected SSH tunnel creation to fail');
+    } catch (error) {
+      expect((error as Error).message).to.equal('SSH Connection failed: tunnel failed');
+    }
+
+    expect(errorStub.calledOnceWithExactly('SSH Connection failed: tunnel failed')).to.be.true;
+  });
+
   it('applies read-only mode when connecting pooled clients', async () => {
     secretStorageStub.getPassword.resolves('stored-password');
     const client = {

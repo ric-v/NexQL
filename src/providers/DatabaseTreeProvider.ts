@@ -452,6 +452,10 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
 
           const rolesCountResult = await client.query('SELECT COUNT(*) FROM pg_roles');
           items.push(new DatabaseTreeItem('Users & Roles', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, rolesCountResult.rows[0].count));
+
+          const tablespaceCountResult = await client.query("SELECT COUNT(*) FROM pg_tablespace");
+          items.push(new DatabaseTreeItem('Tablespaces', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, tablespaceCountResult.rows[0].count));
+
           return items;
 
         case 'databases-group':
@@ -570,11 +574,24 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
 
           const extensionCountResult = await client.query('SELECT COUNT(*) FROM pg_available_extensions WHERE installed_version IS NOT NULL');
           const fdwCountResult = await client.query('SELECT COUNT(*) FROM pg_foreign_data_wrapper');
+          const eventTriggerCountResult = await client.query('SELECT COUNT(*) FROM pg_event_trigger');
+          const publicationCountResult = await client.query('SELECT COUNT(*) FROM pg_publication');
+
+          let subscriptionCount = 0;
+          try {
+            const subResult = await client.query('SELECT COUNT(*) FROM pg_subscription');
+            subscriptionCount = subResult.rows[0].count;
+          } catch {
+            // pg_subscription requires superuser; ignore if not accessible
+          }
 
           return [
             new DatabaseTreeItem('Schemas', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, schemaCountResult.rows[0].count),
             new DatabaseTreeItem('Extensions', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, extensionCountResult.rows[0].count),
-            new DatabaseTreeItem('Foreign Data Wrappers', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, fdwCountResult.rows[0].count)
+            new DatabaseTreeItem('Foreign Data Wrappers', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, fdwCountResult.rows[0].count),
+            new DatabaseTreeItem('Event Triggers', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, eventTriggerCountResult.rows[0].count),
+            new DatabaseTreeItem('Publications', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, publicationCountResult.rows[0].count),
+            new DatabaseTreeItem('Subscriptions', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, subscriptionCount)
           ];
 
         case 'category':
@@ -644,6 +661,67 @@ i.relname as index_name,
                     element.tableName
                   );
                 });
+
+              case 'Triggers':
+                const tableTrigResult = await client.query(
+                  `SELECT DISTINCT t.trigger_name, t.event_manipulation, t.action_timing
+                   FROM information_schema.triggers t
+                   WHERE t.trigger_schema = $1 AND t.event_object_table = $2
+                   ORDER BY t.trigger_name`,
+                  [element.schema, element.tableName]
+                );
+                return tableTrigResult.rows.map((row: any) => new DatabaseTreeItem(
+                  row.trigger_name,
+                  vscode.TreeItemCollapsibleState.None,
+                  'trigger',
+                  element.connectionId,
+                  element.databaseName,
+                  element.schema,
+                  element.tableName,
+                  undefined,
+                  `${row.action_timing} ${row.event_manipulation}`
+                ));
+
+              case 'Rules':
+                const tableRuleResult = await client.query(
+                  `SELECT rulename FROM pg_rules WHERE schemaname = $1 AND tablename = $2 ORDER BY rulename`,
+                  [element.schema, element.tableName]
+                );
+                return tableRuleResult.rows.map((row: any) => new DatabaseTreeItem(
+                  row.rulename,
+                  vscode.TreeItemCollapsibleState.None,
+                  'rule',
+                  element.connectionId,
+                  element.databaseName,
+                  element.schema,
+                  element.tableName
+                ));
+
+              case 'Partitions':
+                const partResult = await client.query(
+                  `SELECT c.relname AS partition_name,
+                          n.nspname AS partition_schema,
+                          pg_get_expr(c.relpartbound, c.oid, true) AS partition_bound
+                   FROM pg_inherits i
+                   JOIN pg_class c ON i.inhrelid = c.oid
+                   JOIN pg_namespace n ON c.relnamespace = n.oid
+                   JOIN pg_class p ON i.inhparent = p.oid
+                   JOIN pg_namespace pn ON p.relnamespace = pn.oid
+                   WHERE pn.nspname = $1 AND p.relname = $2
+                   ORDER BY c.relname`,
+                  [element.schema, element.tableName]
+                );
+                return partResult.rows.map((row: any) => new DatabaseTreeItem(
+                  row.partition_name,
+                  vscode.TreeItemCollapsibleState.None,
+                  'partition',
+                  element.connectionId,
+                  element.databaseName,
+                  row.partition_schema,
+                  element.tableName,
+                  undefined,
+                  row.partition_bound
+                ));
             }
           }
 
@@ -902,6 +980,145 @@ i.relname as index_name,
                 element.connectionId,
                 element.databaseName
               ));
+
+            case 'Sequences':
+              const seqResult = await client.query(
+                "SELECT sequencename, last_value FROM pg_sequences WHERE schemaname = $1 ORDER BY sequencename",
+                [element.schema]
+              );
+              return seqResult.rows.map((row: any) => new DatabaseTreeItem(
+                row.sequencename,
+                vscode.TreeItemCollapsibleState.None,
+                'sequence',
+                element.connectionId,
+                element.databaseName,
+                element.schema
+              ));
+
+            case 'Triggers':
+              const schemaTrigResult = await client.query(
+                `SELECT DISTINCT t.trigger_name, t.event_object_table, t.event_manipulation, t.action_timing
+                 FROM information_schema.triggers t
+                 WHERE t.trigger_schema = $1
+                 ORDER BY t.trigger_name`,
+                [element.schema]
+              );
+              return schemaTrigResult.rows.map((row: any) => new DatabaseTreeItem(
+                row.trigger_name,
+                vscode.TreeItemCollapsibleState.None,
+                'trigger',
+                element.connectionId,
+                element.databaseName,
+                element.schema,
+                row.event_object_table,
+                undefined,
+                `${row.action_timing} ${row.event_manipulation} on ${row.event_object_table}`
+              ));
+
+            case 'Domains':
+              const domResult = await client.query(
+                `SELECT t.typname FROM pg_type t JOIN pg_namespace n ON t.typnamespace = n.oid WHERE t.typtype = 'd' AND n.nspname = $1 ORDER BY t.typname`,
+                [element.schema]
+              );
+              return domResult.rows.map((row: any) => new DatabaseTreeItem(
+                row.typname,
+                vscode.TreeItemCollapsibleState.None,
+                'domain',
+                element.connectionId,
+                element.databaseName,
+                element.schema
+              ));
+
+            case 'Aggregates':
+              const aggResult = await client.query(
+                `SELECT DISTINCT p.proname FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE p.prokind = 'a' AND n.nspname = $1 ORDER BY p.proname`,
+                [element.schema]
+              );
+              return aggResult.rows.map((row: any) => new DatabaseTreeItem(
+                row.proname,
+                vscode.TreeItemCollapsibleState.None,
+                'aggregate',
+                element.connectionId,
+                element.databaseName,
+                element.schema
+              ));
+
+            case 'Rules':
+              const schemaRulesResult = await client.query(
+                "SELECT rulename, tablename FROM pg_rules WHERE schemaname = $1 ORDER BY tablename, rulename",
+                [element.schema]
+              );
+              return schemaRulesResult.rows.map((row: any) => new DatabaseTreeItem(
+                row.rulename,
+                vscode.TreeItemCollapsibleState.None,
+                'rule',
+                element.connectionId,
+                element.databaseName,
+                element.schema,
+                row.tablename
+              ));
+
+            case 'Event Triggers':
+              const evtTrigResult = await client.query(
+                `SELECT evtname, evtevent FROM pg_event_trigger ORDER BY evtname`
+              );
+              return evtTrigResult.rows.map((row: any) => new DatabaseTreeItem(
+                row.evtname,
+                vscode.TreeItemCollapsibleState.None,
+                'event-trigger',
+                element.connectionId,
+                element.databaseName,
+                undefined,
+                undefined,
+                undefined,
+                row.evtevent
+              ));
+
+            case 'Publications':
+              const pubResult = await client.query(
+                `SELECT pubname FROM pg_publication ORDER BY pubname`
+              );
+              return pubResult.rows.map((row: any) => new DatabaseTreeItem(
+                row.pubname,
+                vscode.TreeItemCollapsibleState.None,
+                'publication',
+                element.connectionId,
+                element.databaseName
+              ));
+
+            case 'Subscriptions':
+              let subRows: any[] = [];
+              try {
+                const subResult = await client.query(
+                  `SELECT subname FROM pg_subscription ORDER BY subname`
+                );
+                subRows = subResult.rows;
+              } catch {
+                // Requires superuser; return empty if not accessible
+              }
+              return subRows.map((row: any) => new DatabaseTreeItem(
+                row.subname,
+                vscode.TreeItemCollapsibleState.None,
+                'subscription',
+                element.connectionId,
+                element.databaseName
+              ));
+
+            case 'Tablespaces':
+              const tsResult = await client.query(
+                `SELECT spcname, pg_size_pretty(pg_tablespace_size(spcname)) AS size FROM pg_tablespace ORDER BY spcname`
+              );
+              return tsResult.rows.map((row: any) => new DatabaseTreeItem(
+                row.spcname,
+                vscode.TreeItemCollapsibleState.None,
+                'tablespace',
+                element.connectionId,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                row.size
+              ));
           }
           return [];
 
@@ -936,13 +1153,43 @@ i.relname as index_name,
             [element.schema]
           );
 
+          const seqCountResult = await client.query(
+            "SELECT COUNT(*) FROM pg_sequences WHERE schemaname = $1",
+            [element.schema]
+          );
+
+          const trigCountResult = await client.query(
+            "SELECT COUNT(*) FROM information_schema.triggers WHERE trigger_schema = $1",
+            [element.schema]
+          );
+
+          const domCountResult = await client.query(
+            "SELECT COUNT(*) FROM pg_type t JOIN pg_namespace n ON t.typnamespace = n.oid WHERE t.typtype = 'd' AND n.nspname = $1",
+            [element.schema]
+          );
+
+          const aggCountResult = await client.query(
+            "SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE p.prokind = 'a' AND n.nspname = $1",
+            [element.schema]
+          );
+
+          const ruleCountResult = await client.query(
+            "SELECT COUNT(*) FROM pg_rules WHERE schemaname = $1",
+            [element.schema]
+          );
+
           return [
             new DatabaseTreeItem('Tables', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, element.schema, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, tablesCountResult.rows[0].count),
             new DatabaseTreeItem('Views', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, element.schema, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, viewsCountResult.rows[0].count),
             new DatabaseTreeItem('Functions', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, element.schema, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, functionsCountResult.rows[0].count),
             new DatabaseTreeItem('Materialized Views', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, element.schema, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, materializedViewsCountResult.rows[0].count),
             new DatabaseTreeItem('Types', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, element.schema, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, typesCountResult.rows[0].count),
-            new DatabaseTreeItem('Foreign Tables', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, element.schema, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, foreignTablesCountResult.rows[0].count)
+            new DatabaseTreeItem('Foreign Tables', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, element.schema, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, foreignTablesCountResult.rows[0].count),
+            new DatabaseTreeItem('Sequences', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, element.schema, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, seqCountResult.rows[0].count),
+            new DatabaseTreeItem('Triggers', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, element.schema, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, trigCountResult.rows[0].count),
+            new DatabaseTreeItem('Domains', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, element.schema, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, domCountResult.rows[0].count),
+            new DatabaseTreeItem('Aggregates', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, element.schema, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, aggCountResult.rows[0].count),
+            new DatabaseTreeItem('Rules', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, element.schema, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, ruleCountResult.rows[0].count)
           ];
 
         case 'table':
@@ -950,7 +1197,10 @@ i.relname as index_name,
           return [
             new DatabaseTreeItem('Columns', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, element.schema, element.label),
             new DatabaseTreeItem('Constraints', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, element.schema, element.label),
-            new DatabaseTreeItem('Indexes', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, element.schema, element.label)
+            new DatabaseTreeItem('Indexes', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, element.schema, element.label),
+            new DatabaseTreeItem('Triggers', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, element.schema, element.label),
+            new DatabaseTreeItem('Rules', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, element.schema, element.label),
+            new DatabaseTreeItem('Partitions', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, element.databaseName, element.schema, element.label)
           ];
 
         case 'view':
@@ -1030,7 +1280,7 @@ export class DatabaseTreeItem extends vscode.TreeItem {
   constructor(
     public readonly label: string,
     public readonly collapsibleState: vscode.TreeItemCollapsibleState,
-    public readonly type: 'connection' | 'database' | 'schema' | 'table' | 'view' | 'function' | 'column' | 'category' | 'materialized-view' | 'type' | 'foreign-table' | 'extension' | 'role' | 'databases-group' | 'favorites-group' | 'recent-group' | 'constraint' | 'index' | 'foreign-data-wrapper' | 'foreign-server' | 'user-mapping' | 'connection-group',
+    public readonly type: 'connection' | 'database' | 'schema' | 'table' | 'view' | 'function' | 'column' | 'category' | 'materialized-view' | 'type' | 'foreign-table' | 'extension' | 'role' | 'databases-group' | 'favorites-group' | 'recent-group' | 'constraint' | 'index' | 'foreign-data-wrapper' | 'foreign-server' | 'user-mapping' | 'connection-group' | 'trigger' | 'sequence' | 'partition' | 'domain' | 'aggregate' | 'event-trigger' | 'rule' | 'tablespace' | 'publication' | 'subscription',
     public readonly connectionId?: string,
     public readonly databaseName?: string,
     public readonly schema?: string,
@@ -1084,7 +1334,17 @@ export class DatabaseTreeItem extends vscode.TreeItem {
       'foreign-data-wrapper': new vscode.ThemeIcon('extensions', new vscode.ThemeColor('charts.blue')),
       'foreign-server': new vscode.ThemeIcon('server', new vscode.ThemeColor('charts.green')),
       'user-mapping': new vscode.ThemeIcon('account', new vscode.ThemeColor('charts.yellow')),
-      'connection-group': new vscode.ThemeIcon('folder', new vscode.ThemeColor('charts.blue'))
+      'connection-group': new vscode.ThemeIcon('folder', new vscode.ThemeColor('charts.blue')),
+      'trigger': new vscode.ThemeIcon('zap', new vscode.ThemeColor('charts.orange')),
+      'sequence': new vscode.ThemeIcon('list-ordered', new vscode.ThemeColor('charts.blue')),
+      'partition': new vscode.ThemeIcon('symbol-array', new vscode.ThemeColor('charts.purple')),
+      'domain': new vscode.ThemeIcon('symbol-namespace', new vscode.ThemeColor('charts.red')),
+      'aggregate': new vscode.ThemeIcon('symbol-operator', new vscode.ThemeColor('charts.green')),
+      'event-trigger': new vscode.ThemeIcon('broadcast', new vscode.ThemeColor('charts.orange')),
+      'rule': new vscode.ThemeIcon('law', new vscode.ThemeColor('charts.yellow')),
+      'tablespace': new vscode.ThemeIcon('folder-library', new vscode.ThemeColor('charts.blue')),
+      'publication': new vscode.ThemeIcon('rss', new vscode.ThemeColor('charts.green')),
+      'subscription': new vscode.ThemeIcon('inbox', new vscode.ThemeColor('charts.purple'))
     }[type];
   }
 

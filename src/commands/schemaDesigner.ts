@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 import { DatabaseTreeItem } from '../providers/DatabaseTreeProvider';
 import { TableDesignerPanel } from '../schemaDesigner/TableDesignerPanel';
 import { SchemaDiffPanel } from '../schemaDesigner/SchemaDiffPanel';
+import { ErdPanel } from '../schemaDesigner/ErdPanel';
+import { ImportDataPanel } from '../schemaDesigner/ImportDataPanel';
 
 /**
  * Open the Visual Table Designer for an existing table (Edit mode)
@@ -49,4 +51,24 @@ export async function cmdOpenSchemaDiff(
     contextValue: item?.contextValue,
   }));
   await SchemaDiffPanel.open(item, context);
+}
+
+/**
+ * Open the ERD (Entity-Relationship Diagram) for a schema
+ */
+export async function cmdOpenErd(
+  item: DatabaseTreeItem,
+  context: vscode.ExtensionContext
+): Promise<void> {
+  await ErdPanel.open(item, context);
+}
+
+/**
+ * Open the Import Data tool (pgAdmin-style CSV/TSV import wizard)
+ */
+export async function cmdImportData(
+  item: DatabaseTreeItem,
+  context: vscode.ExtensionContext
+): Promise<void> {
+  await ImportDataPanel.open(item, context);
 }

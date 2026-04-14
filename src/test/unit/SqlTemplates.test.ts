@@ -1,8 +1,10 @@
 import { expect } from 'chai';
 
 import {
+  AggregateSQL,
   ColumnSQL,
   ConstraintSQL,
+  DomainSQL,
   ExtensionSQL,
   ForeignDataWrapperSQL,
   ForeignTableSQL,
@@ -11,9 +13,13 @@ import {
   MaintenanceTemplates,
   MaterializedViewSQL,
   QueryBuilder,
+  PartitionSQL,
   SQL_TEMPLATES,
   SchemaSQL,
+  SequenceSQL,
   TableSQL,
+  EventTriggerSQL,
+  TriggerSQL,
   TypeSQL,
   UserRoleSQL,
   UsersRolesSQL,
@@ -118,6 +124,51 @@ describe('SQL template modules', () => {
     expect(MaintenanceTemplates.vacuumFull(schema, table)).to.contain('VACUUM FULL public.users;');
     expect(MaintenanceTemplates.vacuumAnalyzeDatabase()).to.contain('VACUUM (VERBOSE, ANALYZE);');
     expect(MaintenanceTemplates.reindexDatabase('app_db')).to.contain('REINDEX DATABASE "app_db";');
+  });
+
+  it('covers aggregate, domain, partition, sequence and trigger SQL builders', () => {
+    expectSqlContains(AggregateSQL.list(schema), ['FROM pg_proc p', "p.prokind = 'a'"]);
+    expectSqlContains(AggregateSQL.getDefinition(schema, 'sum_salary'), ['JOIN pg_aggregate a', 'transition_function']);
+    expect(AggregateSQL.drop(schema, 'sum_salary', 'integer')).to.equal('DROP AGGREGATE IF EXISTS "public"."sum_salary"(integer);');
+    expectSqlContains(AggregateSQL.create(schema), ['CREATE AGGREGATE "public"."new_aggregate_name"', 'SFUNC = transition_function']);
+
+    expectSqlContains(DomainSQL.list(schema), ['FROM pg_type t', "t.typtype = 'd'"]);
+    expectSqlContains(DomainSQL.getDefinition(schema, 'status_domain'), ['pg_get_constraintdef', 'constraint_name']);
+    expectSqlContains(DomainSQL.create(schema), ['CREATE DOMAIN "public"."new_domain_name" AS text', 'CHECK (VALUE ~']);
+    expect(DomainSQL.drop(schema, 'status_domain')).to.equal('DROP DOMAIN IF EXISTS "public"."status_domain";');
+    expect(DomainSQL.dropCascade(schema, 'status_domain')).to.equal('DROP DOMAIN IF EXISTS "public"."status_domain" CASCADE;');
+
+    expectSqlContains(PartitionSQL.list(schema, table), ['FROM pg_inherits i', 'relpartbound']);
+    expectSqlContains(PartitionSQL.isPartitioned(schema, table), ["c.relkind = 'p'", 'pg_get_partkeydef']);
+    expect(PartitionSQL.attach(schema, table, 'public', 'users_2026_01', "FOR VALUES FROM ('2026-01-01') TO ('2026-02-01')")).to.contain('ATTACH PARTITION "public"."users_2026_01"');
+    expect(PartitionSQL.detach(schema, table, 'users_2026_01')).to.equal('ALTER TABLE "public"."users" DETACH PARTITION "users_2026_01";');
+    expectSqlContains(PartitionSQL.createRangePartition(schema, table), ['CREATE TABLE "public"."partition_name" PARTITION OF "public"."users"', 'FOR VALUES FROM']);
+    expectSqlContains(PartitionSQL.createListPartition(schema, table), ['CREATE TABLE "public"."partition_name" PARTITION OF "public"."users"', 'FOR VALUES IN']);
+
+    expectSqlContains(SequenceSQL.list(schema), ['FROM pg_sequences', 'ORDER BY sequencename']);
+    expectSqlContains(SequenceSQL.getDefinition(schema, 'order_seq'), ['FROM pg_sequences s', 'sequence_owner']);
+    expect(SequenceSQL.nextValue(schema, 'order_seq')).to.equal("SELECT nextval('\"public\".\"order_seq\"') AS next_value;");
+    expect(SequenceSQL.currentValue(schema, 'order_seq')).to.equal('SELECT last_value, is_called FROM "public"."order_seq";');
+    expect(SequenceSQL.resetValue(schema, 'order_seq', 42)).to.equal("SELECT setval('\"public\".\"order_seq\"', 42);");
+    expectSqlContains(SequenceSQL.create(schema), ['CREATE SEQUENCE "public"."new_sequence_name"', 'NO CYCLE']);
+    expect(SequenceSQL.drop(schema, 'order_seq')).to.equal('DROP SEQUENCE IF EXISTS "public"."order_seq";');
+    expectSqlContains(SequenceSQL.alter(schema, 'order_seq'), ['ALTER SEQUENCE "public"."order_seq"', 'RESTART WITH 1']);
+
+    expectSqlContains(TriggerSQL.list(schema, table), ['FROM information_schema.triggers t', 'trigger_status']);
+    expectSqlContains(TriggerSQL.getDefinition(schema, table, 'users_audit_trigger'), ['pg_get_triggerdef', 'status']);
+    expect(TriggerSQL.drop(schema, table, 'users_audit_trigger')).to.equal('DROP TRIGGER IF EXISTS "users_audit_trigger" ON "public"."users";');
+    expect(TriggerSQL.enable(schema, table, 'users_audit_trigger')).to.equal('ALTER TABLE "public"."users" ENABLE TRIGGER "users_audit_trigger";');
+    expect(TriggerSQL.disable(schema, table, 'users_audit_trigger')).to.equal('ALTER TABLE "public"."users" DISABLE TRIGGER "users_audit_trigger";');
+    expectSqlContains(TriggerSQL.create(schema, table), ['CREATE OR REPLACE FUNCTION public.trigger_function_name()', 'CREATE TRIGGER trigger_name']);
+
+    expectSqlContains(EventTriggerSQL.list(), ['FROM pg_event_trigger', 'REPLICA ONLY', 'ALWAYS']);
+    expectSqlContains(EventTriggerSQL.getDefinition('ddl_logger'), ['pg_get_functiondef', "WHERE evtname = 'ddl_logger'"]);
+    expectSqlContains(EventTriggerSQL.create(), ['CREATE EVENT TRIGGER trigger_name', 'ON ddl_command_end']);
+    expect(EventTriggerSQL.drop('ddl_logger')).to.equal('DROP EVENT TRIGGER IF EXISTS "ddl_logger";');
+    expect(EventTriggerSQL.enable('ddl_logger')).to.equal('ALTER EVENT TRIGGER "ddl_logger" ENABLE;');
+    expect(EventTriggerSQL.disable('ddl_logger')).to.equal('ALTER EVENT TRIGGER "ddl_logger" DISABLE;');
+    expect(EventTriggerSQL.enableAlways('ddl_logger')).to.equal('ALTER EVENT TRIGGER "ddl_logger" ENABLE ALWAYS;');
+    expect(EventTriggerSQL.enableReplica('ddl_logger')).to.equal('ALTER EVENT TRIGGER "ddl_logger" ENABLE REPLICA;');
   });
 
   it('covers standalone table profile SQL helpers', () => {

@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "sync-static": "node scripts/sync-static.mjs",
+    "predev": "node scripts/sync-static.mjs",
+    "prebuild": "node scripts/sync-static.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",

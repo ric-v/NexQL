@@ -22,9 +22,14 @@ export class SSHService {
     return SSHService.instance;
   }
 
-  public createStream(sshConfig: SSHConfig, dbHost: string, dbPort: number): Promise<Stream> {
+  public createStream(
+    sshConfig: SSHConfig,
+    dbHost: string,
+    dbPort: number,
+    clientFactory: () => Client = () => new Client()
+  ): Promise<Stream> {
     return new Promise((resolve, reject) => {
-      const conn = new Client();
+      const conn = clientFactory();
 
       conn.on('ready', () => {
         // Forward traffic to database

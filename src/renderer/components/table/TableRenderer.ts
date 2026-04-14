@@ -1,12 +1,27 @@
 import { createButton } from '../ui';
 import { formatValue } from '../../utils/formatting';
-import { TableInfo, TableRenderOptions } from '../../../common/types';
+import { TableInfo, TableRenderOptions, FkColumnInfo, FilterState } from '../../../common/types';
+import { createCellEditor } from './CellEditors';
+import { FilterBar } from './FilterBar';
+import { ColumnStatsTooltip, attachColumnStatsTooltip } from '../ColumnStats';
 
 export interface TableEvents {
   onSelectionChange?: (selectedIndices: Set<number>) => void;
   onDataChange?: (rowIndex: number, col: string, newValue: any, originalValue: any) => void;
   onExplainError?: (error: string, query: string) => void;
   onFixQuery?: (error: string, query: string) => void;
+  onInsertRow?: (values: Record<string, any>, tempId: string) => void;
+  onFkLookup?: (requestId: string, fkSchema: string, fkTable: string, fkColumn: string,
+                searchText: string, callback: (rows: any[], cols: string[]) => void) => void;
+  onSortChange?: (column: string | null, direction: 'asc' | 'desc' | 'none') => void;
+  onFilterChange?: (filterState: FilterState) => void;
+}
+
+interface PendingInsertRow {
+  tempId: string;
+  values: Record<string, any>;
+  status: 'pending' | 'saving' | 'error';
+  errorMsg?: string;
 }
 
 export class TableRenderer {
@@ -16,16 +31,28 @@ export class TableRenderer {
   private loadMoreObserver: IntersectionObserver | null = null;
   private loadMoreSentinel: HTMLElement | null = null;
 
-  // State
+  // Core state
   private columns: string[] = [];
   private rows: any[] = [];
+  private displayRows: any[] = [];   // rows after sort+filter applied
   private originalRows: any[] = [];
   private columnTypes: Record<string, string> = {};
   private tableInfo?: TableInfo;
+  private foreignKeys: FkColumnInfo[] = [];
   private selectedIndices: Set<number> = new Set();
   private modifiedCells: Map<string, { originalValue: any, newValue: any }> = new Map();
   private rowsMarkedForDeletion: Set<number> = new Set();
   private dateTimeDisplayMode: Map<string, boolean> = new Map();
+  private pendingInserts: PendingInsertRow[] = [];
+
+  // Sort & filter state
+  private sortColumn: string | null = null;
+  private sortDirection: 'asc' | 'desc' | 'none' = 'none';
+  private filterState: FilterState = new Map();
+
+  // UI sub-components
+  private filterBar: FilterBar | null = null;
+  private statsTooltip: ColumnStatsTooltip | null = null;
 
   private renderedCount = 0;
   private readonly CHUNK_SIZE = 50;
@@ -38,19 +65,17 @@ export class TableRenderer {
     this.mainContainer = container;
     this.events = events;
 
-    // Create internal container
     this.tableContainer = document.createElement('div');
     this.tableContainer.style.overflow = 'auto';
     this.tableContainer.style.flex = '1';
     this.tableContainer.style.width = '100%';
-    this.tableContainer.style.position = 'relative'; // For stickiness context
-    this.tableContainer.style.minHeight = '0'; // For flex scrolling
+    this.tableContainer.style.position = 'relative';
+    this.tableContainer.style.minHeight = '0';
 
     this.mainContainer.appendChild(this.tableContainer);
   }
 
   public render(options: TableRenderOptions) {
-    // Ensure container is attached (it might have been removed by tab switching)
     if (!this.mainContainer.contains(this.tableContainer)) {
       this.mainContainer.appendChild(this.tableContainer);
     }
@@ -60,11 +85,24 @@ export class TableRenderer {
     this.originalRows = options.originalRows;
     this.columnTypes = options.columnTypes || {};
     this.tableInfo = options.tableInfo;
+    this.foreignKeys = options.foreignKeys || [];
     this.selectedIndices = options.initialSelectedIndices ? new Set(options.initialSelectedIndices) : new Set();
     this.modifiedCells = options.modifiedCells || new Map();
     this.rowsMarkedForDeletion = options.rowsMarkedForDeletion || new Set();
 
-    // Reset state
+    // Preserve sort/filter from options if provided
+    if (options.sortState) {
+      this.sortColumn = options.sortState.column;
+      this.sortDirection = options.sortState.direction;
+    }
+    if (options.filterState) {
+      this.filterState = new Map(options.filterState);
+    }
+
+    // Apply sort + filter to produce displayRows
+    this.applyTransforms();
+
+    // Reset DOM
     this.tableContainer.innerHTML = '';
     this.renderedCount = 0;
     this.tableBody = null;
@@ -74,21 +112,86 @@ export class TableRenderer {
     }
     this.loadMoreSentinel = null;
 
-    if (this.rows.length === 0) {
+    // Destroy old tooltip
+    if (this.statsTooltip) {
+      this.statsTooltip.destroy();
+      this.statsTooltip = null;
+    }
+
+    // Create fresh tooltip instance
+    this.statsTooltip = new ColumnStatsTooltip();
+
+    // Render filter bar above the scroll area
+    this.filterBar = new FilterBar({
+      columns: this.columns,
+      filterState: this.filterState,
+      onFilterChange: (state) => {
+        this.filterState = state;
+        this.events.onFilterChange?.(state);
+        this.applyTransforms();
+        this.rerenderTable();
+      }
+    });
+    this.mainContainer.insertBefore(this.filterBar.getElement(), this.tableContainer);
+
+    if (this.displayRows.length === 0 && this.rows.length === 0) {
       this.renderEmptyState();
       return;
     }
 
     this.createTableStructure();
     this.renderNextChunk();
-
-    // Setup Infinite Scroll
     this.setupInfiniteScroll();
+  }
+
+  /** Apply current sort + filter, storing result in displayRows */
+  private applyTransforms() {
+    // 1. Filter
+    let result = FilterBar.applyFilter(this.rows, this.filterState, this.columns);
+
+    // 2. Sort
+    if (this.sortColumn && this.sortDirection !== 'none') {
+      const col = this.sortColumn;
+      const dir = this.sortDirection;
+      result = [...result].sort((a, b) => {
+        const av = a[col]; const bv = b[col];
+        if (av === null || av === undefined) return 1;
+        if (bv === null || bv === undefined) return -1;
+        const cmp = typeof av === 'number' && typeof bv === 'number'
+          ? av - bv
+          : String(av).localeCompare(String(bv));
+        return dir === 'asc' ? cmp : -cmp;
+      });
+    }
+
+    this.displayRows = result;
   }
 
   public updateSelection(indices: Set<number>) {
     this.selectedIndices = indices;
     this.updateRowSelectionStyles();
+  }
+
+  /** Called from renderer_v2 when an insertSuccess comes back */
+  public replaceInsertRow(tempId: string, actualRow: Record<string, any>) {
+    const idx = this.pendingInserts.findIndex(p => p.tempId === tempId);
+    if (idx !== -1) {
+      this.pendingInserts.splice(idx, 1);
+    }
+    // Add the real row to rows array and rerender
+    this.rows.push(actualRow);
+    this.originalRows.push(JSON.parse(JSON.stringify(actualRow)));
+    this.rerenderTable();
+  }
+
+  /** Mark a pending insert as failed */
+  public markInsertFailed(tempId: string, errorMsg: string) {
+    const insert = this.pendingInserts.find(p => p.tempId === tempId);
+    if (insert) {
+      insert.status = 'error';
+      insert.errorMsg = errorMsg;
+      this.rerenderTable();
+    }
   }
 
   private renderEmptyState() {
@@ -103,45 +206,28 @@ export class TableRenderer {
 
   private createTableStructure() {
     const table = document.createElement('table');
-    table.style.width = '100%';
-    table.style.borderCollapse = 'separate';
-    table.style.borderSpacing = '0';
-    table.style.fontSize = '13px';
-    table.style.whiteSpace = 'nowrap';
-    table.style.lineHeight = '1.5';
+    table.style.cssText = 'width:100%;border-collapse:separate;border-spacing:0;font-size:13px;white-space:nowrap;line-height:1.5;';
 
     const thead = document.createElement('thead');
     this.tableBody = document.createElement('tbody');
 
-    // Header Row
     const headerRow = document.createElement('tr');
 
-    // 1. Row Number Header Column (Task 5.3)
+    // Row number header
     const selectTh = document.createElement('th');
     selectTh.textContent = '#';
     selectTh.style.cssText = `
-            width: 32px;
-            min-width: 32px;
-            position: sticky;
-            top: 0;
-            left: 0;
-            background: var(--vscode-editor-background);
-            border-bottom: 1px solid var(--vscode-widget-border);
-            border-right: 1px solid var(--vscode-widget-border);
-            z-index: 20;
-            font-family: monospace;
-            color: var(--vscode-descriptionForeground);
-            text-align: right;
-            padding: 8px 6px;
-            font-weight: 400;
-            user-select: none;
-        `;
+      width:32px;min-width:32px;position:sticky;top:0;left:0;
+      background:var(--vscode-editor-background);
+      border-bottom:1px solid var(--vscode-widget-border);
+      border-right:1px solid var(--vscode-widget-border);
+      z-index:20;font-family:monospace;color:var(--vscode-descriptionForeground);
+      text-align:right;padding:8px 6px;font-weight:400;user-select:none;
+    `;
     headerRow.appendChild(selectTh);
 
-    // 2. Data Columns
-    this.columns.forEach((col) => {
-      const th = this.createHeaderCell(col);
-      headerRow.appendChild(th);
+    this.columns.forEach(col => {
+      headerRow.appendChild(this.createHeaderCell(col));
     });
 
     thead.appendChild(headerRow);
@@ -153,87 +239,104 @@ export class TableRenderer {
   private createHeaderCell(col: string): HTMLElement {
     const th = document.createElement('th');
     th.style.cssText = `
-            text-align: left;
-            padding: 8px 12px;
-            border-bottom: 1px solid var(--vscode-widget-border);
-            border-right: 1px solid var(--vscode-widget-border);
-            font-weight: 600;
-            color: var(--vscode-editor-foreground);
-            position: sticky;
-            top: 0;
-            background: var(--vscode-editor-background);
-            z-index: 10;
-            user-select: none;
-            max-width: 400px;
-        `;
+      text-align:left;padding:8px 12px;
+      border-bottom:1px solid var(--vscode-widget-border);
+      border-right:1px solid var(--vscode-widget-border);
+      font-weight:600;color:var(--vscode-editor-foreground);
+      position:sticky;top:0;background:var(--vscode-editor-background);
+      z-index:10;user-select:none;max-width:400px;cursor:pointer;
+    `;
 
-    // Task 5.1 & 5.2: flex row with space-between so type badge is right-aligned
     const container = document.createElement('div');
-    container.style.cssText = 'display: flex; justify-content: space-between; align-items: center; gap: 4px;';
+    container.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:4px;';
 
-    // Left side: optional PK icon + column name
     const leftSide = document.createElement('div');
-    leftSide.style.cssText = 'display: flex; align-items: center; gap: 4px; overflow: hidden;';
+    leftSide.style.cssText = 'display:flex;align-items:center;gap:4px;overflow:hidden;';
 
-    // Task 5.2: PK icon (⚿) for primary key columns
     if (this.tableInfo?.primaryKeys?.includes(col)) {
       const pkIcon = document.createElement('span');
       pkIcon.textContent = '⚿';
       pkIcon.title = 'Primary Key';
-      pkIcon.style.cssText = 'color: var(--vscode-textLink-foreground); font-size: 12px; flex-shrink: 0;';
+      pkIcon.style.cssText = 'color:var(--vscode-textLink-foreground);font-size:12px;flex-shrink:0;';
       leftSide.appendChild(pkIcon);
+    }
+
+    // FK icon
+    if (this.foreignKeys.some(fk => fk.column === col)) {
+      const fkIcon = document.createElement('span');
+      fkIcon.textContent = '🔗';
+      fkIcon.title = 'Foreign Key';
+      fkIcon.style.cssText = 'font-size:10px;flex-shrink:0;';
+      leftSide.appendChild(fkIcon);
     }
 
     const colName = document.createElement('span');
     colName.textContent = col;
-    colName.style.cssText = 'overflow: hidden; text-overflow: ellipsis;';
+    colName.style.cssText = 'overflow:hidden;text-overflow:ellipsis;';
     leftSide.appendChild(colName);
     container.appendChild(leftSide);
 
-    // Task 5.1: type badge right-aligned
+    const rightSide = document.createElement('div');
+    rightSide.style.cssText = 'display:flex;align-items:center;gap:4px;flex-shrink:0;';
+
+    // Sort indicator
+    const sortIcon = document.createElement('span');
+    sortIcon.style.cssText = 'font-size:10px;opacity:0.5;';
+    if (this.sortColumn === col) {
+      sortIcon.textContent = this.sortDirection === 'asc' ? '▲' : '▼';
+      sortIcon.style.opacity = '1';
+      sortIcon.style.color = 'var(--vscode-textLink-foreground)';
+    } else {
+      sortIcon.textContent = '⇅';
+    }
+    rightSide.appendChild(sortIcon);
+
     if (this.columnTypes[col]) {
       const typeBadge = document.createElement('span');
-      typeBadge.className = 'type-badge';
       typeBadge.textContent = this.columnTypes[col];
       typeBadge.style.cssText = `
-                font-size: 10px;
-                font-family: var(--vscode-editor-font-family), monospace;
-                color: var(--vscode-descriptionForeground);
-                flex-shrink: 0;
-                margin-left: 6px;
-            `;
-      container.appendChild(typeBadge);
+        font-size:10px;font-family:var(--vscode-editor-font-family),monospace;
+        color:var(--vscode-descriptionForeground);margin-left:4px;
+      `;
+      rightSide.appendChild(typeBadge);
     }
-
+    container.appendChild(rightSide);
     th.appendChild(container);
 
-    // Date/Time Toggle (kept below the main row)
+    // Sort click handler — cycles none → asc → desc → none
+    th.addEventListener('click', () => {
+      if (this.sortColumn === col) {
+        if (this.sortDirection === 'none') { this.sortDirection = 'asc'; }
+        else if (this.sortDirection === 'asc') { this.sortDirection = 'desc'; }
+        else { this.sortColumn = null; this.sortDirection = 'none'; }
+      } else {
+        this.sortColumn = col;
+        this.sortDirection = 'asc';
+      }
+      this.events.onSortChange?.(this.sortColumn, this.sortDirection);
+      this.applyTransforms();
+      this.rerenderTable();
+    });
+
+    // DateTime toggle row
     if (this.columnTypes[col]) {
       const lowerType = this.columnTypes[col].toLowerCase();
       const isDateTime = lowerType.includes('timestamp') || lowerType === 'timestamptz' ||
         lowerType === 'date' || lowerType === 'time' || lowerType === 'timetz';
-
       if (isDateTime) {
         if (!this.dateTimeDisplayMode.has(col)) {
           this.dateTimeDisplayMode.set(col, false);
         }
         const toggleRow = document.createElement('div');
-        toggleRow.style.cssText = 'display: flex; align-items: center; gap: 4px; margin-top: 2px;';
-
+        toggleRow.style.cssText = 'display:flex;align-items:center;gap:4px;margin-top:2px;';
         const toggle = document.createElement('button');
         const isFormatted = this.dateTimeDisplayMode.get(col);
         toggle.textContent = isFormatted ? '📆' : '#';
+        toggle.title = isFormatted ? 'Showing formatted — click for raw' : 'Showing raw — click for formatted';
         toggle.style.cssText = `
-                    background: var(--vscode-button-secondaryBackground);
-                    color: var(--vscode-button-secondaryForeground);
-                    border: none;
-                    border-radius: 3px;
-                    padding: 1px 4px;
-                    cursor: pointer;
-                    font-size: 10px;
-                    line-height: 1;
-                `;
-        toggle.title = isFormatted ? 'Showing formatted time - Click to show raw value' : 'Showing raw value - Click to show formatted time';
+          background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);
+          border:none;border-radius:3px;padding:1px 4px;cursor:pointer;font-size:10px;line-height:1;
+        `;
         toggle.onclick = (e) => {
           e.stopPropagation();
           this.dateTimeDisplayMode.set(col, !isFormatted);
@@ -244,31 +347,32 @@ export class TableRenderer {
       }
     }
 
+    // Attach column stats tooltip (hover with delay)
+    if (this.statsTooltip) {
+      attachColumnStatsTooltip(th, col, () => this.displayRows, this.statsTooltip, 600);
+    }
+
     this.addResizeHandle(th);
     return th;
   }
 
   private addResizeHandle(th: HTMLElement) {
-    // th.style.position = 'relative'; // Removed as it conflicts with sticky positioning
     const handle = document.createElement('div');
     handle.style.cssText = `
-            position: absolute; right: 0; top: 0; height: 100%; width: 6px;
-            cursor: col-resize; user-select: none; z-index: 11;
-        `;
-
+      position:absolute;right:0;top:0;height:100%;width:6px;
+      cursor:col-resize;user-select:none;z-index:11;
+    `;
     handle.onmouseenter = () => handle.style.borderRight = '2px solid var(--vscode-focusBorder)';
     handle.onmouseleave = () => handle.style.borderRight = '';
-
-    // Note: Full resize logic implementation omitted for brevity, logic remains similar to original
     th.appendChild(handle);
   }
 
   private renderNextChunk = () => {
     if (!this.tableBody) return;
 
+    const allRows = [...this.displayRows, ...this.pendingInserts.map(p => p.values)];
     const start = this.renderedCount;
-    const end = Math.min(this.renderedCount + this.CHUNK_SIZE, this.rows.length);
-
+    const end = Math.min(start + this.CHUNK_SIZE, allRows.length);
     if (start >= end) {
       if (this.loadMoreSentinel) {
         this.loadMoreSentinel.remove();
@@ -276,20 +380,38 @@ export class TableRenderer {
         this.loadMoreObserver?.disconnect();
         this.loadMoreObserver = null;
       }
+      // Render add-row button after all rows
+      this.renderAddRowButton();
       return;
     }
 
-    const chunk = this.rows.slice(start, end);
-    chunk.forEach((row, i) => {
-      const tr = this.createRow(row, start + i);
-      this.tableBody!.appendChild(tr);
-    });
+    for (let i = start; i < end; i++) {
+      if (i < this.displayRows.length) {
+        const tr = this.createRow(this.displayRows[i], i);
+        this.tableBody!.appendChild(tr);
+      } else {
+        const pendingIdx = i - this.displayRows.length;
+        const pending = this.pendingInserts[pendingIdx];
+        if (pending) {
+          const tr = this.createPendingInsertRow(pending);
+          this.tableBody!.appendChild(tr);
+        }
+      }
+    }
 
     this.renderedCount = end;
 
     if (this.loadMoreSentinel) {
       this.tableContainer.appendChild(this.loadMoreSentinel);
     }
+  }
+
+  /** Row gutter: 4px left border indicating change status */
+  private getRowGutterStyle(index: number): string {
+    if (this.rowsMarkedForDeletion.has(index)) return 'border-left:4px solid var(--vscode-testing-iconFailed,#f44336)';
+    const hasEdit = Array.from(this.modifiedCells.keys()).some(k => k.startsWith(`${index}-`));
+    if (hasEdit) return 'border-left:4px solid #f59e0b';
+    return 'border-left:4px solid transparent';
   }
 
   private createRow(row: any, index: number): HTMLElement {
@@ -300,7 +422,6 @@ export class TableRenderer {
     this.applyRowStyle(tr, index);
 
     tr.onclick = (e) => {
-      console.log('[TableRenderer] tr.onclick fired, index:', index, 'target:', e.target);
       if (e.ctrlKey || e.metaKey) {
         if (this.selectedIndices.has(index)) this.selectedIndices.delete(index);
         else this.selectedIndices.add(index);
@@ -308,7 +429,6 @@ export class TableRenderer {
         this.selectedIndices.clear();
         this.selectedIndices.add(index);
       }
-      console.log('[TableRenderer] selectedIndices after click:', Array.from(this.selectedIndices));
       this.updateRowSelectionStyles();
       this.events.onSelectionChange?.(this.selectedIndices);
     };
@@ -320,29 +440,20 @@ export class TableRenderer {
       if (!this.selectedIndices.has(index)) this.applyRowStyle(tr, index);
     };
 
-    // Task 5.3: muted monospace row number cell
+    // Row number cell
     const selectTd = document.createElement('td');
     selectTd.textContent = String(index + 1);
     selectTd.style.cssText = `
-            border-bottom: 1px solid var(--vscode-widget-border);
-            border-right: 1px solid var(--vscode-widget-border);
-            text-align: right;
-            font-family: monospace;
-            font-size: 10px;
-            color: var(--vscode-descriptionForeground);
-            user-select: none;
-            min-width: 32px;
-            padding: 6px 6px;
-            position: sticky;
-            left: 0;
-            z-index: 5;
-            background: var(--vscode-editor-background);
-            cursor: pointer;
-        `;
+      border-bottom:1px solid var(--vscode-widget-border);
+      border-right:1px solid var(--vscode-widget-border);
+      text-align:right;font-family:monospace;font-size:10px;
+      color:var(--vscode-descriptionForeground);user-select:none;
+      min-width:32px;padding:6px 6px;position:sticky;left:0;z-index:5;
+      background:var(--vscode-editor-background);cursor:pointer;
+    `;
     selectTd.title = 'Click to select row';
     selectTd.onclick = (e) => {
-      console.log('[TableRenderer] selectTd (row#) clicked, index:', index);
-      e.stopPropagation(); // Handle selection here specifically
+      e.stopPropagation();
       if (e.ctrlKey || e.metaKey) {
         if (this.selectedIndices.has(index)) this.selectedIndices.delete(index);
         else this.selectedIndices.add(index);
@@ -350,18 +461,141 @@ export class TableRenderer {
         this.selectedIndices.clear();
         this.selectedIndices.add(index);
       }
-      console.log('[TableRenderer] selectedIndices after selectTd click:', Array.from(this.selectedIndices));
       this.updateRowSelectionStyles();
       this.events.onSelectionChange?.(this.selectedIndices);
     };
     tr.appendChild(selectTd);
 
     this.columns.forEach(col => {
-      const td = this.createCell(row, col, index);
-      tr.appendChild(td);
+      tr.appendChild(this.createCell(row, col, index));
     });
 
     return tr;
+  }
+
+  /** Render a pending insert row with all cells as inputs */
+  private createPendingInsertRow(pending: PendingInsertRow): HTMLElement {
+    const tr = document.createElement('tr');
+    tr.dataset.tempId = pending.tempId;
+    tr.style.cssText = `
+      border-left:4px solid var(--vscode-testing-iconPassed,#4caf50);
+      background:color-mix(in srgb, var(--vscode-testing-iconPassed,#4caf50) 8%, transparent);
+    `;
+
+    const numTd = document.createElement('td');
+    numTd.textContent = '★';
+    numTd.style.cssText = `
+      border-bottom:1px solid var(--vscode-widget-border);
+      border-right:1px solid var(--vscode-widget-border);
+      text-align:center;font-size:11px;color:var(--vscode-testing-iconPassed,#4caf50);
+      padding:6px 4px;position:sticky;left:0;z-index:5;
+      background:var(--vscode-editor-background);
+    `;
+    numTd.title = pending.status === 'error' ? `Error: ${pending.errorMsg}` : 'New row — unsaved';
+    tr.appendChild(numTd);
+
+    this.columns.forEach(col => {
+      const td = document.createElement('td');
+      td.style.cssText = 'padding:3px 6px;border-bottom:1px solid var(--vscode-widget-border);border-right:1px solid var(--vscode-widget-border);';
+
+      if (pending.status === 'error') {
+        td.style.background = 'color-mix(in srgb, var(--vscode-errorForeground) 10%, transparent)';
+      }
+
+      const isPk = this.tableInfo?.primaryKeys?.includes(col);
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = pending.values[col] !== undefined ? String(pending.values[col]) : '';
+      input.placeholder = isPk ? '(auto)' : 'NULL';
+      input.style.cssText = `
+        width:100%;border:1px solid var(--vscode-widget-border);border-radius:2px;
+        background:var(--vscode-input-background);color:var(--vscode-input-foreground);
+        padding:2px 4px;font-size:12px;outline:none;box-sizing:border-box;
+      `;
+      input.addEventListener('input', () => { pending.values[col] = input.value; });
+      td.appendChild(input);
+      tr.appendChild(td);
+    });
+
+    // Save button cell
+    const actionTd = document.createElement('td');
+    actionTd.style.cssText = 'padding:3px 8px;border-bottom:1px solid var(--vscode-widget-border);white-space:nowrap;';
+
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = pending.status === 'saving' ? '...' : '✓';
+    saveBtn.title = 'Save new row';
+    saveBtn.style.cssText = `
+      background:var(--vscode-button-background);color:var(--vscode-button-foreground);
+      border:none;border-radius:2px;padding:2px 8px;cursor:pointer;font-size:11px;margin-right:4px;
+    `;
+    saveBtn.disabled = pending.status === 'saving';
+    saveBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      pending.status = 'saving';
+      saveBtn.disabled = true;
+      saveBtn.textContent = '...';
+      this.events.onInsertRow?.(pending.values, pending.tempId);
+    });
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = '✕';
+    cancelBtn.title = 'Discard new row';
+    cancelBtn.style.cssText = `
+      background:none;border:1px solid var(--vscode-widget-border);
+      color:var(--vscode-descriptionForeground);border-radius:2px;
+      padding:2px 6px;cursor:pointer;font-size:11px;
+    `;
+    cancelBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const idx = this.pendingInserts.findIndex(p => p.tempId === pending.tempId);
+      if (idx !== -1) this.pendingInserts.splice(idx, 1);
+      this.rerenderTable();
+    });
+
+    actionTd.appendChild(saveBtn);
+    actionTd.appendChild(cancelBtn);
+
+    if (pending.status === 'error') {
+      const errSpan = document.createElement('span');
+      errSpan.textContent = pending.errorMsg || 'Error';
+      errSpan.style.cssText = 'color:var(--vscode-errorForeground);font-size:10px;display:block;margin-top:2px;';
+      actionTd.appendChild(errSpan);
+    }
+
+    tr.appendChild(actionTd);
+    return tr;
+  }
+
+  /** "+ Add Row" button rendered as a table row at the bottom */
+  private renderAddRowButton() {
+    if (!this.tableBody || !this.tableInfo?.table) return;
+
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = this.columns.length + 1;
+    td.style.cssText = 'padding:6px 12px;border-top:1px dashed var(--vscode-widget-border);';
+
+    const btn = document.createElement('button');
+    btn.textContent = '+ Add Row';
+    btn.style.cssText = `
+      background:none;border:1px dashed var(--vscode-widget-border);
+      color:var(--vscode-textLink-foreground);border-radius:3px;
+      padding:3px 14px;cursor:pointer;font-size:11px;
+    `;
+    btn.addEventListener('click', () => {
+      const tempId = `insert-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const emptyValues: Record<string, any> = {};
+      this.columns.forEach(col => { emptyValues[col] = ''; });
+      this.pendingInserts.push({ tempId, values: emptyValues, status: 'pending' });
+      this.rerenderTable();
+      // Scroll to bottom after rerender
+      setTimeout(() => {
+        this.tableContainer.scrollTop = this.tableContainer.scrollHeight;
+      }, 50);
+    });
+    td.appendChild(btn);
+    tr.appendChild(td);
+    this.tableBody.appendChild(tr);
   }
 
   private createCell(row: any, col: string, index: number): HTMLElement {
@@ -370,7 +604,6 @@ export class TableRenderer {
     const colType = this.columnTypes[col];
     let { text, type } = formatValue(val, colType);
 
-    // If it's a date/time type and display mode is 'as-is' (false), show raw value
     const isDateTime = type === 'date' || type === 'timestamp' || type === 'time';
     if (isDateTime) {
       const isFormatted = this.dateTimeDisplayMode.get(col) ?? false;
@@ -380,34 +613,38 @@ export class TableRenderer {
     }
 
     td.style.cssText = `
-            padding: 6px 12px;
-            border-bottom: 1px solid var(--vscode-widget-border);
-            border-right: 1px solid var(--vscode-widget-border);
-            text-align: left; max-width: 400px;
-            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-            background-color: var(--vscode-editor-background);
-        `;
+      padding:6px 12px;
+      border-bottom:1px solid var(--vscode-widget-border);
+      border-right:1px solid var(--vscode-widget-border);
+      text-align:left;max-width:400px;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+      background-color:var(--vscode-editor-background);
+    `;
 
-    if (this.tableInfo?.primaryKeys?.includes(col)) {
-      td.style.backgroundColor = 'rgba(128, 128, 128, 0.1)';
+    const isPk = this.tableInfo?.primaryKeys?.includes(col);
+    if (isPk) {
+      td.style.backgroundColor = 'rgba(128,128,128,0.1)';
       td.title = 'Primary Key';
     } else {
       td.style.cursor = 'text';
-      td.onclick = (e) => this.handleCellEdit(e, td, index, col, type);
+      td.title = 'Double-click to edit';
+      // DOUBLE-CLICK to edit (not single-click)
+      td.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        this.handleCellEdit(e, td, index, col, type);
+      });
     }
 
     const cellKey = `${index}-${col}`;
     if (this.modifiedCells.has(cellKey)) {
-      td.style.backgroundColor = '#fff3cd';
-      td.style.borderLeft = '4px solid #ffc107';
-      td.style.color = '#856404';
+      td.style.backgroundColor = 'rgba(245,158,11,0.15)';
+      td.style.borderLeft = '3px solid #f59e0b';
     }
 
-    // Task 5.4: render NULL/undefined values in italics with dim color
     if (val === null || val === undefined) {
       const nullSpan = document.createElement('span');
       nullSpan.textContent = 'NULL';
-      nullSpan.style.cssText = 'color: var(--vscode-descriptionForeground); font-style: italic; opacity: 0.6;';
+      nullSpan.style.cssText = 'color:var(--vscode-descriptionForeground);font-style:italic;opacity:0.6;';
       td.appendChild(nullSpan);
     } else {
       td.textContent = text;
@@ -417,22 +654,14 @@ export class TableRenderer {
   }
 
   private applyRowStyle(tr: HTMLElement, index: number) {
-    // Check if row is marked for deletion
+    const gutterStyle = this.getRowGutterStyle(index);
     if (this.rowsMarkedForDeletion.has(index)) {
-      tr.style.background = 'rgba(255, 0, 0, 0.1)';
-      tr.style.color = 'var(--vscode-errorForeground)';
-      tr.style.textDecoration = 'line-through';
-      tr.style.opacity = '0.6';
+      tr.style.cssText = `background:rgba(244,67,54,0.08);color:var(--vscode-errorForeground);text-decoration:line-through;opacity:0.7;${gutterStyle};cursor:pointer;`;
     } else if (this.selectedIndices.has(index)) {
-      tr.style.background = 'var(--vscode-list-activeSelectionBackground)';
-      tr.style.color = 'var(--vscode-list-activeSelectionForeground)';
-      tr.style.textDecoration = 'none';
-      tr.style.opacity = '1';
+      tr.style.cssText = `background:var(--vscode-list-activeSelectionBackground);color:var(--vscode-list-activeSelectionForeground);${gutterStyle};cursor:pointer;`;
     } else {
-      tr.style.background = index % 2 === 0 ? 'transparent' : 'var(--vscode-keybindingTable-rowsBackground)';
-      tr.style.color = 'var(--vscode-editor-foreground)';
-      tr.style.textDecoration = 'none';
-      tr.style.opacity = '1';
+      const base = index % 2 === 0 ? 'transparent' : 'var(--vscode-keybindingTable-rowsBackground)';
+      tr.style.cssText = `background:${base};color:var(--vscode-editor-foreground);${gutterStyle};cursor:pointer;`;
     }
   }
 
@@ -440,171 +669,70 @@ export class TableRenderer {
     if (!this.tableBody) return;
     Array.from(this.tableBody.children).forEach((child: any) => {
       const idx = parseInt(child.dataset.index);
-      this.applyRowStyle(child, idx);
+      if (!isNaN(idx)) this.applyRowStyle(child, idx);
     });
   }
 
   private handleCellEdit(e: MouseEvent, td: HTMLElement, index: number, col: string, type: string) {
-    // e.stopPropagation(); // Allow click to bubble to row for selection
     if (this.currentlyEditingCell === td) return;
 
+    // Blur any existing editor
     if (this.currentlyEditingCell) {
-      const existingInput = this.currentlyEditingCell.querySelector('input, textarea');
-      if (existingInput) (existingInput as HTMLElement).blur();
+      const existing = this.currentlyEditingCell.querySelector('input, textarea');
+      if (existing) (existing as HTMLElement).blur();
     }
 
     this.currentlyEditingCell = td;
-    const currentValue = this.rows[index][col];
-    const isJsonType = type === 'json' || type === 'object';
-    const isBoolType = type === 'boolean';
+    const currentValue = this.displayRows[index]?.[col];
+    const originalValue = this.originalRows.find(r => JSON.stringify(r) === JSON.stringify(this.displayRows[index]))?.[col] ?? currentValue;
+    const colType = this.columnTypes[col] || type;
     const cellKey = `${index}-${col}`;
 
+    // Find FK info for this column
+    const fkInfo = this.foreignKeys.find(fk => fk.column === col);
+
     td.innerHTML = '';
+    td.style.overflow = 'visible';
+    td.style.padding = '2px';
 
-    if (isBoolType) {
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.checked = currentValue === true;
-      checkbox.style.cssText = 'width: 18px; height: 18px; cursor: pointer;';
+    const onSave = (newValue: any) => {
+      const orig = this.originalRows[index]?.[col] ?? null;
+      if (JSON.stringify(newValue) !== JSON.stringify(orig)) {
+        this.modifiedCells.set(cellKey, { originalValue: orig, newValue });
+      } else {
+        this.modifiedCells.delete(cellKey);
+      }
+      if (this.displayRows[index]) this.displayRows[index][col] = newValue;
+      if (this.rows[index]) this.rows[index][col] = newValue;
+      this.currentlyEditingCell = null;
+      this.events.onDataChange?.(index, col, newValue, orig);
+      this.rerenderTable();
+    };
 
-      checkbox.addEventListener('change', () => {
-        const newValue = checkbox.checked;
-        const originalValue = this.originalRows[index][col];
+    const onCancel = () => {
+      this.currentlyEditingCell = null;
+      this.rerenderTable();
+    };
 
-        if (newValue !== originalValue) {
-          this.modifiedCells.set(cellKey, { originalValue, newValue });
-        } else {
-          this.modifiedCells.delete(cellKey);
+    // FK lookup bridge
+    const onFkLookup = fkInfo
+      ? (searchText: string, callback: (rows: any[], cols: string[]) => void) => {
+          const requestId = `fk-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          this.events.onFkLookup?.(requestId, fkInfo.refSchema, fkInfo.refTable, fkInfo.refColumn, searchText, callback);
         }
+      : undefined;
 
-        this.rows[index][col] = newValue;
-        this.currentlyEditingCell = null;
-        this.events.onDataChange?.(index, col, newValue, originalValue);
-        this.rerenderTable();
-      });
+    const editorEl = createCellEditor({
+      columnName: col,
+      columnType: colType,
+      currentValue,
+      isFkColumn: !!fkInfo,
+      onFkLookup,
+      onSave,
+      onCancel,
+    });
 
-      checkbox.addEventListener('paste', (e) => this.handlePaste(e, index, col));
-
-      td.appendChild(checkbox);
-      checkbox.focus();
-    } else if (isJsonType) {
-      const editContainer = document.createElement('div');
-      editContainer.style.cssText = 'display: flex; flex-direction: column; gap: 4px; width: 100%;';
-
-      const textarea = document.createElement('textarea');
-      textarea.value = typeof currentValue === 'object' ? JSON.stringify(currentValue, null, 2) : (currentValue || '');
-      textarea.style.cssText = `
-                width: 100%; min-width: 200px; min-height: 80px; padding: 4px;
-                border: 1px solid var(--vscode-focusBorder); borderRadius: 3px;
-                background-color: var(--vscode-input-background); color: var(--vscode-input-foreground);
-                font-family: var(--vscode-editor-font-family); font-size: 12px; resize: both;
-            `;
-
-      const saveEdit = () => {
-        let newValue: any;
-        try {
-          newValue = JSON.parse(textarea.value);
-        } catch (err) {
-          newValue = textarea.value;
-        }
-
-        const originalValue = this.originalRows[index][col];
-        const isDifferent = JSON.stringify(newValue) !== JSON.stringify(originalValue);
-
-        if (isDifferent) {
-          this.modifiedCells.set(cellKey, { originalValue, newValue });
-        } else {
-          this.modifiedCells.delete(cellKey);
-        }
-
-        this.rows[index][col] = newValue;
-        this.currentlyEditingCell = null;
-        this.events.onDataChange?.(index, col, newValue, originalValue);
-        this.rerenderTable();
-      };
-
-      const cancelEdit = () => {
-        this.currentlyEditingCell = null;
-        this.rerenderTable();
-      };
-
-      const btnContainer = document.createElement('div');
-      btnContainer.style.cssText = 'display: flex; gap: 4px; justify-content: flex-end;';
-
-      const saveBtn = createButton('✓ Save', true);
-      saveBtn.onclick = (e: MouseEvent) => { e.stopPropagation(); saveEdit(); };
-
-      const cancelBtn = createButton('✕ Cancel');
-      cancelBtn.onclick = (e: MouseEvent) => { e.stopPropagation(); cancelEdit(); };
-
-      btnContainer.appendChild(saveBtn);
-      btnContainer.appendChild(cancelBtn);
-
-      editContainer.appendChild(textarea);
-      editContainer.appendChild(btnContainer);
-      td.appendChild(editContainer);
-
-      textarea.focus();
-
-      textarea.addEventListener('blur', (e) => {
-        if (e.relatedTarget === saveBtn || e.relatedTarget === cancelBtn) return;
-        if (this.currentlyEditingCell === td) saveEdit();
-      });
-
-      textarea.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-          e.preventDefault(); saveEdit();
-        } else if (e.key === 'Escape') {
-          e.preventDefault(); cancelEdit();
-        }
-      });
-
-      textarea.addEventListener('paste', (e) => this.handlePaste(e, index, col));
-
-    } else {
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.value = (currentValue === null || currentValue === undefined) ? '' : String(currentValue);
-      input.style.cssText = `
-                width: 100%; padding: 4px; border: 1px solid var(--vscode-focusBorder);
-                border-radius: 3px; background-color: var(--vscode-input-background);
-                color: var(--vscode-input-foreground); font-family: var(--vscode-editor-font-family);
-                font-size: 12px;
-             `;
-
-      td.appendChild(input);
-      input.focus();
-      input.select();
-
-      const saveEdit = () => {
-        const originalValue = this.originalRows[index][col];
-        let newValue: any = input.value;
-        if (input.value === '' && originalValue === null) newValue = null;
-
-        if (newValue != originalValue) {
-          this.modifiedCells.set(cellKey, { originalValue: this.originalRows[index][col], newValue });
-        } else {
-          this.modifiedCells.delete(cellKey);
-        }
-
-        this.rows[index][col] = newValue;
-        this.currentlyEditingCell = null;
-        this.events.onDataChange?.(index, col, newValue, originalValue);
-        this.rerenderTable();
-      };
-
-      const cancelEdit = () => {
-        this.currentlyEditingCell = null;
-        this.rerenderTable();
-      };
-
-      input.addEventListener('blur', saveEdit);
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') { e.preventDefault(); saveEdit(); }
-        else if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
-      });
-      input.addEventListener('paste', (e) => this.handlePaste(e, index, col));
-    }
+    td.appendChild(editorEl);
   }
 
   private setupInfiniteScroll() {
@@ -615,9 +743,7 @@ export class TableRenderer {
     this.tableContainer.appendChild(this.loadMoreSentinel);
 
     this.loadMoreObserver = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting) {
-        this.renderNextChunk();
-      }
+      if (entries[0].isIntersecting) this.renderNextChunk();
     }, { root: this.tableContainer, rootMargin: '100px' });
 
     this.loadMoreObserver.observe(this.loadMoreSentinel);
@@ -630,63 +756,51 @@ export class TableRenderer {
       originalRows: this.originalRows,
       columnTypes: this.columnTypes,
       tableInfo: this.tableInfo,
+      foreignKeys: this.foreignKeys,
       initialSelectedIndices: this.selectedIndices,
-      modifiedCells: this.modifiedCells
+      modifiedCells: this.modifiedCells,
+      rowsMarkedForDeletion: this.rowsMarkedForDeletion,
+      sortState: { column: this.sortColumn, direction: this.sortDirection },
+      filterState: this.filterState,
     });
   }
 
   private handlePaste(e: ClipboardEvent, startIndex: number, startCol: string) {
     const clipboardData = e.clipboardData?.getData('text');
     if (!clipboardData) return;
-
-    // If simple single-line string without tabs, let default paste happen
     if (!clipboardData.includes('\t') && !clipboardData.includes('\n') && !clipboardData.includes('\r')) return;
 
     e.preventDefault();
     e.stopPropagation();
 
-    // Parse CSV/TSV
-    // Simple parser: split by newline then by tab (common for Excel/Sheets copy)
     const rows = clipboardData.trim().split(/\r?\n/).map(r => r.split('\t'));
-
     const colNames = this.columns;
     const startColIdx = colNames.indexOf(startCol);
     if (startColIdx === -1) return;
 
-    let rowsAdded = false;
-
     rows.forEach((rowValues, rOffset) => {
       const targetRowIdx = startIndex + rOffset;
-
-      // Expand rows if needed
       if (targetRowIdx >= this.rows.length) {
         this.rows.push({});
-        this.originalRows.push({}); // Maintain parallel array for diffs
-        rowsAdded = true;
+        this.originalRows.push({});
       }
 
       rowValues.forEach((val, cOffset) => {
         const targetColIdx = startColIdx + cOffset;
         if (targetColIdx < colNames.length) {
           const colName = colNames[targetColIdx];
-
-          // Handle "NULL" string as null value if preferred, or keep as string
-          // For now, keep as string/value.
-          // Trim quotes if Excel added them (Excel sometimes adds quotes for multiline/special chars)
           let newValue: any = val;
           if (newValue.startsWith('"') && newValue.endsWith('"')) {
             newValue = newValue.slice(1, -1).replace(/""/g, '"');
           }
-          if (newValue === '') newValue = null; // Empty string -> null often useful
+          if (newValue === '') newValue = null;
 
           const originalValue = this.originalRows[targetRowIdx][colName];
           const cellKey = `${targetRowIdx}-${colName}`;
-
           if (newValue != originalValue) {
             this.modifiedCells.set(cellKey, { originalValue, newValue });
             this.events.onDataChange?.(targetRowIdx, colName, newValue, originalValue);
           }
-
           this.rows[targetRowIdx][colName] = newValue;
         }
       });
@@ -697,16 +811,15 @@ export class TableRenderer {
   }
 
   public dispose() {
-    // Cleanup IntersectionObserver
     if (this.loadMoreObserver) {
       this.loadMoreObserver.disconnect();
       this.loadMoreObserver = null;
     }
-
-    // Clear sentinel reference
+    if (this.statsTooltip) {
+      this.statsTooltip.destroy();
+      this.statsTooltip = null;
+    }
     this.loadMoreSentinel = null;
-
-    // Clear DOM references
     this.tableBody = null;
     this.currentlyEditingCell = null;
   }

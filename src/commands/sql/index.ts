@@ -4,17 +4,23 @@
  */
 
 export { ColumnSQL } from './columns';
-export { TableSQL } from './tables';
-export { IndexSQL } from './indexes';
-export { ViewSQL } from './views';
-export { FunctionSQL } from './functions';
-export { SchemaSQL } from './schema';
+export { AggregateSQL } from './aggregates';
 export { ConstraintSQL } from './constraints';
-export { UserRoleSQL, UsersRolesSQL } from './usersRoles';
-export { TypeSQL } from './types';
+export { DomainSQL } from './domains';
 export { ExtensionSQL } from './extensions';
-export { MaterializedViewSQL } from './materializedViews';
-export { ForeignTableSQL } from './foreignTables';
 export { ForeignDataWrapperSQL } from './foreignDataWrappers';
+export { ForeignTableSQL } from './foreignTables';
+export { FunctionSQL } from './functions';
+export { IndexSQL } from './indexes';
+export { MaterializedViewSQL } from './materializedViews';
+export { PartitionSQL } from './partitions';
+export { SchemaSQL } from './schema';
+export { SequenceSQL } from './sequences';
+export { TableSQL } from './tables';
+export { TriggerSQL } from './triggers';
+export { EventTriggerSQL } from './eventTriggers';
+export { TypeSQL } from './types';
+export { UserRoleSQL, UsersRolesSQL } from './usersRoles';
+export { ViewSQL } from './views';
 export { SQL_TEMPLATES, QueryBuilder, MaintenanceTemplates } from './helper';
 

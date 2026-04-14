@@ -13,6 +13,8 @@ import {
 } from '../services/handlers/QueryHandlers';
 import { ExportRequestHandler, ShowErrorMessageHandler, ImportRequestHandler, ImportPickFileHandler } from '../services/handlers/CoreHandlers';
 import { SendToChatHandler } from '../services/handlers/ExplainHandlers';
+import { FkLookupHandler } from '../services/handlers/FkLookupHandler';
+import { InsertRowHandler } from '../services/handlers/InsertRowHandler';
 
 export class PostgresKernel implements vscode.Disposable {
   readonly id = 'postgres-kernel';
@@ -78,6 +80,8 @@ export class PostgresKernel implements vscode.Disposable {
 
     registry.register('saveChanges', new SaveChangesHandler());
     registry.register('showErrorMessage', new ShowErrorMessageHandler());
+    registry.register('fkLookup', new FkLookupHandler());
+    registry.register('insertRow', new InsertRowHandler());
 
     (this._controller as any).onDidReceiveMessage(async (event: any) => {
       // console.log('[NotebookKernel] onDidReceiveMessage', event.message.type);

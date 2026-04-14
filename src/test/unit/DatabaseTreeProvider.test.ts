@@ -86,9 +86,10 @@ describe('DatabaseTreeProvider', () => {
     const element = new DatabaseTreeItem('Conn 1', vscode.TreeItemCollapsibleState.Collapsed, 'connection', '1');
     const children = await provider.getChildren(element);
 
-    expect(children).to.have.lengthOf(2);
+    expect(children).to.have.lengthOf(3);
     expect(children[0].label).to.equal('Databases');
     expect(children[1].label).to.equal('Users & Roles');
+    expect(children[2].label).to.equal('Tablespaces');
   });
 
   it('should return databases list for databases-group', async () => {
@@ -125,10 +126,13 @@ describe('DatabaseTreeProvider', () => {
     const element = new DatabaseTreeItem('db1', vscode.TreeItemCollapsibleState.Collapsed, 'database', '1', 'db1');
     const children = await provider.getChildren(element);
 
-    expect(children).to.have.lengthOf(3);
+    expect(children).to.have.lengthOf(6);
     expect(children[0].label).to.equal('Schemas');
     expect(children[1].label).to.equal('Extensions');
     expect(children[2].label).to.equal('Foreign Data Wrappers');
+    expect(children[3].label).to.equal('Event Triggers');
+    expect(children[4].label).to.equal('Publications');
+    expect(children[5].label).to.equal('Subscriptions');
   });
 
   it('should return categories for schema', async () => {

@@ -233,8 +233,38 @@ export class ExplainVisualizer {
     `;
     this.container.appendChild(style);
 
+    // Render summary card FIRST, above the tree
+    if (this.plan) {
+      const hottestNodeForSummary = this.findHottestNode(this.plan);
+      this.container.appendChild(this.renderSummaryCard(hottestNodeForSummary));
+    }
+
     const treeContainer = document.createElement('div');
     treeContainer.className = 'explain-tree';
+
+    // Expand / Collapse all controls
+    const toolbar = document.createElement('div');
+    toolbar.style.cssText = 'display:flex;gap:8px;padding:8px 20px 0;';
+
+    const expandAll = document.createElement('button');
+    expandAll.textContent = '⊞ Expand All';
+    expandAll.style.cssText = 'padding:3px 10px;font-size:0.82em;cursor:pointer;border:1px solid var(--vscode-widget-border);border-radius:3px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);';
+    expandAll.onclick = () => {
+      treeContainer.querySelectorAll('.explain-node.collapsed').forEach(n => n.classList.remove('collapsed'));
+    };
+
+    const collapseAll = document.createElement('button');
+    collapseAll.textContent = '⊟ Collapse All';
+    collapseAll.style.cssText = expandAll.style.cssText;
+    collapseAll.onclick = () => {
+      treeContainer.querySelectorAll('.explain-node').forEach(n => {
+        if (n.querySelector('.explain-children')) n.classList.add('collapsed');
+      });
+    };
+
+    toolbar.appendChild(expandAll);
+    toolbar.appendChild(collapseAll);
+    treeContainer.appendChild(toolbar);
 
     if (this.plan) {
       const hottestNode = this.findHottestNode(this.plan);
@@ -261,12 +291,6 @@ export class ExplainVisualizer {
     }
 
     this.container.appendChild(treeContainer);
-
-    // Render summary card below the tree
-    if (this.plan) {
-      const hottestNodeForSummary = this.findHottestNode(this.plan);
-      this.container.appendChild(this.renderSummaryCard(hottestNodeForSummary));
-    }
   }
 
   public renderSummaryCard(hottestNode: ExplainNode): HTMLElement {
@@ -361,13 +385,15 @@ export class ExplainVisualizer {
     }
     stats.innerHTML += `<span>💰 ${totalCost.toFixed(2)}</span>`;
 
-    // Rows mismatch warning
+    // Rows mismatch warning — show actual ratio
     const planRows = node['Plan Rows'];
     const actualRows = node['Actual Rows'];
-    if (actualRows !== undefined && planRows !== undefined) {
-      const misEst = Math.abs(actualRows - planRows) / (planRows || 1);
-      if (misEst > 10 && actualRows > 0) { // Off by 10x
-        stats.innerHTML += `<span style="color:var(--vscode-errorForeground)">⚠️ Bad Est.</span>`;
+    if (actualRows !== undefined && planRows !== undefined && planRows > 0 && actualRows > 0) {
+      const ratio = actualRows / planRows;
+      if (ratio > 10 || ratio < 0.1) {
+        const magnitude = ratio >= 1 ? Math.round(ratio) : Math.round(1 / ratio);
+        const direction = ratio >= 1 ? 'over' : 'under';
+        stats.innerHTML += `<span style="color:var(--vscode-errorForeground);font-size:0.85em;font-weight:600">⚠️ ${magnitude}× ${direction}est.</span>`;
       }
     }
 

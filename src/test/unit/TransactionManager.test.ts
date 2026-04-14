@@ -187,4 +187,65 @@ describe('TransactionManager', () => {
     expect(manager.getTransactionInfo('session-4')).to.equal(null);
     expect(manager.getTransactionState('session-4')).to.deep.equal({ isActive: false, isFailed: false, savepointCount: 0 });
   });
+
+  it('covers alternate BEGIN combinations and isolation updates', async () => {
+    const manager = new TransactionManager();
+    const client = createClient();
+
+    await manager.beginTransaction(client, 'session-6', 'READ UNCOMMITTED', false, false);
+    expect(client.query.firstCall.args[0]).to.equal('BEGIN ISOLATION LEVEL READ UNCOMMITTED READ WRITE');
+    expect(manager.getTransactionInfo('session-6')).to.deep.include({
+      isActive: true,
+      state: 'active',
+      isolationLevel: 'READ UNCOMMITTED',
+      readOnly: false,
+      deferrable: false
+    });
+
+    await manager.setIsolationLevel(client, 'SERIALIZABLE');
+    expect(client.query.secondCall.args[0]).to.equal('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
+
+    manager.cleanupSession('session-6');
+    expect(manager.getTransactionInfo('session-6')).to.equal(null);
+    expect(manager.getTransactionSummary('session-6')).to.equal('No connection');
+  });
+
+  it('marks transactions failed when savepoint or rollback operations fail', async () => {
+    const manager = new TransactionManager();
+    const savepointFailClient = {
+      query: sandbox.stub().callsFake(async (sql: string) => {
+        if (sql.startsWith('SAVEPOINT')) {
+          throw new Error('savepoint failed');
+        }
+      })
+    } as any;
+
+    await manager.beginTransaction(savepointFailClient, 'session-7');
+    try {
+      await manager.createSavepoint(savepointFailClient, 'session-7');
+      expect.fail('Expected createSavepoint to fail');
+    } catch (error) {
+      expect((error as Error).message).to.equal('savepoint failed');
+    }
+    expect(manager.getTransactionInfo('session-7')?.state).to.equal('failed');
+
+    const rollbackFailClient = {
+      query: sandbox.stub().callsFake(async (sql: string) => {
+        if (sql.startsWith('ROLLBACK TO SAVEPOINT')) {
+          throw new Error('rollback failed');
+        }
+      })
+    } as any;
+
+    manager.initializeSession('session-8', true);
+    await manager.beginTransaction(rollbackFailClient, 'session-8');
+    await manager.createSavepoint(rollbackFailClient, 'session-8');
+
+    const errorStub = sandbox.stub(console, 'error');
+    await manager.handleCellError(rollbackFailClient, 'session-8', new Error('cell failed'));
+
+    expect(errorStub.calledOnce).to.be.true;
+    expect(String(errorStub.firstCall.args[0])).to.contain('Auto-rollback failed:');
+    expect(manager.getTransactionInfo('session-8')?.state).to.equal('failed');
+  });
 });

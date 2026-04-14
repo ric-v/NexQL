@@ -38,8 +38,52 @@ export class AiService {
     }
   }
 
+  /**
+   * Optional connection context injected into the system prompt.
+   * Set by ChatViewProvider when the active connection is identified.
+   */
+  private _connectionContext: {
+    environment?: 'production' | 'staging' | 'development';
+    readOnlyMode?: boolean;
+    connectionName?: string;
+  } | undefined;
+
+  setConnectionContext(ctx: AiService['_connectionContext']): void {
+    this._connectionContext = ctx;
+  }
+
   buildSystemPrompt(): string {
-    return `You are an expert PostgreSQL database assistant. You help users with:
+    const ctx = this._connectionContext;
+    const isProduction = ctx?.environment === 'production';
+    const isReadOnly = ctx?.readOnlyMode === true;
+
+    // ── Production safety header (injected first so model sees it immediately) ──
+    let productionBlock = '';
+    if (isProduction) {
+      productionBlock = `
+⚠️ **PRODUCTION CONNECTION ACTIVE** ⚠️
+The user is connected to a **PRODUCTION** database${ctx?.connectionName ? ` (${ctx.connectionName})` : ''}.
+Apply the following guardrails to every response WITHOUT EXCEPTION:
+
+1. **NEVER generate bare DELETE, UPDATE, or TRUNCATE statements** without a WHERE clause.
+2. **Always wrap destructive SQL in a transaction** with ROLLBACK as a comment option.
+3. **Prefix every write query** with a comment: \`-- ⚠️ PRODUCTION — review carefully before running\`
+4. **Recommend SELECT first** to preview affected rows before any write operation.
+5. **Flag careless patterns** such as UPDATE without WHERE or DELETE without WHERE with a bold warning.
+6. If asked to generate a migration, include \`BEGIN;\` and end with \`-- COMMIT; -- Uncomment after review\`.
+7. **Never auto-apply** suggested SQL — always remind the user to review and run explicitly.
+
+`;
+    } else if (isReadOnly) {
+      productionBlock = `
+ℹ️ **READ-ONLY CONNECTION** — This connection is configured as read-only.
+Only generate SELECT / EXPLAIN / read queries. If the user requests a write operation,
+explain that the connection is read-only and suggest switching to a write-capable connection.
+
+`;
+    }
+
+    return `${productionBlock}You are an expert PostgreSQL database assistant. You help users with:
 - Writing and optimizing SQL queries
 - Understanding database concepts and best practices
 - Debugging query issues
