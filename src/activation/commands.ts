@@ -14,6 +14,7 @@ import { cmdDropExtension, cmdEnableExtension, cmdExtensionOperations, cmdRefres
 import { cmdCreateForeignTable, cmdDropForeignTable, cmdEditForeignTable, cmdForeignTableOperations, cmdRefreshForeignTable, cmdShowForeignTableProperties, cmdViewForeignTableData } from '../commands/foreignTables';
 import { cmdForeignDataWrapperOperations, cmdShowForeignDataWrapperProperties, cmdCreateForeignServer, cmdForeignServerOperations, cmdShowForeignServerProperties, cmdDropForeignServer, cmdCreateUserMapping, cmdUserMappingOperations, cmdShowUserMappingProperties, cmdDropUserMapping, cmdRefreshForeignDataWrapper, cmdRefreshForeignServer, cmdRefreshUserMapping } from '../commands/foreignDataWrappers';
 import { cmdCallFunction, cmdCreateFunction, cmdDropFunction, cmdEditFunction, cmdFunctionOperations, cmdRefreshFunction, cmdShowFunctionProperties } from '../commands/functions';
+import { cmdCallProcedure, cmdCreateProcedure, cmdDropProcedure, cmdEditProcedure, cmdProcedureOperations, cmdRefreshProcedure, cmdShowProcedureProperties } from '../commands/procedures';
 import { cmdCreateMaterializedView, cmdDropMatView, cmdEditMatView, cmdMatViewOperations, cmdRefreshMatView, cmdViewMatViewData, cmdViewMatViewProperties } from '../commands/materializedViews';
 import { cmdNewNotebook, cmdExplainQuery, cmdJumpToSection } from '../commands/notebook';
 import { cmdCreateObjectInSchema, cmdCreateSchema, cmdSchemaOperations, cmdShowSchemaProperties, cmdPasteTable } from '../commands/schema';
@@ -46,14 +47,28 @@ import {
   exportSavedQueries,
   importSavedQueries,
   searchSavedQueries,
-  showQueryRecommendations
+  showQueryRecommendations,
+  exportConnectionProfiles,
+  importConnectionProfiles,
 } from '../commands/phase7';
 import { SavedQueriesTreeProvider } from '../providers/Phase7TreeProviders';
 import { pickQueryHistory } from '../commands/pickQueryHistory';
 
 // Visual Schema Design
-import { cmdOpenTableDesigner, cmdCreateTableVisual, cmdOpenSchemaDiff } from '../commands/schemaDesigner';
+import { cmdOpenTableDesigner, cmdCreateTableVisual, cmdOpenSchemaDiff, cmdOpenErd, cmdImportData } from '../commands/schemaDesigner';
 import { NotebookTreeItem, NotebooksTreeProvider } from '../providers/NotebooksTreeProvider';
+
+// Phase 2: New object types
+import { cmdListTriggers, cmdCreateTrigger, cmdDropTrigger, cmdEnableTrigger, cmdDisableTrigger, cmdShowTriggerProperties, cmdTriggerOperations } from '../commands/triggers';
+import { cmdListSequences, cmdCreateSequence, cmdDropSequence, cmdSequenceNextValue, cmdShowSequenceProperties, cmdSequenceOperations } from '../commands/sequences';
+import { cmdListPartitions, cmdDetachPartition, cmdShowPartitionProperties, cmdCreatePartition } from '../commands/partitions';
+import { cmdListDomains, cmdCreateDomain, cmdDropDomain, cmdShowDomainProperties } from '../commands/domains';
+import { cmdListAggregates, cmdDropAggregate, cmdShowAggregateProperties, cmdCreateAggregate } from '../commands/aggregates';
+import { cmdListEventTriggers, cmdCreateEventTrigger, cmdDropEventTrigger, cmdEnableEventTrigger, cmdDisableEventTrigger, cmdShowEventTriggerProperties, cmdEventTriggerOperations } from '../commands/eventTriggers';
+import { cmdListRules, cmdDropRule, cmdShowRuleProperties, cmdRuleOperations } from '../commands/rules';
+import { cmdListTablespaces, cmdShowTablespaceProperties, cmdTablespaceOperations } from '../commands/tablespaces';
+import { cmdListPublications, cmdCreatePublication, cmdDropPublication, cmdShowPublicationProperties, cmdListSubscriptions, cmdDropSubscription, cmdShowSubscriptionProperties, cmdPublicationOperations } from '../commands/publications';
+import { cmdSearchSchema } from '../commands/schemaSearch';
 
 export function registerAllCommands(
   context: vscode.ExtensionContext,
@@ -334,7 +349,7 @@ export function registerAllCommands(
     },
     {
       command: 'postgres-explorer.newNotebook',
-      callback: async (item: any) => await cmdNewNotebook(item)
+      callback: async (item: any) => await cmdNewNotebook(item, context)
     },
     {
       command: 'postgres-explorer.jumpToSection',
@@ -379,6 +394,21 @@ export function registerAllCommands(
         );
         if (confirm !== 'Delete') { return; }
         await vscode.workspace.fs.delete(item.uri, { recursive: false });
+        notebooksTreeProvider?.refresh();
+      }
+    },
+    {
+      command: 'postgres-explorer.notebooks.deleteFolder',
+      callback: async (item: NotebookTreeItem) => {
+        if (!item?.uri) { return; }
+        const folderName = item.label as string;
+        const confirm = await vscode.window.showWarningMessage(
+          `Delete folder "${folderName}" and all notebooks inside it? This cannot be undone.`,
+          { modal: true },
+          'Delete Folder'
+        );
+        if (confirm !== 'Delete Folder') { return; }
+        await vscode.workspace.fs.delete(item.uri, { recursive: true, useTrash: false });
         notebooksTreeProvider?.refresh();
       }
     },
@@ -602,6 +632,38 @@ export function registerAllCommands(
     {
       command: 'postgres-explorer.dropFunction',
       callback: async (item: DatabaseTreeItem) => await cmdDropFunction(item, context)
+    },
+    // Add procedure commands
+    {
+      command: 'postgres-explorer.refreshProcedure',
+      callback: async (item: DatabaseTreeItem) => await cmdRefreshProcedure(item, context, databaseTreeProvider)
+    },
+    {
+      command: 'postgres-explorer.showProcedureProperties',
+      callback: async (item: DatabaseTreeItem) => {
+        await databaseTreeProvider.addToRecent(item);
+        await cmdShowProcedureProperties(item, context);
+      }
+    },
+    {
+      command: 'postgres-explorer.procedureOperations',
+      callback: async (item: DatabaseTreeItem) => await cmdProcedureOperations(item, context)
+    },
+    {
+      command: 'postgres-explorer.createReplaceProcedure',
+      callback: async (item: DatabaseTreeItem) => await cmdEditProcedure(item, context)
+    },
+    {
+      command: 'postgres-explorer.callProcedure',
+      callback: async (item: DatabaseTreeItem) => await cmdCallProcedure(item, context)
+    },
+    {
+      command: 'postgres-explorer.dropProcedure',
+      callback: async (item: DatabaseTreeItem) => await cmdDropProcedure(item, context)
+    },
+    {
+      command: 'postgres-explorer.createProcedure',
+      callback: async (item: DatabaseTreeItem) => await cmdCreateProcedure(item, context)
     },
     // Add materialized view commands
     {
@@ -1236,6 +1298,25 @@ export function registerAllCommands(
       command: 'postgres-explorer.openSchemaDiff',
       callback: (item: DatabaseTreeItem) => cmdOpenSchemaDiff(item, context)
     },
+    // D2: ERD
+    {
+      command: 'postgres-explorer.openErd',
+      callback: (item: DatabaseTreeItem) => cmdOpenErd(item, context)
+    },
+    // Import Data
+    {
+      command: 'postgres-explorer.importData',
+      callback: (item: DatabaseTreeItem) => cmdImportData(item, context)
+    },
+    // D3: Profile export/import
+    {
+      command: 'postgres-explorer.exportConnectionProfiles',
+      callback: () => exportConnectionProfiles()
+    },
+    {
+      command: 'postgres-explorer.importConnectionProfiles',
+      callback: () => importConnectionProfiles()
+    },
     {
       command: 'postgres-explorer.viewMaintenanceVacuum',
       callback: async () => {
@@ -1248,6 +1329,74 @@ export function registerAllCommands(
         vscode.window.showInformationMessage('ANALYZE is not applicable to regular views. Use this on tables or materialized views.');
       }
     },
+
+    // Phase 2: Triggers
+    { command: 'postgres-explorer.listTriggers', callback: async (item: DatabaseTreeItem) => await cmdListTriggers(item, context) },
+    { command: 'postgres-explorer.createTrigger', callback: async (item: DatabaseTreeItem) => await cmdCreateTrigger(item, context) },
+    { command: 'postgres-explorer.dropTrigger', callback: async (item: DatabaseTreeItem) => await cmdDropTrigger(item, context) },
+    { command: 'postgres-explorer.enableTrigger', callback: async (item: DatabaseTreeItem) => await cmdEnableTrigger(item, context) },
+    { command: 'postgres-explorer.disableTrigger', callback: async (item: DatabaseTreeItem) => await cmdDisableTrigger(item, context) },
+    { command: 'postgres-explorer.showTriggerProperties', callback: async (item: DatabaseTreeItem) => await cmdShowTriggerProperties(item, context) },
+    { command: 'postgres-explorer.triggerOperations', callback: async (item: DatabaseTreeItem) => await cmdTriggerOperations(item, context) },
+
+    // Phase 2: Sequences
+    { command: 'postgres-explorer.listSequences', callback: async (item: DatabaseTreeItem) => await cmdListSequences(item, context) },
+    { command: 'postgres-explorer.createSequence', callback: async (item: DatabaseTreeItem) => await cmdCreateSequence(item, context) },
+    { command: 'postgres-explorer.dropSequence', callback: async (item: DatabaseTreeItem) => await cmdDropSequence(item, context) },
+    { command: 'postgres-explorer.sequenceNextValue', callback: async (item: DatabaseTreeItem) => await cmdSequenceNextValue(item, context) },
+    { command: 'postgres-explorer.showSequenceProperties', callback: async (item: DatabaseTreeItem) => await cmdShowSequenceProperties(item, context) },
+    { command: 'postgres-explorer.sequenceOperations', callback: async (item: DatabaseTreeItem) => await cmdSequenceOperations(item, context) },
+
+    // Phase 2: Partitions
+    { command: 'postgres-explorer.listPartitions', callback: async (item: DatabaseTreeItem) => await cmdListPartitions(item, context) },
+    { command: 'postgres-explorer.detachPartition', callback: async (item: DatabaseTreeItem) => await cmdDetachPartition(item, context) },
+    { command: 'postgres-explorer.showPartitionProperties', callback: async (item: DatabaseTreeItem) => await cmdShowPartitionProperties(item, context) },
+    { command: 'postgres-explorer.createPartition', callback: async (item: DatabaseTreeItem) => await cmdCreatePartition(item, context) },
+
+    // Phase 2: Domains
+    { command: 'postgres-explorer.listDomains', callback: async (item: DatabaseTreeItem) => await cmdListDomains(item, context) },
+    { command: 'postgres-explorer.createDomain', callback: async (item: DatabaseTreeItem) => await cmdCreateDomain(item, context) },
+    { command: 'postgres-explorer.dropDomain', callback: async (item: DatabaseTreeItem) => await cmdDropDomain(item, context) },
+    { command: 'postgres-explorer.showDomainProperties', callback: async (item: DatabaseTreeItem) => await cmdShowDomainProperties(item, context) },
+
+    // Phase 2: Aggregates
+    { command: 'postgres-explorer.listAggregates', callback: async (item: DatabaseTreeItem) => await cmdListAggregates(item, context) },
+    { command: 'postgres-explorer.createAggregate', callback: async (item: DatabaseTreeItem) => await cmdCreateAggregate(item, context) },
+    { command: 'postgres-explorer.dropAggregate', callback: async (item: DatabaseTreeItem) => await cmdDropAggregate(item, context) },
+    { command: 'postgres-explorer.showAggregateProperties', callback: async (item: DatabaseTreeItem) => await cmdShowAggregateProperties(item, context) },
+
+    // Phase 2: Event Triggers
+    { command: 'postgres-explorer.listEventTriggers', callback: async (item: DatabaseTreeItem) => await cmdListEventTriggers(item, context) },
+    { command: 'postgres-explorer.createEventTrigger', callback: async (item: DatabaseTreeItem) => await cmdCreateEventTrigger(item, context) },
+    { command: 'postgres-explorer.dropEventTrigger', callback: async (item: DatabaseTreeItem) => await cmdDropEventTrigger(item, context) },
+    { command: 'postgres-explorer.enableEventTrigger', callback: async (item: DatabaseTreeItem) => await cmdEnableEventTrigger(item, context) },
+    { command: 'postgres-explorer.disableEventTrigger', callback: async (item: DatabaseTreeItem) => await cmdDisableEventTrigger(item, context) },
+    { command: 'postgres-explorer.showEventTriggerProperties', callback: async (item: DatabaseTreeItem) => await cmdShowEventTriggerProperties(item, context) },
+    { command: 'postgres-explorer.eventTriggerOperations', callback: async (item: DatabaseTreeItem) => await cmdEventTriggerOperations(item, context) },
+
+    // Phase 2: Rules
+    { command: 'postgres-explorer.listRules', callback: async (item: DatabaseTreeItem) => await cmdListRules(item, context) },
+    { command: 'postgres-explorer.dropRule', callback: async (item: DatabaseTreeItem) => await cmdDropRule(item, context) },
+    { command: 'postgres-explorer.showRuleProperties', callback: async (item: DatabaseTreeItem) => await cmdShowRuleProperties(item, context) },
+    { command: 'postgres-explorer.ruleOperations', callback: async (item: DatabaseTreeItem) => await cmdRuleOperations(item, context) },
+
+    // Phase 2: Tablespaces
+    { command: 'postgres-explorer.listTablespaces', callback: async (item: DatabaseTreeItem) => await cmdListTablespaces(item, context) },
+    { command: 'postgres-explorer.showTablespaceProperties', callback: async (item: DatabaseTreeItem) => await cmdShowTablespaceProperties(item, context) },
+    { command: 'postgres-explorer.tablespaceOperations', callback: async (item: DatabaseTreeItem) => await cmdTablespaceOperations(item, context) },
+
+    // Phase 2: Publications & Subscriptions
+    { command: 'postgres-explorer.listPublications', callback: async (item: DatabaseTreeItem) => await cmdListPublications(item, context) },
+    { command: 'postgres-explorer.createPublication', callback: async (item: DatabaseTreeItem) => await cmdCreatePublication(item, context) },
+    { command: 'postgres-explorer.dropPublication', callback: async (item: DatabaseTreeItem) => await cmdDropPublication(item, context) },
+    { command: 'postgres-explorer.showPublicationProperties', callback: async (item: DatabaseTreeItem) => await cmdShowPublicationProperties(item, context) },
+    { command: 'postgres-explorer.publicationOperations', callback: async (item: DatabaseTreeItem) => await cmdPublicationOperations(item, context) },
+    { command: 'postgres-explorer.listSubscriptions', callback: async (item: DatabaseTreeItem) => await cmdListSubscriptions(item, context) },
+    { command: 'postgres-explorer.dropSubscription', callback: async (item: DatabaseTreeItem) => await cmdDropSubscription(item, context) },
+    { command: 'postgres-explorer.showSubscriptionProperties', callback: async (item: DatabaseTreeItem) => await cmdShowSubscriptionProperties(item, context) },
+
+    // Phase 2: Schema Search
+    { command: 'postgres-explorer.searchSchema', callback: async () => await cmdSearchSchema() },
   ];
 
   console.log('Starting command registration...');

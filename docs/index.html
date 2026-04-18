@@ -4,34 +4,32 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PgStudio - Professional Database Management for VS Code</title>
+  <title>PgStudio - PostgreSQL Management for VS Code</title>
   <meta name="description"
-    content="PgStudio is a comprehensive PostgreSQL database management extension featuring interactive SQL notebooks, real-time monitoring dashboard, AI-powered assistance, and advanced database operations - all within VS Code.">
+    content="PgStudio brings PostgreSQL management into VS Code with SQL notebooks, explorer tree, AI assistance, and performance insights.">
   <meta name="keywords"
-    content="postgresql vs code extension, sql notebook vs code, postgres database explorer vs code, ai sql assistant vs code, pgstudio, postgres explorer">
+    content="postgresql vs code extension, sql notebooks, postgres explorer, ai sql assistant, pgstudio">
   <link rel="canonical" href="https://pgstudio.astrx.dev/">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="PgStudio">
-  <meta property="og:title" content="PgStudio - PostgreSQL Database Management for VS Code">
+  <meta property="og:title" content="PgStudio - PostgreSQL Management for VS Code">
   <meta property="og:description"
-    content="Manage PostgreSQL inside VS Code with SQL notebooks, database explorer, AI SQL assistance, and live performance insights.">
+    content="Work with Postgres directly in VS Code using interactive notebooks, explorer tree, and AI-assisted SQL workflows.">
   <meta property="og:url" content="https://pgstudio.astrx.dev/">
   <meta property="og:image" content="https://pgstudio.astrx.dev/assets/postgres-vsc-icon.png">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="PgStudio - PostgreSQL Database Management for VS Code">
+  <meta name="twitter:title" content="PgStudio - PostgreSQL Management for VS Code">
   <meta name="twitter:description"
-    content="PostgreSQL explorer, SQL notebooks, AI-powered query help, and dashboard monitoring inside VS Code.">
+    content="The VS Code-native Postgres workflow: connect, query, analyze, and optimize without leaving your editor.">
   <meta name="twitter:image" content="https://pgstudio.astrx.dev/assets/postgres-vsc-icon.png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fira+Code&display=swap"
-    rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
   <link rel="icon" type="image/png" sizes="32x32" href="assets/postgres-vsc-icon.png">
   <link rel="icon" type="image/png" sizes="16x16" href="assets/postgres-vsc-icon.png">
-  <link rel="shortcut icon" href="assets/postgres-vsc-icon.png">
   <link rel="apple-touch-icon" href="assets/postgres-vsc-icon.png">
-  <meta name="theme-color" content="#0b5a3a">
+  <meta name="theme-color" content="#4d5efc">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
   <script type="application/ld+json">
     {
       "@context": "https://schema.org",
@@ -39,7 +37,7 @@
       "name": "PgStudio",
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "Windows, macOS, Linux",
-      "description": "PostgreSQL database management inside VS Code with SQL notebooks, AI-assisted querying, database explorer, and performance dashboards.",
+      "description": "PostgreSQL management inside VS Code with explorer, notebooks, AI assistance, and performance tools.",
       "url": "https://pgstudio.astrx.dev/",
       "downloadUrl": "https://marketplace.visualstudio.com/items?itemName=ric-v.postgres-explorer",
       "offers": {
@@ -51,507 +49,394 @@
   </script>
 </head>
 
-<body>
-  <header>
-    <div class="container">
-      <nav>
-        <div class="logo">
-          <a href="#" style="text-decoration: none;"
-            onclick="window.scrollTo({top: 0, behavior: 'smooth'}); return false;">
-            &#x1F418; <span class="gradient-text">PgStudio
-              <span class="logo-subtitle" style="font-size: 12px;">Postgres Database Management In VS Code</span>
-            </span>
-          </a>
+<body class="editor-minimized">
+  <main class="site-main">
+    <section class="hero-shell" aria-label="PgStudio interactive homepage demo">
+      <div class="desktop-topbar" role="navigation" aria-label="PgStudio top navigation">
+        <button class="mobile-menu-btn topbar-menu-btn" id="btn-toggle-topbar" aria-label="Toggle Navigation"><svg
+            viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none">
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <line x1="3" y1="18" x2="21" y2="18"></line>
+          </svg></button>
+        <p class="hero-intro"><b style="color:var(--vsc-orange); font-weight: 600; font-size: 15px;">PG Studio</b> · VS
+          Code Extension </p>
+        <div class="desktop-topbar-links">
+          <button type="button" data-open="doc-notebooks">Notebooks</button>
+          <button type="button" data-open="doc-explorer">Explorer</button>
+          <button type="button" data-open="doc-ai">AI Assistant</button>
+          <a href="https://github.com/dev-asterix/PgStudio" target="_blank" rel="noopener">GitHub ↗</a>
         </div>
-        <!-- Mobile Menu Button removed/hidden via CSS as we are simplifying -->
-        <button class="mobile-menu-btn" aria-label="Toggle Menu" style="display: none;">&#9776;</button>
-        <div class="nav-links">
-          <a href="#features">Features</a>
-          <a href="#workflow">Workflow</a>
-          <a href="#ai-powered">AI</a>
-          <a href="https://github.com/dev-asterix/PgStudio">GitHub</a>
-          <button id="theme-toggle" class="theme-toggle" aria-label="Toggle Theme">&#127769;</button>
-          <a href="https://marketplace.visualstudio.com/items?itemName=ric-v.postgres-explorer" class="nav-cta">
-            <span class="cta-text">Install</span>
-            <span class="cta-icon">⬇️</span>
-          </a>
-        </div>
-      </nav>
-    </div>
-  </header>
-
-  <!-- Hero Section -->
-  <section class="hero">
-    <div class="container hero-content">
-      <div class="badge-row">
-        <a href="https://marketplace.visualstudio.com/items?itemName=ric-v.postgres-explorer" class="badge">
-          <span class="badge-label">VS Code Marketplace</span>
-          <span class="badge-value" id="badge-version">0.9.5</span>
-        </a>
-      </div>
-
-      <h1>Powerful PostgreSQL<br><span class="gradient-text">Management Inside VS Code</span></h1>
-      <p class="hero-tagline">Write SQL, manage databases, and leverage AI—all without leaving your editor.
-        Interactive notebooks, live dashboards, and intelligent assistance in one seamless extension.</p>
-
-      <div class="hero-buttons">
-        <a href="https://marketplace.visualstudio.com/items?itemName=ric-v.postgres-explorer" class="btn btn-primary">
-          <span class="btn-icon">⬇️</span> Install Now
-        </a>
-        <a href="#guides" class="btn btn-secondary">
-          <span class="btn-icon">✨</span> Get started
-        </a>
-      </div>
-
-      <!-- Enhanced SQL Notebook Demo -->
-      <div class="notebook-cell">
-        <div class="cell-gutter">
-          <button class="play-button" title="Run Cell">▶</button>
-          <span class="cell-number">1</span>
-        </div>
-        <div class="cell-content">
-          <div class="code-lens">
-            <a href="#ai-powered" class="lens-ai">✨ Ask AI</a>
-            <a href="#ai-powered" class="lens-ai">💬 Chat</a>
-            <a href="#">Optimize</a>
-            <a href="#">Explain</a>
-          </div>
-          <div class="code-editor">
-            <span class="comment">-- Real-time database insights</span><br>
-            <span class="kwd">SELECT</span> <br>
-            &nbsp;&nbsp;date_trunc(<span class="str">'day'</span>, created_at) <span class="kwd">AS</span>
-            day,<br>
-            &nbsp;&nbsp;<span class="func">COUNT</span>(*) <span class="kwd">AS</span> users,<br>
-            &nbsp;&nbsp;<span class="func">SUM</span>(amount) <span class="kwd">AS</span> revenue<br>
-            <span class="kwd">FROM</span> orders<br>
-            <span class="kwd">WHERE</span> created_at >= <span class="func">NOW</span>() - <span
-              class="kwd">INTERVAL</span> <span class="str">'7 days'</span><br>
-            <span class="kwd">GROUP BY</span> day <span class="kwd">ORDER BY</span> day;
-          </div>
-          <div class="result-toolbar">
-            <span class="result-info">✓ 7 rows in 45ms</span>
-          </div>
+        <div class="topbar-actions">
+          <button class="topbar-icon-btn" id="theme-toggle" type="button" aria-label="Switch to dark theme"
+            data-tooltip="Toggle theme">
+            <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="4"></circle>
+              <path
+                d="M12 2v3M12 19v3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M2 12h3M19 12h3M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12">
+              </path>
+            </svg>
+            <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path>
+            </svg>
+          </button>
+          <button class="topbar-icon-btn play-tour-btn" id="play-tour" type="button"
+            aria-label="Start guided product tour" data-tooltip="Play product tour">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <polygon points="9,7 18,12 9,17"></polygon>
+            </svg>
+          </button>
+          <a class="hero-install-btn topbar-install"
+            href="https://marketplace.visualstudio.com/items?itemName=ric-v.postgres-explorer">⬇ Install Free</a>
         </div>
       </div>
-    </div>
-  </section>
+      <h1>The VS Code-native <span>PostgreSQL</span> workspace</h1>
+      <p class="hero-subtitle">Connect, explore, query, and optimize - without leaving your editor. Powered by AI, built
+        for teams.</p>
 
-  <!-- Stats Bar -->
-  <section class="stats-bar">
-    <div class="container">
-      <div class="stats-grid">
-        <div class="stat-item">
-          <span class="stat-icon">📥</span>
-          <div class="stat-content">
-            <span class="stat-value" id="stat-downloads"><span class="loading-dot"></span></span>
-            <span class="stat-label">Downloads</span>
+      <div class="shell" role="application" aria-label="Mac style PgStudio editor demo" aria-hidden="true">
+        <header class="titlebar">
+          <div class="mobile-menu-btn" id="btn-toggle-left"><svg viewBox="0 0 24 24" width="16" stroke="currentColor"
+              stroke-width="2" fill="none">
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg></div>
+          <div class="window-controls" aria-hidden="true">
+            <span class="dot red"></span>
+            <span class="dot yellow"></span>
+            <span class="dot green"></span>
           </div>
-        </div>
-        <div class="stat-item">
-          <span class="stat-icon">⭐</span>
-          <div class="stat-content">
-            <span class="stat-value" id="stat-rating"><span class="loading-dot"></span></span>
-            <span class="stat-label">Rating</span>
+          <p class="title-text">PgStudio Workspace - Demo Project</p>
+          <div class="tour-progress" id="tour-progress" aria-live="polite">
+            <span class="tour-dot active" data-step="0"></span>
+            <span class="tour-dot" data-step="1"></span>
+            <span class="tour-dot" data-step="2"></span>
+            <span class="tour-dot" data-step="3"></span>
+            <span class="tour-label" id="tour-label"></span>
           </div>
-        </div>
-        <div class="stat-item">
-          <span class="stat-icon">🚀</span>
-          <div class="stat-content">
-            <span class="stat-value" id="stat-version"><span class="loading-dot"></span></span>
-            <span class="stat-label">Latest</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
+          <button class="mobile-menu-btn" id="btn-toggle-right" aria-label="Toggle Assistant"><svg viewBox="0 0 24 24"
+              stroke="currentColor" stroke-width="2" fill="none">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg></button>
+          <button class="shell-close-btn" id="btn-close-editor" aria-label="Close editor"><svg viewBox="0 0 24 24"
+              stroke="currentColor" stroke-width="2" fill="none">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg></button>
+        </header>
 
-  <!-- Workflow Section -->
-  <section id="workflow" class="section workflow-section">
-    <div class="container">
-      <h2>Your Database Workflow</h2>
-      <p class="section-subtitle">Connect, Explore, Query, Analyze—all in one place</p>
+        <div class="workbench">
+          <aside class="activity-bar" aria-label="Primary navigation">
+            <!-- Explorer: shows file-tree sidebar panel -->
+            <button class="activity-icon active" type="button" data-panel="explorer" title="Explorer"
+              aria-label="Explorer">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+                aria-hidden="true">
+                <path d="M3 5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5z"
+                  stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+              </svg>
+            </button>
+            <!-- Search: shows search sidebar panel -->
+            <button class="activity-icon" type="button" data-panel="search" title="Search" aria-label="Search">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+                aria-hidden="true">
+                <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.5" />
+                <path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+              </svg>
+            </button>
+            <!-- Source Control: opens GitHub in a new tab -->
+            <a class="activity-icon" href="https://github.com/dev-asterix/PgStudio" target="_blank"
+              rel="noopener noreferrer" title="View Source on GitHub" aria-label="GitHub source">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+                aria-hidden="true">
+                <path fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"
+                  d="M12 2C6.476 2 2 6.58 2 12.231c0 4.522 2.865 8.36 6.84 9.713.5.093.682-.22.682-.49 0-.242-.01-.885-.014-1.736-2.782.617-3.37-1.376-3.37-1.376-.455-1.187-1.11-1.503-1.11-1.503-.908-.636.069-.624.069-.624 1.004.072 1.532 1.05 1.532 1.05.892 1.567 2.34 1.115 2.91.852.091-.662.35-1.115.635-1.371-2.22-.258-4.555-1.139-4.555-5.07 0-1.12.39-2.037 1.03-2.755-.103-.258-.447-1.297.098-2.705 0 0 .84-.275 2.75 1.052A9.31 9.31 0 0 1 12 6.84c.85.004 1.706.117 2.505.343 1.91-1.327 2.748-1.052 2.748-1.052.547 1.408.203 2.447.1 2.705.64.718 1.029 1.635 1.029 2.755 0 3.94-2.34 4.808-4.566 5.06.36.314.679.93.679 1.873 0 1.352-.012 2.442-.012 2.774 0 .273.18.59.688.49C19.137 20.59 22 16.754 22 12.231 22 6.58 17.524 2 12 2z" />
+              </svg>
+            </a>
+            <!-- PgStudio icon: shows PgStudio panel + opens query.pgsql -->
+            <button class="activity-icon pgstudio" type="button" data-panel="pgstudio" data-open="query"
+              title="PgStudio" aria-label="PgStudio">
+              <img src="assets/postgres-vsc-icon.png" alt="PgStudio icon">
+              <span class="activity-badge" aria-label="1 notification">1</span>
+            </button>
+            <span class="activity-spacer"></span>
+          </aside>
 
-      <div class="workflow-diagram">
-        <div class="workflow-step">
-          <div class="workflow-icon">🔐</div>
-          <div class="workflow-content">
-            <h4>Connect</h4>
-            <p>Secure credential storage with multiple simultaneous connections</p>
-          </div>
-        </div>
-        <div class="workflow-arrow">→</div>
-        <div class="workflow-step">
-          <div class="workflow-icon">🌳</div>
-          <div class="workflow-content">
-            <h4>Explore</h4>
-            <p>Navigate schemas, tables, views, functions with ease</p>
-          </div>
-        </div>
-        <div class="workflow-arrow">→</div>
-        <div class="workflow-step">
-          <div class="workflow-icon">📝</div>
-          <div class="workflow-content">
-            <h4>Query</h4>
-            <p>Write interactive SQL notebooks with AI assistance</p>
-          </div>
-        </div>
-        <div class="workflow-arrow">→</div>
-        <div class="workflow-step">
-          <div class="workflow-icon">📊</div>
-          <div class="workflow-content">
-            <h4>Analyze</h4>
-            <p>Monitor performance and export results instantly</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
+          <aside class="sidebar" aria-label="Sidebar">
 
-  <!-- Features Section -->
-  <section id="features" class="section">
-    <div class="container">
-      <div class="feature-badge">🚀 Unified Toolkit</div>
-      <h2 class="gradient-text">Everything You Need</h2>
-      <p class="section-subtitle">Comprehensive database management tools built for modern development</p>
+            <!-- ── Panel 1: Explorer ── -->
+            <div class="sidebar-panel active" id="sidebar-explorer" aria-label="Explorer panel">
+              <div class="sidebar-header">EXPLORER</div>
+              <div class="sidebar-panel-scroll">
+                <div class="sidebar-group">
+                  <div class="sidebar-group-title">PGSTUDIO</div>
 
-      <div class="feature-grid">
-        <div class="card feature-card">
-          <div class="card-icon">🛡️</div>
-          <h3>Connection Safety</h3>
-          <p>Production-ready safety features for enterprise environments.</p>
-          <ul class="feature-list">
-            <li>Environment tagging (🔴 PROD, 🟡 STAGING, 🟢 DEV)</li>
-            <li>Read-only mode enforcement</li>
-            <li>Query safety analyzer with risk scoring</li>
-            <li>Status bar risk indicators</li>
-          </ul>
-        </div>
+                  <button class="tree-row depth-1" data-open="readme">
+                    <span class="tree-arrow">▶</span>
+                    <span class="tree-label"><span class="tree-file-icon readme"
+                        aria-hidden="true"></span>README.md</span>
+                    <span class="git-badge git-new">U</span>
+                  </button>
 
-        <div class="card feature-card">
-          <div class="card-icon">🔐</div>
-          <h3>Secure Connections</h3>
-          <p>Enterprise-grade security for your database credentials.</p>
-          <ul class="feature-list">
-            <li>VS Code SecretStorage encryption</li>
-            <li>Multiple simultaneous connections</li>
-            <li>Auto-LIMIT protection (default 1000 rows)</li>
-            <li>Connection string import</li>
-          </ul>
-        </div>
+                  <div class="sidebar-group-title" style="padding-left:20px;font-size:9.5px;padding-top:6px;">NOTEBOOKS
+                  </div>
+                  <button class="tree-row depth-2 active" data-open="query">
+                    <span class="tree-arrow">▶</span>
+                    <span class="tree-label"><span class="tree-file-icon notebook"
+                        aria-hidden="true"></span>query.pgsql</span>
+                    <span class="git-badge git-mod">M</span>
+                  </button>
 
-        <div class="card feature-card">
-          <div class="card-icon">📊</div>
-          <h3>Table Intelligence</h3>
-          <p>Comprehensive insights into table performance and health.</p>
-          <ul class="feature-list">
-            <li>Table profile with size breakdown & statistics</li>
-            <li>Real-time activity monitoring</li>
-            <li>Index usage analytics</li>
-            <li>Bloat detection & complete definitions</li>
-          </ul>
-        </div>
+                  <div class="sidebar-group-title" style="padding-left:20px;font-size:9.5px;padding-top:6px;">
+                    DOCUMENTATION</div>
+                  <button class="tree-row depth-2" data-open="features">
+                    <span class="tree-arrow">▶</span>
+                    <span class="tree-label"><span class="tree-file-icon doc"
+                        aria-hidden="true"></span>features.md</span>
+                  </button>
+                  <button class="tree-row depth-2" data-open="doc-notebooks">
+                    <span class="tree-arrow">▶</span>
+                    <span class="tree-label"><span class="tree-file-icon doc"
+                        aria-hidden="true"></span>01_notebooks.md</span>
+                  </button>
+                  <button class="tree-row depth-2" data-open="doc-explorer">
+                    <span class="tree-arrow">▶</span>
+                    <span class="tree-label"><span class="tree-file-icon doc"
+                        aria-hidden="true"></span>02_explorer.md</span>
+                  </button>
+                  <button class="tree-row depth-2" data-open="doc-ai">
+                    <span class="tree-arrow">▶</span>
+                    <span class="tree-label"><span class="tree-file-icon doc"
+                        aria-hidden="true"></span>03_ai-assist.md</span>
+                  </button>
+                  <button class="tree-row depth-2" data-open="doc-schema">
+                    <span class="tree-arrow">▶</span>
+                    <span class="tree-label"><span class="tree-file-icon doc"
+                        aria-hidden="true"></span>04_schema-tools.md</span>
+                  </button>
+                  <button class="tree-row depth-2" data-open="doc-safety">
+                    <span class="tree-arrow">▶</span>
+                    <span class="tree-label"><span class="tree-file-icon doc"
+                        aria-hidden="true"></span>05_safety.md</span>
+                  </button>
 
-        <div class="card feature-card">
-          <div class="card-icon">🔍</div>
-          <h3>EXPLAIN CodeLens</h3>
-          <p>One-click query analysis directly in your notebooks.</p>
-          <ul class="feature-list">
-            <li>EXPLAIN & EXPLAIN ANALYZE buttons</li>
-            <li>Results inserted as notebook cells</li>
-            <li>Performance optimization insights</li>
-            <li>Query execution plan visualization</li>
-          </ul>
-        </div>
+                  <div class="tree-row depth-1 tree-folder">
+                    <span class="tree-arrow">▼</span>
+                    <span class="tree-label">demos</span>
+                  </div>
+                  <button class="tree-row depth-2" data-open="gif-setup">
+                    <span class="tree-label"><span class="tree-file-icon gif-icon"
+                        aria-hidden="true"></span>01-setup.gif</span>
+                  </button>
+                  <button class="tree-row depth-2" data-open="gif-ai-setup">
+                    <span class="tree-label"><span class="tree-file-icon gif-icon"
+                        aria-hidden="true"></span>02-ai-assist-setup.gif</span>
+                  </button>
+                  <button class="tree-row depth-2" data-open="gif-explorer">
+                    <span class="tree-label"><span class="tree-file-icon gif-icon"
+                        aria-hidden="true"></span>03-explorer.gif</span>
+                  </button>
+                  <button class="tree-row depth-2" data-open="gif-ai">
+                    <span class="tree-label"><span class="tree-file-icon gif-icon"
+                        aria-hidden="true"></span>04-ai-assist.gif</span>
+                  </button>
 
-        <div class="card feature-card">
-          <div class="card-icon">📈</div>
-          <h3>Live Dashboard</h3>
-          <p>Real-time database metrics and performance monitoring.</p>
-          <ul class="feature-list">
-            <li>Active connection monitoring</li>
-            <li>Database size tracking</li>
-            <li>Running query management</li>
-            <li>Cache hit ratio analysis</li>
-          </ul>
-        </div>
-
-        <div class="card feature-card">
-          <div class="card-icon">📓</div>
-          <h3>SQL Notebooks</h3>
-          <p>Interactive notebooks with rich output and AI assistance.</p>
-          <ul class="feature-list">
-            <li>Multi-cell query execution</li>
-            <li>AI-powered chat integration</li>
-            <li>Context-aware suggestions</li>
-            <li>Export results to CSV/Excel</li>
-          </ul>
-        </div>
-
-        <div class="card feature-card">
-          <div class="card-icon">🌳</div>
-          <h3>Database Explorer</h3>
-          <p>Intuitive tree view of your entire database structure.</p>
-          <ul class="feature-list">
-            <li>Tables, Views, Functions</li>
-            <li>Materialized Views</li>
-            <li>Types, Extensions, FDWs</li>
-            <li>Roles & Permissions</li>
-          </ul>
-        </div>
-
-        <div class="card feature-card">
-          <div class="card-icon">⚙️</div>
-          <h3>Advanced Operations</h3>
-          <p>Complete CRUD operations and schema management.</p>
-          <ul class="feature-list">
-            <li>View, Edit, Insert, Update, Delete</li>
-            <li>Script generation</li>
-            <li>Table properties & constraints</li>
-            <li>VACUUM, ANALYZE, REINDEX</li>
-          </ul>
-        </div>
-
-        <div class="card feature-card">
-          <div class="card-icon">⚡</div>
-          <h3>Developer Tools</h3>
-          <p>Built for speed with integrated workflow tools.</p>
-          <ul class="feature-list">
-            <li>GitHub Copilot & GitHub Models integration</li>
-            <li>IntelliSense completions</li>
-            <li>Keyboard shortcuts</li>
-            <li>PSQL terminal access</li>
-          </ul>
-        </div>
-        <div class="card feature-card">
-          <div class="card-icon">🏗️</div>
-          <h3>Visual Designers</h3>
-          <p>Create and manage schema objects without writing DDL.</p>
-          <ul class="feature-list">
-            <li>Visual Table Designer</li>
-            <li>Index & Constraint Manager</li>
-            <li>Smart Paste (Data/SQL)</li>
-            <li>Schema Diagramming</li>
-          </ul>
-        </div>
-      </div>
-
-      <!-- New Feature Highlights Row -->
-      <div class="feature-grid highlight-row">
-        <div class="card feature-card highlight-cyan">
-          <div class="card-icon">🛡️</div>
-          <h3>Safe AI Execution</h3>
-          <p>AI assists, but you stay in control. <strong>No auto-execution.</strong></p>
-          <ul class="feature-list">
-            <li>Chat-to-Notebook workflow</li>
-            <li>Review generated SQL before running</li>
-            <li>Edit parameters safely</li>
-          </ul>
-        </div>
-        <div class="card feature-card highlight-purple">
-          <div class="card-icon">📈</div>
-          <h3>Advanced Visualizations</h3>
-          <p>Turn query results into insights instantly.</p>
-          <ul class="feature-list">
-            <li>Bar, Line, Pie, Area charts</li>
-            <li>Log scale & Zoom support</li>
-            <li>Export charts as images</li>
-          </ul>
-        </div>
-      </div>
-    </div>
-
-  </section>
-
-  <!-- AI Powered Section -->
-  <section id="ai-powered" class="section ai-section">
-    <div class="container">
-      <div class="ai-badge">✨ AI-Powered</div>
-      <h2>Intelligent SQL Assistance</h2>
-      <p class="section-subtitle">Leverage multiple AI providers, including GitHub Models, to write, optimize, and debug faster</p>
-
-      <div class="ai-capabilities">
-        <div class="ai-capability">
-          <div class="capability-icon">💡</div>
-          <h4>Smart Completions</h4>
-          <p>Context-aware SQL suggestions with table & column awareness</p>
-        </div>
-        <div class="ai-capability">
-          <div class="capability-icon">🔍</div>
-          <h4>Query Explanation</h4>
-          <p>Understand complex queries with plain English explanations</p>
-        </div>
-        <div class="ai-capability">
-          <div class="capability-icon">⚡</div>
-          <h4>Performance Tips</h4>
-          <p>Get suggestions to improve query performance and index recommendations</p>
-        </div>
-        <div class="ai-capability">
-          <div class="capability-icon">🛡️</div>
-          <h4>Error Detection</h4>
-          <p>Syntax and logical error detection with automatic fixes</p>
-        </div>
-        <div class="ai-capability">
-          <div class="capability-icon">📄</div>
-          <h4>Query Generation</h4>
-          <p>Describe what you need in natural language, let AI do the heavy-lifting</p>
-        </div>
-        <div class="ai-capability">
-          <div class="capability-icon">🗂️</div>
-          <h4>Schema Understanding</h4>
-          <p>The model understands your database schema for accurate suggestions through schema attachments
-          </p>
-        </div>
-        <div class="ai-capability">
-          <div class="capability-icon">💬</div>
-          <h4>Send to Chat</h4>
-          <p>One-click button to send query results directly to AI chat for follow-up analysis</p>
-        </div>
-        <div class="ai-capability">
-          <div class="capability-icon">🔐</div>
-          <h4>GitHub Models Sign-In</h4>
-          <p>Connect with your GitHub account in AI Settings using the standard VS Code authentication flow</p>
-        </div>
-        <div class="ai-capability">
-          <div class="capability-icon">🖼️</div>
-          <h4>Vision AI</h4>
-          <p>Paste or upload images directly in the chat — sent to vision-capable models (OpenAI, Anthropic, Gemini)</p>
-        </div>
-        <div class="ai-capability">
-          <div class="capability-icon">🛠️</div>
-          <h4>Custom Instructions</h4>
-          <p>Provide specific rules and style guidelines to tailor AI responses to your needs</p>
-        </div>
-      </div>
-
-      <!-- AI Demo Code -->
-      <div class="ai-code-demo">
-        <div class="code-demo-header">
-          <span>💬 Natural Language → SQL</span>
-          <span class="code-demo-subtitle">Make AI work for you...</span>
-        </div>
-        <div class="code-demo-content">
-          <div class="user-prompt">
-            <span class="prompt-label">You:</span>
-            <span class="prompt-text">"Show me top 10
-              <span class="prompt-attach">@public.customers</span>
-              by revenue in the last 30 days"</span>
-          </div>
-          <div class="ai-response">
-            <span class="response-label">✨ AI Generated:</span>
-            <div class="code-block">
-              <span class="kwd">SELECT</span><br>
-              &nbsp;&nbsp;c.id, c.name,<br>
-              &nbsp;&nbsp;<span class="func">SUM</span>(o.amount) <span class="kwd">AS</span> total<br>
-              <span class="kwd">FROM</span><br>
-              &nbsp;&nbsp;<span class="prompt-attach">@public.customers</span>
-              c<br>
-              <span class="kwd">JOIN</span> orders o <span class="kwd">ON</span> c.id = o.customer_id<br>
-              <span class="kwd">WHERE</span> o.created_at >= <span class="func">NOW</span>() - <span
-                class="kwd">INTERVAL</span> <span class="str">'30 days'</span><br>
-              <span class="kwd">GROUP BY</span> c.id, c.name<br>
-              <span class="kwd">ORDER BY</span> total <span class="kwd">DESC LIMIT</span> <span class="num">10</span>;
+                  <div class="sidebar-group-title" style="padding-left:20px;font-size:9.5px;padding-top:6px;">WORKFLOW
+                  </div>
+                  <button class="tree-row depth-2" data-open="connections">
+                    <span class="tree-arrow">▶</span>
+                    <span class="tree-label"><span class="tree-file-icon workflow"
+                        aria-hidden="true"></span>connections.demo</span>
+                  </button>
+                  <button class="tree-row depth-2" data-open="install">
+                    <span class="tree-arrow">▶</span>
+                    <span class="tree-label"><span class="tree-file-icon workflow"
+                        aria-hidden="true"></span>INSTALL.md</span>
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
 
-  <!-- Video Guides Section -->
-  <section id="guides" class="section guides-section" style="background-color: var(--bg-secondary);">
-    <div class="container">
-      <h2>Video Guides</h2>
-      <p class="section-subtitle">See PgStudio in action with these step-by-step guides</p>
-
-      <div class="carousel-wrapper">
-        <button class="carousel-btn prev-btn" aria-label="Previous Video">❮</button>
-        <div class="video-carousel">
-          <div class="video-card carousel-item">
-            <h3 style="margin-bottom: 1rem; font-size: 1.2rem;">Detailed Setup Guide</h3>
-            <div class="video-wrapper">
-              <img src="assets/01-setup.gif" width="100%" alt="PgStudio Setup Guide" style="border-radius: 8px;" />
-              <button class="expand-btn" aria-label="Expand Video">⤢</button>
+            <!-- ── Panel 2: Search ── -->
+            <div class="sidebar-panel" id="sidebar-search" aria-label="Search panel">
+              <div class="sidebar-header">SEARCH</div>
+              <div class="search-input-wrap">
+                <input type="text" id="doc-search-input" placeholder="Search docs and features..." autocomplete="off"
+                  spellcheck="false" aria-label="Search documentation">
+              </div>
+              <div class="search-results-list" id="search-results-list" role="listbox" aria-label="Search results">
+                <p class="search-empty">Type to search documentation, features, and workflows.</p>
+              </div>
             </div>
-          </div>
-          <div class="video-card carousel-item">
-            <h3 style="margin-bottom: 1rem; font-size: 1.2rem;">Database Explorer</h3>
-            <div class="video-wrapper">
-              <img src="assets/03-explorer.gif" width="100%" alt="Database Explorer Guide"
-                style="border-radius: 8px;" />
-              <button class="expand-btn" aria-label="Expand Video">⤢</button>
-            </div>
-          </div>
-          <div class="video-card carousel-item">
-            <h3 style="margin-bottom: 1rem; font-size: 1.2rem;">AI Assistant Setup</h3>
-            <div class="video-wrapper">
-              <img src="assets/02-ai-assist-setup.gif" width="100%" alt="AI Assistant Setup Guide"
-                style="border-radius: 8px;" />
-              <button class="expand-btn" aria-label="Expand Video">⤢</button>
-            </div>
-          </div>
-          <div class="video-card carousel-item">
-            <h3 style="margin-bottom: 1rem; font-size: 1.2rem;">AI Assistant in Action</h3>
-            <div class="video-wrapper">
-              <img src="assets/04-ai-assist.gif" width="100%" alt="AI Assistant in Action"
-                style="border-radius: 8px;" />
-              <button class="expand-btn" aria-label="Expand Video">⤢</button>
-            </div>
-          </div>
-        </div>
-        <button class="carousel-btn next-btn" aria-label="Next Video">❯</button>
-      </div>
 
-      <div class="carousel-indicators">
-        <span class="indicator active" data-index="0"></span>
-        <span class="indicator" data-index="1"></span>
-        <span class="indicator" data-index="2"></span>
-        <span class="indicator" data-index="3"></span>
-      </div>
-    </div>
-  </section>
+            <!-- ── Panel 3: PgStudio ── -->
+            <div class="sidebar-panel" id="sidebar-pgstudio" aria-label="PgStudio panel">
+              <div class="sidebar-header">PG STUDIO</div>
+              <div class="sidebar-panel-scroll">
+                <div class="sidebar-group">
+                  <div class="sidebar-group-title">CONNECTIONS</div>
+                  <div class="tree-row depth-1">
+                    <span class="tree-arrow">▼</span>
+                    <span class="tree-label"><span class="tree-file-icon workflow" aria-hidden="true"></span><span
+                        class="conn-dot" aria-label="Connected"></span>Local</span>
+                  </div>
+                  <button class="tree-row depth-2" data-open="connections">
+                    <span class="tree-arrow">▼</span>
+                    <span class="tree-label"><span class="tree-file-icon workflow"
+                        aria-hidden="true"></span>demo_db</span>
+                    <span class="tree-badge badge-dev">DEV</span>
+                  </button>
+                  <div class="tree-row depth-3">
+                    <span class="tree-arrow">▼</span>
+                    <span class="tree-label">Schemas</span>
+                  </div>
+                  <div class="tree-row depth-4">
+                    <span class="tree-arrow">▼</span>
+                    <span class="tree-label">public</span>
+                    <span class="tree-badge">12 tables</span>
+                  </div>
+                  <div class="tree-row depth-5">⊞ orders <span class="tree-badge">~480K</span></div>
+                  <div class="tree-row depth-6 col-row">🔑 <span class="col-name">id</span> <span
+                      class="col-type">bigint</span></div>
+                  <div class="tree-row depth-6 col-row">🔗 <span class="col-name">customer_id</span> <span
+                      class="col-type">bigint</span></div>
+                  <div class="tree-row depth-6 col-row"><span class="col-name">created_at</span> <span
+                      class="col-type">timestamptz</span> <span class="col-idx">⚡</span></div>
+                  <div class="tree-row depth-6 col-row"><span class="col-name">amount</span> <span
+                      class="col-type">numeric(10,2)</span></div>
+                  <div class="tree-row depth-6 col-row"><span class="col-name">status</span> <span
+                      class="col-type">text</span></div>
+                  <div class="tree-row depth-4">
+                    <span class="tree-arrow">▶</span>
+                    <span class="tree-label">sales</span>
+                    <span class="tree-badge">8 tables</span>
+                  </div>
+                </div>
 
-  <!-- Footer -->
-  <footer>
-    <div class="container">
-      <div class="footer-content">
-        <div class="footer-brand">
-          <span class="logo">🐘 <span class="gradient-text">PgStudio</span></span>
-          <p>Professional PostgreSQL management for VS Code</p>
-        </div>
-        <div class="footer-links-grid">
-          <div class="footer-col">
-            <h4>Resources</h4>
-            <a href="https://github.com/dev-asterix/PgStudio#readme">Documentation</a>
-            <a href="https://github.com/dev-asterix/PgStudio/blob/main/CHANGELOG.md">Changelog</a>
-          </div>
-          <div class="footer-col">
-            <h4>Community</h4>
-            <a href="https://github.com/dev-asterix/PgStudio">GitHub</a>
-            <a href="https://github.com/dev-asterix/PgStudio/issues">Report Issues</a>
-          </div>
-          <div class="footer-col">
-            <h4>Install</h4>
-            <a href="https://marketplace.visualstudio.com/items?itemName=ric-v.postgres-explorer">Marketplace</a>
-            <a href="https://open-vsx.org/extension/ric-v/postgres-explorer">Open VSX</a>
-          </div>
-        </div>
-      </div>
-      <div class="footer-bottom">
-        <p>Made with ❤ by <a href="https://github.com/dev-asterix">astrx.dev</a> • MIT License</p>
-      </div>
-    </div>
-  </footer>
+                <div class="sidebar-group">
+                  <div class="sidebar-group-title">NOTEBOOKS</div>
+                  <button class="tree-row depth-1" data-open="query">
+                    <span class="tree-arrow">▶</span>
+                    <span class="tree-label"><span class="tree-file-icon notebook"
+                        aria-hidden="true"></span>query.pgsql</span>
+                  </button>
+                  <button class="tree-row depth-1" data-open="query">
+                    <span class="tree-arrow">▶</span>
+                    <span class="tree-label"><span class="tree-file-icon notebook"
+                        aria-hidden="true"></span>sales_health.pgsql</span>
+                  </button>
+                </div>
 
-  <!-- Media Modal -->
-  <div id="video-modal" class="modal">
-    <span class="close-modal">&times;</span>
-    <div class="modal-content">
-      <img style="display: none; width: 100%; border-radius: 8px;" alt="Expanded view" />
-      <video controls width="100%" style="display: none; border-radius: 8px;"></video>
+                <div class="sidebar-group">
+                  <div class="sidebar-group-title">SAVED QUERIES</div>
+                  <div class="tree-row depth-1">
+                    <span class="tree-label" style="font-style:italic;font-size:10.5px;color:var(--vsc-muted)">No saved
+                      queries</span>
+                  </div>
+                </div>
+
+                <div class="sidebar-group">
+                  <div class="sidebar-group-title">QUERY HISTORY</div>
+                  <button class="tree-row depth-1" data-open="query">
+                    <span class="tree-arrow">▶</span>
+                    <span class="history-label">daily_revenue_7d</span>
+                    <span class="history-time">2m ago</span>
+                  </button>
+                  <button class="tree-row depth-1" data-open="query">
+                    <span class="tree-arrow">▶</span>
+                    <span class="history-label">top_customers_30d</span>
+                    <span class="history-time">18m ago</span>
+                  </button>
+                  <button class="tree-row depth-1" data-open="query">
+                    <span class="tree-arrow">▶</span>
+                    <span class="history-label">orders_by_status</span>
+                    <span class="history-time">1h ago</span>
+                  </button>
+                  <button class="tree-row depth-1" data-open="query">
+                    <span class="tree-arrow">▶</span>
+                    <span class="history-label">EXPLAIN orders</span>
+                    <span class="history-time">3h ago</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+          </aside>
+
+          <section class="editor-region">
+            <div class="tabs" role="tablist" aria-label="Open files">
+              <button class="tab active" data-open="query" role="tab" aria-selected="true"><span class="tab-dot"></span>
+                query.pgsql <span class="tab-close" aria-label="Close tab" tabindex="-1">×</span></button>
+              <button class="tab" data-open="readme" role="tab" aria-selected="false">README.md <span class="tab-close"
+                  aria-label="Close tab" tabindex="-1">×</span></button>
+              <button class="tab" data-open="doc-notebooks" role="tab" aria-selected="false">notebooks.md <span
+                  class="tab-close" aria-label="Close tab" tabindex="-1">×</span></button>
+            </div>
+            <div class="breadcrumb-bar" id="breadcrumb-bar" aria-label="File path">
+              <span>PGSTUDIO</span>
+              <span class="breadcrumb-sep">›</span>
+              <span class="breadcrumb-file" id="breadcrumb-file">query.pgsql</span>
+            </div>
+
+            <div class="editor-content">
+              <div id="partial-editor-file-views" data-partial="html/editor-file-views.html"></div>
+            </div>
+          </section>
+
+          <!-- SQL Assistant right panel -->
+          <div id="partial-assistant-panel" data-partial="html/assistant-panel.html"></div>
+        </div>
+
+        <footer class="statusbar">
+          <span>⎇ main</span>
+          <span id="sb-problems"><span class="sb-err">⊘ 0</span> <span class="sb-warn">⚠ 1</span></span>
+          <span id="sb-connection">● Connected · demo_db</span>
+          <span id="sb-engine">PostgreSQL DB</span>
+          <span class="status-spacer"></span>
+          <span id="sb-file">Markdown</span>
+          <span id="sb-line">Ln 1, Col 1</span>
+          <span>UTF-8</span>
+          <span>LF</span>
+          <span id="sb-theme">Theme: Dark</span>
+          <span>PgStudio</span>
+        </footer>
+      </div><!-- /shell -->
+
+      <div id="partial-minimized-overview" data-partial="html/minimized-overview.html"></div>
+      <!-- Startup toast — positioned inside shell via absolute, but lives here for stacking -->
+      <div class="toast" id="startup-toast" role="status" aria-live="polite">
+        <span class="toast-icon">🐘</span>
+        <span>PgStudio activated — demo_db connected</span>
+        <button class="toast-close" id="toast-close-btn" aria-label="Dismiss notification">×</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- Tour narration overlay -->
+  <div class="tour-overlay" id="tour-overlay" aria-hidden="true">
+    <div class="tour-spotlight" id="tour-spotlight"></div>
+    <div class="tour-tooltip" id="tour-tooltip" role="dialog" aria-label="Guided tour step">
+      <div class="tour-tooltip-step" id="tt-step">Step 1 of 4</div>
+      <div class="tour-tooltip-title" id="tt-title">Connect safely</div>
+      <div class="tour-tooltip-body" id="tt-body">Label environments as DEV, STAGE, or PROD. PgStudio makes it obvious
+        which database you're working on.</div>
+      <div class="tour-tooltip-nav">
+        <button class="tour-nav-btn" id="tour-prev" style="display:none">← Back</button>
+        <button class="tour-nav-btn primary" id="tour-next">Next →</button>
+        <span class="tour-step-counter" id="tour-counter">1 / 4</span>
+      </div>
     </div>
   </div>
 
-  <script src="script.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="js/partials.js"></script>
+  <script src="js/core-state.js"></script>
+  <script src="js/workbench.js"></script>
+  <script src="js/assistant.js"></script>
+  <script src="js/tour.js"></script>
+  <script src="js/visuals.js"></script>
+  <script src="js/bootstrap.js"></script>
 </body>
 
 </html>

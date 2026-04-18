@@ -742,6 +742,72 @@ export async function viewSavedQuery(treeItem?: any): Promise<void> {
 }
 
 /**
+ * D3: Export connection profiles as a portable JSON bundle.
+ * Credentials are stripped — only role preset settings and metadata are exported.
+ */
+export async function exportConnectionProfiles(): Promise<void> {
+  const profileManager = ProfileManager.getInstance();
+  const profiles = profileManager.getProfiles();
+
+  if (profiles.length === 0) {
+    vscode.window.showInformationMessage('No profiles to export.');
+    return;
+  }
+
+  // Strip any credential fields before export
+  const safeProfiles = profiles.map(({ password: _pw, ...rest }) => rest);
+  const json = JSON.stringify(safeProfiles, null, 2);
+
+  const uri = await vscode.window.showSaveDialog({
+    defaultUri: vscode.Uri.file(`pgstudio-profiles-${new Date().toISOString().split('T')[0]}.json`),
+    filters: { 'JSON Files': ['json'] },
+  });
+
+  if (uri) {
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(json, 'utf8'));
+    vscode.window.showInformationMessage(`${safeProfiles.length} profile(s) exported to ${uri.fsPath}`);
+  }
+}
+
+/**
+ * D3: Import connection profiles from a JSON bundle.
+ * Uses last-write-wins — existing profiles with the same ID are overwritten.
+ */
+export async function importConnectionProfiles(): Promise<void> {
+  const files = await vscode.window.showOpenDialog({
+    canSelectMany: false,
+    filters: { 'JSON Files': ['json'] },
+    title: 'Import PgStudio Connection Profiles',
+  });
+
+  if (!files || files.length === 0) { return; }
+
+  try {
+    const bytes = await vscode.workspace.fs.readFile(files[0]);
+    const imported = JSON.parse(Buffer.from(bytes).toString('utf8'));
+
+    if (!Array.isArray(imported)) {
+      vscode.window.showErrorMessage('Invalid profile file — expected a JSON array.');
+      return;
+    }
+
+    const profileManager = ProfileManager.getInstance();
+    let count = 0;
+    for (const p of imported) {
+      if (p.id && p.profileName) {
+        await profileManager.createProfile(p);
+        count++;
+      }
+    }
+
+    refreshPhase7TreeViews();
+    vscode.window.showInformationMessage(`${count} profile(s) imported successfully.`);
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to import profiles: ${err.message}`);
+  }
+}
+
+/**
  * Load a saved query into the active notebook
  */
 export async function loadSavedQueryUI(): Promise<void> {

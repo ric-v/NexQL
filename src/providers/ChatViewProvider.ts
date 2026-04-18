@@ -34,6 +34,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private _currentConnectionName: string | undefined;
   private _currentDatabase: string | undefined;
 
+  // B1: Track production/read-only environment for AI safety guardrails
+  private _currentEnvironment: 'production' | 'staging' | 'development' | undefined;
+  private _currentReadOnlyMode: boolean = false;
+
   // Services
   private _dbObjectService: DbObjectService;
   private _aiService: AiService;
@@ -349,6 +353,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this._currentDatabase = mentions[0].database;
         // Note: connectionName might not be populated in DbMention, so we use connectionId as fallback
         this._currentConnectionName = mentions[0].breadcrumb?.split('.')[0] || mentions[0].connectionId;
+
+        // B1: Look up environment and read-only mode from connection config
+        if (mentions[0].connectionId) {
+          const connections = vscode.workspace.getConfiguration().get<any[]>('postgresExplorer.connections') || [];
+          const conn = connections.find(c => c.id === mentions[0].connectionId);
+          if (conn) {
+            this._currentEnvironment = conn.environment;
+            this._currentReadOnlyMode = conn.readOnlyMode === true;
+          }
+        }
+
+        // Pass safety context to AI service so system prompt is tailored
+        this._aiService.setConnectionContext({
+          environment: this._currentEnvironment,
+          readOnlyMode: this._currentReadOnlyMode,
+          connectionName: this._currentConnectionName,
+        });
+
         this._sendContextUpdate();
       }
       
@@ -722,7 +744,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this._view.webview.postMessage({
         type: 'contextUpdate',
         connectionName: this._currentConnectionName || null,
-        database: this._currentDatabase || null
+        database: this._currentDatabase || null,
+        environment: this._currentEnvironment || null,
+        readOnlyMode: this._currentReadOnlyMode || false
       });
     }
   }

@@ -19,17 +19,32 @@ export interface PlanMetrics {
 }
 
 /**
- * Baseline statistics for a query (for trend comparison)
+ * Baseline statistics for a query (for trend comparison).
+ * Uses Welford's online algorithm for variance so stdDev is always accurate.
  */
 export interface QueryBaseline {
   queryHash: string;
   avgExecutionTime: number;
   minExecutionTime: number;
   maxExecutionTime: number;
+  /** True running variance (M2 accumulator for Welford). */
+  m2: number;
+  /** Population standard deviation derived from m2 / sampleCount. */
   stdDev: number;
   sampleCount: number;
   lastUpdated: number;
+  /** Metadata schema version — bump when shape changes. */
+  schemaVersion: number;
 }
+
+/** Minimum samples required before degradation alerts are trustworthy. */
+export const BASELINE_MIN_SAMPLES = 5;
+
+/**
+ * If the new execution time exceeds avg + OUTLIER_SIGMA_THRESHOLD * stdDev
+ * it is flagged as a statistical outlier and excluded from the baseline.
+ */
+export const OUTLIER_SIGMA_THRESHOLD = 4;
 
 /**
  * Query performance analysis result

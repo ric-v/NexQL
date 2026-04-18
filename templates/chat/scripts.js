@@ -1785,6 +1785,7 @@ window.addEventListener('message', event => {
     // Phase B: Context bar update
     case 'contextUpdate':
       updateContextBar(message.connectionName || null, message.database || null);
+      updateEnvironmentBanner(message.environment || null, message.readOnlyMode || false);
       break;
 
     // Phase B: Error card display

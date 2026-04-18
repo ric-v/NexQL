@@ -11,8 +11,10 @@ import {
   ExecuteUpdateBackgroundHandler, ScriptDeleteHandler, ExecuteUpdateHandler,
   CancelQueryHandler, DeleteRowsHandler, SaveChangesHandler
 } from '../services/handlers/QueryHandlers';
-import { ExportRequestHandler, ShowErrorMessageHandler, ImportRequestHandler, ImportPickFileHandler } from '../services/handlers/CoreHandlers';
+import { ExportRequestHandler, ShowErrorMessageHandler, ImportRequestHandler, ImportPickFileHandler, OpenImportDataHandler } from '../services/handlers/CoreHandlers';
 import { SendToChatHandler } from '../services/handlers/ExplainHandlers';
+import { FkLookupHandler } from '../services/handlers/FkLookupHandler';
+import { InsertRowHandler } from '../services/handlers/InsertRowHandler';
 
 export class PostgresKernel implements vscode.Disposable {
   readonly id = 'postgres-kernel';
@@ -72,12 +74,15 @@ export class PostgresKernel implements vscode.Disposable {
     registry.register('export_request', new ExportRequestHandler());
     registry.register('import_request', new ImportRequestHandler());
     registry.register('import_pick_file', new ImportPickFileHandler());
+    registry.register('openImportData', new OpenImportDataHandler());
     registry.register('delete_row', new DeleteRowsHandler());
     registry.register('delete_rows', new DeleteRowsHandler());
     registry.register('sendToChat', new SendToChatHandler(undefined));
 
     registry.register('saveChanges', new SaveChangesHandler());
     registry.register('showErrorMessage', new ShowErrorMessageHandler());
+    registry.register('fkLookup', new FkLookupHandler());
+    registry.register('insertRow', new InsertRowHandler());
 
     (this._controller as any).onDidReceiveMessage(async (event: any) => {
       // console.log('[NotebookKernel] onDidReceiveMessage', event.message.type);
@@ -120,6 +125,31 @@ export class PostgresKernel implements vscode.Disposable {
             vscode.window.showInformationMessage('No active connection for this notebook.');
           }
         }
+        return;
+      }
+
+      if (msg.type === 'openImportData') {
+        const notebook = event.editor?.notebook;
+        if (!notebook) {
+          return;
+        }
+
+        const metadata = notebook.metadata as any;
+        if (!metadata?.connectionId) {
+          vscode.window.showErrorMessage('No active connection found for this notebook.');
+          return;
+        }
+
+        const targetItem = {
+          label: msg.table,
+          type: 'table',
+          connectionId: metadata.connectionId,
+          databaseName: metadata.databaseName,
+          schema: msg.schema,
+          tableName: msg.table,
+        } as any;
+
+        await vscode.commands.executeCommand('postgres-explorer.importData', targetItem);
         return;
       }
 

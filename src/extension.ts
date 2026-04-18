@@ -24,6 +24,7 @@ import {
 } from './services/handlers/ExplainHandlers';
 import { ShowConnectionSwitcherHandler, ShowDatabaseSwitcherHandler, ShowErrorMessageHandler, ExportRequestHandler, RetryCellHandler, ShowConnectionInfoHandler } from './services/handlers/CoreHandlers';
 import { ExecuteUpdateBackgroundHandler, ScriptDeleteHandler, SaveChangesHandler } from './services/handlers/QueryHandlers';
+import { formatSqlCommand, createFormatOnSaveListener } from './commands/formatSql';
 
 export let outputChannel: vscode.OutputChannel;
 export let extensionContext: vscode.ExtensionContext;
@@ -124,6 +125,13 @@ export async function activate(context: vscode.ExtensionContext) {
   SavedQueriesService.getInstance().initialize(context);
   await ProfileManager.getInstance().initializeDefaultProfiles();
 
+  // D3: Opt profile and favorites data into VS Code Settings Sync so users can
+  // share their connection profiles and query library across machines.
+  context.globalState.setKeysForSync([
+    'postgres-explorer.connectionProfiles',
+    'postgresExplorer.favorites',
+  ]);
+
   const { databaseTreeProvider, treeView, chatViewProviderInstance: chatView, savedQueriesTreeProvider, notebooksTreeProvider, autoRefreshService } = registerProviders(context, outputChannel);
   context.subscriptions.push(autoRefreshService);
   chatViewProvider = chatView;
@@ -149,6 +157,12 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // What's New / Welcome Screen
   const whatsNewManager = new WhatsNewManager(context, context.extensionUri);
+  // SQL Formatter command + format-on-save listener
+  context.subscriptions.push(
+    vscode.commands.registerCommand('postgres-explorer.formatSql', formatSqlCommand)
+  );
+  context.subscriptions.push(createFormatOnSaveListener());
+
   context.subscriptions.push(
     vscode.commands.registerCommand('postgres-explorer.showWhatsNew', () => {
       void whatsNewManager.checkAndShow(true);
