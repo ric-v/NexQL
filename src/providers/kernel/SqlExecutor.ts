@@ -3,7 +3,8 @@ import * as vscode from 'vscode';
 import { NotebookCellOutput, NotebookCellOutputItem } from 'vscode';
 import { ConnectionManager } from '../../services/ConnectionManager';
 import { TelemetryService, SpanNames } from '../../services/TelemetryService';
-import { PostgresMetadata, QueryResults } from '../../common/types';
+import { NoticeLogEntry, PostgresMetadata, QueryResults } from '../../common/types';
+import { getPgDataTypeName } from '../../common/pgDataTypeNames';
 import { SqlParser } from './SqlParser';
 import { SecretStorageService } from '../../services/SecretStorageService';
 import { ErrorService, getErrorExplanation } from '../../services/ErrorService';
@@ -14,6 +15,9 @@ import { QueryPerformanceService } from '../../services/QueryPerformanceService'
 import { extensionContext } from '../../extension';
 import { QueryCodeLensProvider } from '../QueryCodeLensProvider';
 import { updateNotebookTitle } from '../../utils/notebookTitle';
+
+/** Streaming NOTICE feed during a single-statement cell run (replaced by final result output). */
+const MIME_NOTICES_LIVE = 'application/vnd.postgres-notebook.notices-live';
 
 export class SqlExecutor {
   private static readonly REVIEW_COUNT_KEY = 'postgresExplorer.reviewPrompt.successCount';
@@ -305,16 +309,43 @@ export class SqlExecutor {
         console.warn('Failed to get backend PID:', err);
       }
 
-      // Capture PostgreSQL NOTICE messages
-      const notices: string[] = [];
-      const noticeListener = (msg: any) => {
-        const message = msg.message || msg.toString();
-        notices.push(message);
-      };
-      client.on('notice', noticeListener);
-
       const queryText = cell.document.getText();
       const statements = SqlParser.splitSqlStatements(queryText);
+      const allowLiveNotices = statements.length === 1;
+
+      // Capture PostgreSQL NOTICE messages (timestamp = client receive time, log-style)
+      const notices: NoticeLogEntry[] = [];
+      let liveNoticesActive = false;
+      const pushNotice = (message: string) => {
+        notices.push({ message, receivedAt: new Date().toISOString() });
+      };
+      const emitLiveNoticesIfNeeded = () => {
+        if (!allowLiveNotices || notices.length === 0) {
+          return;
+        }
+        liveNoticesActive = true;
+        void (async () => {
+          try {
+            const payload = { streaming: true as const, notices: [...notices] };
+            await execution.replaceOutput([
+              new NotebookCellOutput([
+                new NotebookCellOutputItem(
+                  Buffer.from(JSON.stringify(payload), 'utf8'),
+                  MIME_NOTICES_LIVE,
+                ),
+              ]),
+            ]);
+          } catch (e) {
+            console.error('SqlExecutor: live notice output failed', e);
+          }
+        })();
+      };
+      const noticeListener = (msg: any) => {
+        const message = msg.message || msg.toString();
+        pushNotice(message);
+        emitLiveNoticesIfNeeded();
+      };
+      client.on('notice', noticeListener);
 
       console.log('SqlExecutor: Executing', statements.length, 'statement(s)');
 
@@ -349,7 +380,10 @@ export class SqlExecutor {
               if (!txInfo) {
                 txManager.initializeSession(sessionId, true);
               }
-              notices.push('Transaction started automatically for safety. Run COMMIT or ROLLBACK when done.');
+              pushNotice(
+                'Transaction started automatically for safety. Run COMMIT or ROLLBACK when done.',
+              );
+              emitLiveNoticesIfNeeded();
             }
           }
         }
@@ -357,6 +391,7 @@ export class SqlExecutor {
 
       // Execute each statement
       for (let stmtIndex = 0; stmtIndex < statements.length; stmtIndex++) {
+        liveNoticesActive = false;
         let query = statements[stmtIndex];
         const stmtStartTime = Date.now();
 
@@ -498,16 +533,29 @@ export class SqlExecutor {
             autoLimitValue = lim ? parseInt(lim[1], 10) : undefined;
           }
 
+          const rows = result.rows || [];
+          let columns = result.fields?.map((f: any) => f.name) || [];
+          if (columns.length === 0 && rows.length > 0) {
+            columns = Object.keys(rows[0]);
+          }
+          const columnTypes: Record<string, string> = {
+            ...(result.fields?.reduce((acc: any, f: any) => {
+              acc[f.name] = getPgDataTypeName(f.dataTypeID);
+              return acc;
+            }, {}) || {}),
+          };
+          for (const c of columns) {
+            if (columnTypes[c] === undefined) {
+              columnTypes[c] = 'text';
+            }
+          }
+
           const outputData: QueryResults = {
             success,
             rowCount: result.rowCount,
-            rows: result.rows,
-            columns: result.fields?.map((f: any) => f.name) || [],
-            columnTypes: result.fields?.reduce((acc: any, f: any) => {
-              // Approximate type mapping or use OID if available
-              acc[f.name] = this.getTypeName(f.dataTypeID);
-              return acc;
-            }, {}),
+            rows,
+            columns,
+            columnTypes,
             command: result.command,
             query: query,
             notices: [...notices], // Copy current notices
@@ -533,9 +581,17 @@ export class SqlExecutor {
           // Clear notices for next statement
           notices.length = 0;
 
-          await execution.appendOutput(new NotebookCellOutput([
-            new NotebookCellOutputItem(Buffer.from(JSON.stringify(outputData), 'utf8'), 'application/vnd.postgres-notebook.result')
-          ]));
+          const successOutput = new NotebookCellOutput([
+            new NotebookCellOutputItem(
+              Buffer.from(JSON.stringify(outputData), 'utf8'),
+              'application/vnd.postgres-notebook.result',
+            ),
+          ]);
+          if (allowLiveNotices && liveNoticesActive) {
+            await execution.replaceOutput(successOutput);
+          } else {
+            await execution.appendOutput(successOutput);
+          }
 
           // Update execution time pill in CodeLens bar
           QueryCodeLensProvider.getInstance()?.updatePill(cell.document.uri.toString(), {
@@ -588,9 +644,17 @@ export class SqlExecutor {
             errorExplanation: pgErrorCode ? getErrorExplanation(pgErrorCode) : undefined
           };
 
-          await execution.appendOutput(new NotebookCellOutput([
-            new NotebookCellOutputItem(Buffer.from(JSON.stringify(errorData), 'utf8'), 'application/vnd.postgres-notebook.error')
-          ]));
+          const errorOutput = new NotebookCellOutput([
+            new NotebookCellOutputItem(
+              Buffer.from(JSON.stringify(errorData), 'utf8'),
+              'application/vnd.postgres-notebook.error',
+            ),
+          ]);
+          if (allowLiveNotices && liveNoticesActive) {
+            await execution.replaceOutput(errorOutput);
+          } else {
+            await execution.appendOutput(errorOutput);
+          }
 
           // Update execution time pill in CodeLens bar (failure)
           QueryCodeLensProvider.getInstance()?.updatePill(cell.document.uri.toString(), {
@@ -629,25 +693,6 @@ export class SqlExecutor {
   }
 
   // --- Helpers ---
-
-  private getTypeName(oid: number): string {
-    // Basic mapping, in a real app this would use a proper TypeRegistry
-    const types: Record<number, string> = {
-      16: 'bool',
-      17: 'bytea',
-      20: 'int8',
-      21: 'int2',
-      23: 'int4',
-      25: 'text',
-      114: 'json',
-      1043: 'varchar',
-      1082: 'date',
-      1114: 'timestamp',
-      1184: 'timestamptz',
-      1700: 'numeric'
-    };
-    return types[oid] || 'string'; // Default to string
-  }
 
   private async getTableInfo(client: any, result: any, query: string): Promise<any> {
     // Attempt to deduce table from query for basic primary key support

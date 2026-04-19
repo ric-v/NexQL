@@ -611,6 +611,11 @@
         "icon": "$(graph)"
       },
       {
+        "command": "postgres-explorer.showDashboardFromPalette",
+        "title": "Live Dashboard: Choose Connection & Database…",
+        "icon": "$(graph)"
+      },
+      {
         "command": "postgres-explorer.openListenNotify",
         "title": "LISTEN/NOTIFY Monitor",
         "icon": "$(broadcast)"
@@ -1612,6 +1617,7 @@
         "mimeTypes": [
           "application/x-postgres-result",
           "application/vnd.postgres-notebook.result",
+          "application/vnd.postgres-notebook.notices-live",
           "application/vnd.postgres-notebook.error",
           "application/x-postgres-notebook-header+json"
         ],
@@ -3101,7 +3107,8 @@
     "onCommand:postgres-explorer.switchWorkspaceDefaultConnection",
     "onCommand:postgres-explorer.exportNotebook",
     "onCommand:postgres-explorer.openListenNotify",
-    "onCommand:postgres-explorer.openListenNotifyFromPalette"
+    "onCommand:postgres-explorer.openListenNotifyFromPalette",
+    "onCommand:postgres-explorer.showDashboardFromPalette"
   ],
   "main": "./dist/extension.js",
   "scripts": {
