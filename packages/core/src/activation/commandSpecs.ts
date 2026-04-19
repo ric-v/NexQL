@@ -325,6 +325,17 @@ export function getCommandSpecs(
       }
     },
     {
+      command: 'nexql.openSqlAssistantTab',
+      callback: async () => {
+        if (!chatViewProviderInstance) {
+          vscode.window.showWarningMessage('SQL Assistant is not available');
+          return;
+        }
+
+        await chatViewProviderInstance.openInEditor(vscode.ViewColumn.Beside);
+      }
+    },
+    {
       command: 'nexql.addToFavorites',
       callback: async (item: DatabaseTreeItem) => {
         if (item) {

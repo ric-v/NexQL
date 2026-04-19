@@ -753,6 +753,11 @@
         "icon": "$(sparkle)"
       },
       {
+        "command": "nexql.openSqlAssistantTab",
+        "title": "Open SQL Assistant in Editor Tab",
+        "icon": "$(window)"
+      },
+      {
         "command": "nexql.attachToChat",
         "title": "Attach to SQL Assistant",
         "icon": "$(mention)"
