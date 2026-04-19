@@ -232,8 +232,8 @@ export class SqlCompletionProvider implements vscode.CompletionItemProvider {
                 }));
               }
 
-        this.tableCache.set(cacheKey, tables);
-        this.columnCache.set(cacheKey, columns);
+        this.tableCache.set(cacheKey, this._dedupeTables(tables));
+        this.columnCache.set(cacheKey, this._dedupeColumns(columns));
         this.lastCacheUpdate.set(cacheKey, Date.now());
       } finally {
         if (client) client.release();
@@ -367,5 +367,29 @@ export class SqlCompletionProvider implements vscode.CompletionItemProvider {
     }
 
     return completions;
+  }
+
+  private _dedupeTables(tables: TableInfo[]): TableInfo[] {
+    const seen = new Set<string>();
+    return tables.filter((table) => {
+      const key = `${table.schema}.${table.tableName}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  }
+
+  private _dedupeColumns(columns: ColumnInfo[]): ColumnInfo[] {
+    const seen = new Set<string>();
+    return columns.filter((column) => {
+      const key = `${column.schema}.${column.tableName}.${column.columnName}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
   }
 }

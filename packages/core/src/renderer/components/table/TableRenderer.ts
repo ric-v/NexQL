@@ -637,6 +637,17 @@ export class TableRenderer {
     cell.style.cssText = `${cell.style.cssText};${style}`;
   }
 
+  private applyModifiedCellDecoration(cell: HTMLElement, sourceIndex: number, col: string): void {
+    const cellKey = `${sourceIndex}-${col}`;
+    if (!this.modifiedCells.has(cellKey)) {
+      return;
+    }
+
+    cell.style.backgroundColor = 'rgba(245,158,11,0.15)';
+    cell.style.borderLeft = '3px solid #f59e0b';
+    cell.title = 'Unsaved edit — double-click to edit';
+  }
+
   private createRow(row: any, displayIndex: number, sourceIndex: number): HTMLElement {
     const tr = document.createElement('tr');
     tr.dataset.index = String(displayIndex);
@@ -826,12 +837,7 @@ export class TableRenderer {
 
     this.applyCellStyle(td, sourceIndex, displayIndex, 'data');
 
-    const cellKey = `${sourceIndex}-${col}`;
-    if (this.modifiedCells.has(cellKey)) {
-      td.style.backgroundColor = 'rgba(245,158,11,0.15)';
-      td.style.borderLeft = '3px solid #f59e0b';
-      td.title = 'Unsaved edit — double-click to edit';
-    }
+    this.applyModifiedCellDecoration(td, sourceIndex, col);
 
     if (val === null || val === undefined) {
       const nullSpan = document.createElement('span');
@@ -886,6 +892,12 @@ export class TableRenderer {
         rowCells.forEach((cell, cellIndex) => {
           const cellKind: 'row-number' | 'data' = cellIndex === 0 ? 'row-number' : 'data';
           this.applyCellStyle(cell, sourceIndex, isNaN(displayIndex) ? sourceIndex : displayIndex, cellKind);
+          if (cellKind === 'data') {
+            const col = this.columns[cellIndex - 1];
+            if (col) {
+              this.applyModifiedCellDecoration(cell, sourceIndex, col);
+            }
+          }
         });
       }
     });

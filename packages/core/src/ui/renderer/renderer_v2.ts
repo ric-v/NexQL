@@ -693,12 +693,170 @@ export const activate: ActivationFunction = (context) => {
       }
 
       // Save Changes Logic
+      const parseCellKey = (key: string): { rowIndex: number; colName: string } | null => {
+        const sep = key.indexOf('-');
+        if (sep === -1) return null;
+        const rowIndex = Number.parseInt(key.slice(0, sep), 10);
+        if (Number.isNaN(rowIndex)) return null;
+        return { rowIndex, colName: key.slice(sep + 1) };
+      };
+
+      const formatDiffValue = (value: any): string => {
+        if (value === null || value === undefined) return 'NULL';
+        if (typeof value === 'object') {
+          try {
+            return JSON.stringify(value);
+          } catch {
+            return String(value);
+          }
+        }
+        return String(value);
+      };
+
+      const buildEditDiffRows = (): Array<{
+        rowIndex: number;
+        rowLabel: string;
+        colName: string;
+        oldValue: string;
+        newValue: string;
+      }> => {
+        const rowsForDiff: Array<{
+          rowIndex: number;
+          rowLabel: string;
+          colName: string;
+          oldValue: string;
+          newValue: string;
+        }> = [];
+
+        modifiedCells.forEach((diff, key) => {
+          const parsed = parseCellKey(key);
+          if (!parsed) return;
+
+          const { rowIndex, colName } = parsed;
+          const pkLabel = tableInfo?.primaryKeys?.length
+            ? tableInfo.primaryKeys
+                .map((pk: string) => `${pk}=${formatDiffValue(originalRows[rowIndex]?.[pk])}`)
+                .join(', ')
+            : `row #${rowIndex + 1}`;
+
+          rowsForDiff.push({
+            rowIndex,
+            rowLabel: pkLabel,
+            colName,
+            oldValue: formatDiffValue(diff.originalValue),
+            newValue: formatDiffValue(diff.newValue),
+          });
+        });
+
+        rowsForDiff.sort((a, b) => {
+          if (a.rowIndex !== b.rowIndex) return a.rowIndex - b.rowIndex;
+          return a.colName.localeCompare(b.colName);
+        });
+        return rowsForDiff;
+      };
+
+      const renderReviewChangesView = (): HTMLElement => {
+        const diffRows = buildEditDiffRows();
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'height:100%;overflow:auto;';
+
+        const header = document.createElement('div');
+        header.style.cssText =
+          'padding:10px 12px;border-bottom:1px solid var(--vscode-widget-border);display:flex;flex-direction:column;gap:2px;';
+        const titleEl = document.createElement('div');
+        titleEl.textContent = 'Review Changes';
+        titleEl.style.cssText = 'font-size:13px;font-weight:700;';
+        const subtitleEl = document.createElement('div');
+        const editedRowCount = new Set(diffRows.map((r) => r.rowIndex)).size;
+        subtitleEl.textContent = `${editedRowCount} row${editedRowCount !== 1 ? 's' : ''}, ${diffRows.length} edited cell${diffRows.length !== 1 ? 's' : ''}`;
+        subtitleEl.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);';
+        header.appendChild(titleEl);
+        header.appendChild(subtitleEl);
+        wrap.appendChild(header);
+
+        if (diffRows.length === 0) {
+          const empty = document.createElement('div');
+          empty.style.cssText =
+            'padding:20px 16px;color:var(--vscode-descriptionForeground);font-size:12px;';
+          empty.textContent = 'No edited cells to review yet.';
+          wrap.appendChild(empty);
+          return wrap;
+        }
+
+        const table = document.createElement('table');
+        table.style.cssText =
+          'width:100%;border-collapse:separate;border-spacing:0;font-size:12px;line-height:1.45;';
+
+        const thead = document.createElement('thead');
+        const htr = document.createElement('tr');
+        ['Row', 'Column', 'Old Value', 'New Value'].forEach((label) => {
+          const th = document.createElement('th');
+          th.textContent = label;
+          th.style.cssText =
+            'position:sticky;top:0;z-index:1;text-align:left;padding:8px 10px;background:var(--vscode-editor-background);border-bottom:1px solid var(--vscode-widget-border);font-weight:600;';
+          htr.appendChild(th);
+        });
+        thead.appendChild(htr);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        diffRows.forEach((row, idx) => {
+          const tr = document.createElement('tr');
+          const stripe = idx % 2 === 0 ? 'transparent' : 'var(--vscode-keybindingTable-rowsBackground)';
+          tr.style.background = stripe;
+
+          const rowTd = document.createElement('td');
+          rowTd.textContent = row.rowLabel;
+          rowTd.style.cssText =
+            'padding:7px 10px;border-bottom:1px solid var(--vscode-widget-border);font-family:var(--vscode-editor-font-family),monospace;white-space:nowrap;';
+
+          const colTd = document.createElement('td');
+          colTd.textContent = row.colName;
+          colTd.style.cssText =
+            'padding:7px 10px;border-bottom:1px solid var(--vscode-widget-border);font-family:var(--vscode-editor-font-family),monospace;';
+
+          const oldTd = document.createElement('td');
+          oldTd.textContent = row.oldValue;
+          oldTd.style.cssText =
+            'padding:7px 10px;border-bottom:1px solid var(--vscode-widget-border);font-family:var(--vscode-editor-font-family),monospace;max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+          oldTd.title = row.oldValue;
+
+          const newTd = document.createElement('td');
+          newTd.textContent = row.newValue;
+          newTd.style.cssText =
+            'padding:7px 10px;border-bottom:1px solid var(--vscode-widget-border);font-family:var(--vscode-editor-font-family),monospace;max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:color-mix(in srgb, #f59e0b 12%, transparent);';
+          newTd.title = row.newValue;
+
+          tr.appendChild(rowTd);
+          tr.appendChild(colTd);
+          tr.appendChild(oldTd);
+          tr.appendChild(newTd);
+          tbody.appendChild(tr);
+        });
+
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+        return wrap;
+      };
+
       const saveBtn = createButton('Save Changes', true, 'success');
       saveBtn.style.marginRight = '8px';
+
+      let reviewTab: HTMLElement | null = null;
+      const updateReviewTabLabel = () => {
+        if (!reviewTab) return;
+        const editedRows = new Set(
+          Array.from(modifiedCells.keys())
+            .map((key) => parseCellKey(key)?.rowIndex)
+            .filter((idx): idx is number => typeof idx === 'number'),
+        ).size;
+        reviewTab.textContent = editedRows > 0 ? `Review Changes (${editedRows})` : 'Review Changes';
+      };
 
       const updateSaveButtonVisibility = () => {
         // Show save button if there are edits OR deletions
         const hasChanges = modifiedCells.size > 0 || rowsMarkedForDeletion.size > 0;
+        updateReviewTabLabel();
 
         if (hasChanges) {
           if (!rightActions.contains(saveBtn)) rightActions.prepend(saveBtn);
@@ -724,8 +882,9 @@ export const activate: ActivationFunction = (context) => {
 
         const updates: any[] = [];
         modifiedCells.forEach((diff, key) => {
-          const [rowIndexStr, colName] = key.split('-');
-          const rowIndex = parseInt(rowIndexStr);
+          const parsed = parseCellKey(key);
+          if (!parsed) return;
+          const { rowIndex, colName } = parsed;
 
           console.log(`Renderer: Processing diff for row ${rowIndex}, col ${colName}`);
 
@@ -823,8 +982,9 @@ export const activate: ActivationFunction = (context) => {
           // The renderer now tracks edits by stable source index, so applying
           // edits first keeps those indices aligned for the remaining rows.
           modifiedCells.forEach((diff, key) => {
-            const [rowIndexStr, colName] = key.split('-');
-            const rowIndex = parseInt(rowIndexStr);
+            const parsed = parseCellKey(key);
+            if (!parsed) return;
+            const { rowIndex, colName } = parsed;
             if (rowIndex >= 0 && rowIndex < originalRows.length) {
               originalRows[rowIndex][colName] = diff.newValue;
             }
@@ -877,6 +1037,8 @@ export const activate: ActivationFunction = (context) => {
       const noticesTabLabel =
         noticeItems.length > 0 ? `Notices (${noticeItems.length})` : 'Notices';
       const noticesTab = createTab(noticesTabLabel, 'notices', false, () => switchTab('notices'));
+      reviewTab = createTab('Review Changes', 'review', false, () => switchTab('review'));
+      updateReviewTabLabel();
 
       let explainTab: HTMLElement | null = null;
       if (json.explainPlan) {
@@ -891,6 +1053,7 @@ export const activate: ActivationFunction = (context) => {
       tabs.appendChild(chartTab);
       tabs.appendChild(analystTab);
       tabs.appendChild(noticesTab);
+      tabs.appendChild(reviewTab);
       if (explainTab) tabs.appendChild(explainTab);
       tabs.appendChild(transposeTab);
       if (!json.error) {
@@ -915,6 +1078,9 @@ export const activate: ActivationFunction = (context) => {
         onDataChange: (_rowIndex, _col, _newVal, _originalVal) => {
           updateSaveButtonVisibility();
           updateActionsVisibility();
+          if (currentMode === 'review') {
+            switchTab('review');
+          }
         },
         onInsertRow: (values, tempId) => {
           context.postMessage?.({ type: 'insertRow', tableInfo, values, tempId });
@@ -978,6 +1144,8 @@ export const activate: ActivationFunction = (context) => {
           } else {
             deleteBtn.style.display = 'none';
           }
+        } else {
+          deleteBtn.style.display = 'none';
         }
       };
 
@@ -1022,8 +1190,8 @@ export const activate: ActivationFunction = (context) => {
       let currentMode = 'table';
       const allTabs = () =>
         explainTab
-          ? [tableTab, chartTab, analystTab, noticesTab, explainTab, transposeTab]
-          : [tableTab, chartTab, analystTab, noticesTab, transposeTab];
+          ? [tableTab, chartTab, analystTab, noticesTab, reviewTab!, explainTab, transposeTab]
+          : [tableTab, chartTab, analystTab, noticesTab, reviewTab!, transposeTab];
       const setActiveTab = (activeTab: HTMLElement) => {
         allTabs().forEach((t) => {
           t.style.borderBottom = '2px solid transparent';
@@ -1077,6 +1245,10 @@ export const activate: ActivationFunction = (context) => {
             return String(v);
           });
           viewContainer.appendChild(transposeEl);
+        } else if (mode === 'review') {
+          setActiveTab(reviewTab || tableTab);
+          updateActionsVisibility();
+          viewContainer.appendChild(renderReviewChangesView());
         } else if (mode === 'explain') {
           // Explain Mode
           setActiveTab(explainTab || tableTab);

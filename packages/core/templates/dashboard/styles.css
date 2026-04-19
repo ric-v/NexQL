@@ -160,6 +160,17 @@ h1, h2, h3 { margin: 0; font-weight: 500; }
   gap: var(--sp-6);
 }
 
+#tab-performance .performance-charts-grid {
+  grid-template-columns: repeat(2, minmax(320px, 1fr));
+  gap: var(--sp-6);
+}
+
+@media (max-width: 980px) {
+  #tab-performance .performance-charts-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .chart-note {
   font-size: 11px;
   color: var(--muted-color);

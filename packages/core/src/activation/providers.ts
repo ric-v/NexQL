@@ -70,11 +70,6 @@ export function registerProviders(context: vscode.ExtensionContext, outputChanne
 
     context.subscriptions.push(
       vscode.languages.registerCompletionItemProvider(
-        { language: 'sql' },
-        sqlCompletionProvider,
-        '.' // Trigger on dot for schema.table suggestions
-      ),
-      vscode.languages.registerCompletionItemProvider(
         { scheme: 'vscode-notebook-cell', language: 'sql' },
         sqlCompletionProvider,
         '.'
