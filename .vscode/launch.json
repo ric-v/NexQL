@@ -1,30 +1,50 @@
 {
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "name": "Run Extension",
-            "type": "extensionHost",
-            "request": "launch",
-            "args": [
-                "--extensionDevelopmentPath=${workspaceFolder}"
-            ],
-            "outFiles": [
-                "${workspaceFolder}/out/**/*.js"
-            ],
-            "preLaunchTask": "${defaultBuildTask}"
-        },
-        {
-            "name": "Extension Tests",
-            "type": "extensionHost",
-            "request": "launch",
-            "args": [
-                "--extensionDevelopmentPath=${workspaceFolder}",
-                "--extensionTestsPath=${workspaceFolder}/out/test/suite/index"
-            ],
-            "outFiles": [
-                "${workspaceFolder}/out/**/*.js"
-            ],
-            "preLaunchTask": "${defaultBuildTask}"
-        }
-    ]
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run NexQL + all engines (F5 recommended)",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/packages/core",
+        "--extensionDevelopmentPath=${workspaceFolder}/packages/ext-postgres",
+        "--extensionDevelopmentPath=${workspaceFolder}/packages/ext-mysql",
+        "--extensionDevelopmentPath=${workspaceFolder}/packages/ext-sqlite",
+        "--extensionDevelopmentPath=${workspaceFolder}/packages/ext-mssql",
+        "--extensionDevelopmentPath=${workspaceFolder}/packages/ext-oracle"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/packages/*/dist/**/*.js",
+        "${workspaceFolder}/packages/*/out/**/*.js"
+      ],
+      "preLaunchTask": "build-dev"
+    },
+    {
+      "name": "Run NexQL + PostgreSQL only (faster build)",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/packages/core",
+        "--extensionDevelopmentPath=${workspaceFolder}/packages/ext-postgres"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/packages/core/dist/**/*.js",
+        "${workspaceFolder}/packages/ext-postgres/dist/**/*.js"
+      ],
+      "preLaunchTask": "build-dev-postgres-only"
+    },
+    {
+      "name": "Extension Tests",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/packages/core",
+        "--extensionTestsPath=${workspaceFolder}/packages/core/out/test/suite/index"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/packages/core/out/**/*.js"
+      ],
+      "preLaunchTask": "build-dev-postgres-only"
+    }
+  ]
 }

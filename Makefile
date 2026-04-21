@@ -1,198 +1,291 @@
-.PHONY: all clean install build package package-nightly publish publish-nightly publish-ovsx publish-vsx git-tag test test-unit test-integration test-renderer test-all coverage docker-up docker-down
+.PHONY: all clean install build test package package-nightly publish publish-nightly \
+       build-core build-postgres build-mysql build-sqlite build-mssql build-oracle \
+       package-core package-postgres package-mysql package-sqlite package-mssql package-oracle \
+       package-nightly-core package-nightly-postgres package-nightly-mysql package-nightly-sqlite package-nightly-mssql package-nightly-oracle \
+       publish-core publish-postgres publish-mysql publish-sqlite publish-mssql publish-oracle \
+       publish-nightly-core publish-nightly-postgres publish-nightly-mysql publish-nightly-sqlite publish-nightly-mssql publish-nightly-oracle \
+       test-core test-postgres test-mysql test-sqlite test-mssql test-oracle \
+       help
 
+# ──────────────────────────────────────────────────────────────────────
 # Variables
-NODE_BIN := node
-NPM_BIN := npm
-VSCE_CMD := npx -y @vscode/vsce@2.24.0
-OVSX_CMD := npx -y ovsx
-OPENVSX_NIGHTLY_NAME ?= postgres-explorer-nightly
-# Evaluate once per make invocation to keep package/publish nightly version consistent.
-NIGHTLY_RUN_NUMBER := $(shell date +%s)
+# ──────────────────────────────────────────────────────────────────────
+NODE_BIN  := node
+NPM_BIN   := npm
+VSCE_CMD  := npx -y @vscode/vsce@2.24.0
+OVSX_CMD  := npx -y ovsx
 
-# Get version and name from package.json using node
-EXTENSION_NAME := $(shell $(NODE_BIN) -p "require('./package.json').name")
-EXTENSION_VERSION := $(shell $(NODE_BIN) -p "require('./package.json').version")
-VSIX_FILE := $(EXTENSION_NAME)-$(EXTENSION_VERSION).vsix
+PACKAGES       := core ext-postgres ext-mysql ext-sqlite ext-mssql ext-oracle
+DB_EXTENSIONS  := ext-postgres ext-mysql ext-sqlite ext-mssql ext-oracle
+
+# ──────────────────────────────────────────────────────────────────────
+# All-package targets
+# ──────────────────────────────────────────────────────────────────────
 
 # Default target
 all: clean install build package
 
-# Clean build artifacts
-clean:
-	rm -rf out dist *.vsix node_modules
-
-# Install dependencies
+# Install dependencies for all packages (npm workspaces handles linking)
 install:
-	$(NPM_BIN) install
+	$(NPM_BIN) ci
 
-# Build the extension
-build:
-	$(NPM_BIN) run vscode:prepublish
+# Build ALL packages — core first, then database extensions
+build: build-core
+	@for pkg in $(DB_EXTENSIONS); do \
+		$(NPM_BIN) run build --workspace=packages/$$pkg; \
+	done
 
-# Package the extension
-package: build
-	@echo "Replacing README.md with MARKETPLACE.md for packaging..."
-	@if [ -f README.md ]; then cp README.md README.md.bak; fi
-	@cp MARKETPLACE.md README.md
-	@trap 'if [ -f README.md.bak ]; then mv README.md.bak README.md; fi' EXIT INT TERM; \
-	$(VSCE_CMD) package; \
-	EXIT_CODE=$$?; \
-	if [ -f README.md.bak ]; then mv README.md.bak README.md; fi; \
-	echo "Restored original README.md"; \
-	exit $$EXIT_CODE
+# compile: compile-core compile-postgres compile-mysql compile-sqlite compile-oracle
 
-# Package nightly VSIX artifacts for Marketplace (pre-release) and Open VSX companion
-package-nightly: build
-	@echo "Computing nightly version..."
-	@NIGHTLY_VERSION=$$($(NODE_BIN) -e "const [maj,min]=require('./package.json').version.split('.').map(Number); const nightlyMinor=min%2===0?min+1:min; const run='$(NIGHTLY_RUN_NUMBER)'; process.stdout.write(maj + '.' + nightlyMinor + '.' + run)"); \
-	echo "Using nightly version: $$NIGHTLY_VERSION"; \
-	NIGHTLY_VERSION=$$NIGHTLY_VERSION OPENVSX_NIGHTLY_NAME=$(OPENVSX_NIGHTLY_NAME) $(NODE_BIN) ./scripts/prepare-nightly-manifests.js
-	@echo "Packaging VS Code Marketplace nightly (pre-release)..."
-	@cp package.json package.json.bak
-	@cp .nightly/package.marketplace.json package.json
-	@$(VSCE_CMD) package --pre-release
-	@mv package.json.bak package.json
-	@echo "Packaging Open VSX nightly companion..."
-	@cp package.json package.json.bak
-	@cp .nightly/package.openvsx.json package.json
-	@$(VSCE_CMD) package
-	@mv package.json.bak package.json
-	@echo "Nightly packages created:"
-	@ls -1 *.vsix
-
-# Publish the extension to VS Code Marketplace and Open VSX Registry
-publish: package
-	@echo "Publishing $(VSIX_FILE) to VS Code Marketplace..."
-	test -f ./pat || (echo "Error: pat file not found. Please create a file named 'pat' containing your Personal Access Token." && exit 1)
-	$(VSCE_CMD) publish --packagePath $(VSIX_FILE) -p $(shell cat ./pat)
-	@echo "Successfully published to VS Code Marketplace."
-
-	@echo "Publishing $(VSIX_FILE) to Open VSX Registry..."
-	test -f ./pat-open-vsx || (echo "Error: pat-open-vsx file not found. Please create a file named 'pat-open-vsx' containing your Open VSX Access Token." && exit 1)
-	$(OVSX_CMD) publish $(VSIX_FILE) -p $(shell cat ./pat-open-vsx)
-	@echo "Successfully published to Open VSX Registry."
-
-# Publish nightly artifacts to both VS Code Marketplace and Open VSX
-publish-nightly: package-nightly
-	@echo "Publishing nightly pre-release to VS Code Marketplace..."
-	test -f ./pat || (echo "Error: pat file not found. Please create a file named 'pat' containing your Personal Access Token." && exit 1)
-	@NIGHTLY_VERSION=$$($(NODE_BIN) -e "const [maj,min]=require('./package.json').version.split('.').map(Number); const nightlyMinor=min%2===0?min+1:min; const run='$(NIGHTLY_RUN_NUMBER)'; process.stdout.write(maj + '.' + nightlyMinor + '.' + run)"); \
-	MARKET_VSIX="$(EXTENSION_NAME)-$$NIGHTLY_VERSION.vsix"; \
-	$(VSCE_CMD) publish --pre-release --packagePath $$MARKET_VSIX -p $$(cat ./pat)
-	@echo "Publishing nightly companion to Open VSX..."
-	test -f ./pat-open-vsx || (echo "Error: pat-open-vsx file not found. Please create a file named 'pat-open-vsx' containing your Open VSX Access Token." && exit 1)
-	@NIGHTLY_VERSION=$$($(NODE_BIN) -e "const [maj,min]=require('./package.json').version.split('.').map(Number); const nightlyMinor=min%2===0?min+1:min; const run='$(NIGHTLY_RUN_NUMBER)'; process.stdout.write(maj + '.' + nightlyMinor + '.' + run)"); \
-	OPENVSX_VSIX="$(OPENVSX_NIGHTLY_NAME)-$$NIGHTLY_VERSION.vsix"; \
-	$(OVSX_CMD) publish $$OPENVSX_VSIX -p $$(cat ./pat-open-vsx)
-	@echo "Successfully published nightly builds to both registries."
-
-# Publish the extension to VS Code Marketplace only
-publish-vsx: package
-	@echo "Publishing $(VSIX_FILE) to VS Code Marketplace..."
-	test -f ./pat || (echo "Error: pat file not found" && exit 1)
-	$(VSCE_CMD) publish --packagePath $(VSIX_FILE) -p $(shell cat ./pat)
-
-# Publish the extension to Open VSX Registry only
-publish-ovsx: package
-	@echo "Publishing $(VSIX_FILE) to Open VSX Registry..."
-	test -f ./pat-open-vsx || (echo "Error: pat-open-vsx file not found" && exit 1)
-	$(OVSX_CMD) publish $(VSIX_FILE) -p $(shell cat ./pat-open-vsx)
-
-# Watch mode for development
-watch:
-	$(NPM_BIN) run watch
-
-# Testing targets
+# Test ALL packages
 test:
-	$(NPM_BIN) run test
+	@for pkg in $(PACKAGES); do \
+		$(NPM_BIN) run test --workspace=packages/$$pkg; \
+	done
 
-test-unit:
-	$(NPM_BIN) run test:unit
+# Package ALL packages into .vsix files
+package: build
+	@for pkg in $(PACKAGES); do \
+		$(NPM_BIN) run package --workspace=packages/$$pkg; \
+	done
 
-test-integration:
-	$(NPM_BIN) run test:integration
+# Package ALL packages as nightly/pre-release .vsix files
+package-nightly: build
+	@for pkg in $(PACKAGES); do \
+		$(NPM_BIN) run package:nightly --workspace=packages/$$pkg; \
+	done
 
-test-renderer:
-	$(NPM_BIN) run test:renderer
+# Publish ALL packages (stable) — core first, then database extensions
+publish: package
+	@echo "Publishing core first (dependency ordering)..."
+	$(NPM_BIN) run publish:vsce --workspace=packages/core
+	$(NPM_BIN) run publish:ovsx --workspace=packages/core
+	@echo "Publishing database extensions..."
+	@for pkg in $(DB_EXTENSIONS); do \
+		$(NPM_BIN) run publish:vsce --workspace=packages/$$pkg; \
+		$(NPM_BIN) run publish:ovsx --workspace=packages/$$pkg; \
+	done
 
-test-all:
-	$(NPM_BIN) run test:all
+# Publish ALL packages (nightly/pre-release) — core first, then database extensions
+publish-nightly: package-nightly
+	@echo "Publishing core nightly first (dependency ordering)..."
+	$(NPM_BIN) run publish:vsce --workspace=packages/core
+	$(NPM_BIN) run publish:ovsx --workspace=packages/core
+	@echo "Publishing database extension nightlies..."
+	@for pkg in $(DB_EXTENSIONS); do \
+		$(NPM_BIN) run publish:vsce --workspace=packages/$$pkg; \
+		$(NPM_BIN) run publish:ovsx --workspace=packages/$$pkg; \
+	done
 
-coverage:
-	$(NPM_BIN) run coverage
+# Clean build artifacts in ALL packages
+clean:
+	@for pkg in $(PACKAGES); do \
+		echo "Cleaning packages/$$pkg..."; \
+		rm -rf packages/$$pkg/out packages/$$pkg/dist packages/$$pkg/*.vsix; \
+	done
+	rm -rf *.vsix
 
-coverage-report:
-	$(NPM_BIN) run coverage:report
-	@echo "Coverage report generated in ./coverage/index.html"
 
-# Docker testing targets
-docker-up:
-	docker-compose -f docker-compose.test.yml up -d
-	@echo "PostgreSQL test containers started"
-	@echo "Versions available on ports: 12(5412), 14(5414), 15(5415), 16(5416), 17(5417)"
+# ──────────────────────────────────────────────────────────────────────
+# Per-package compile targets
+# ──────────────────────────────────────────────────────────────────────
 
-docker-down:
-	docker-compose -f docker-compose.test.yml down
+compile-core:
+	$(NPM_BIN) run compile --workspace=packages/core
 
-docker-logs:
-	docker-compose -f docker-compose.test.yml logs -f
+compile-postgres:
+	$(NPM_BIN) run compile --workspace=packages/ext-postgres
 
-docker-clean:
-	docker-compose -f docker-compose.test.yml down -v
-	@echo "Test containers and volumes removed"
+compile-mysql:
+	$(NPM_BIN) run compile --workspace=packages/ext-mysql
 
-# update npm dependencies
-npm-update:
-	$(NPM_BIN) update
-	@echo "npm dependencies updated"
+compile-sqlite:
+	$(NPM_BIN) run compile --workspace=packages/ext-sqlite
 
-# Full test suite
-test-full: docker-up test-all coverage docker-down
-	@echo "Full test suite completed"
+compile-mssql:
+	$(NPM_BIN) run compile --workspace=packages/ext-mssql
 
-# Git tag and version bump (interactive)
-git-tag:
-	@echo "Current version: $(EXTENSION_VERSION)"
-	@read -p "Enter the new version number (e.g., 1.0.1): " VERSION; \
-	VERSION=$${VERSION#v}; \
-	if [ -z "$$VERSION" ]; then echo "Version cannot be empty"; exit 1; fi; \
-	echo "Updating package.json version to $$VERSION..."; \
-	$(NODE_BIN) -e "let pkg=require('./package.json'); pkg.version='$$VERSION'; require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2));"; \
-	echo "package.json updated."; \
-	git add package.json; \
-	git commit -m "Bump version to $$VERSION"; \
-	git tag -a "v$$VERSION" -m "Release v$$VERSION"; \
-	git push origin main; \
-	git push origin "v$$VERSION"; \
-	echo "Git tag v$$VERSION created and pushed."
+compile-oracle:
+	$(NPM_BIN) run compile --workspace=packages/ext-oracle
 
-# Help target
+# ──────────────────────────────────────────────────────────────────────
+# Per-package build targets
+# ──────────────────────────────────────────────────────────────────────
+
+build-core:
+	$(NPM_BIN) run build --workspace=packages/core
+
+build-postgres:
+	$(NPM_BIN) run build --workspace=packages/ext-postgres
+
+build-mysql:
+	$(NPM_BIN) run build --workspace=packages/ext-mysql
+
+build-sqlite:
+	$(NPM_BIN) run build --workspace=packages/ext-sqlite
+
+build-mssql:
+	$(NPM_BIN) run build --workspace=packages/ext-mssql
+
+build-oracle:
+	$(NPM_BIN) run build --workspace=packages/ext-oracle
+
+# ──────────────────────────────────────────────────────────────────────
+# Per-package test targets
+# ──────────────────────────────────────────────────────────────────────
+
+test-core:
+	$(NPM_BIN) run test --workspace=packages/core
+
+test-postgres:
+	$(NPM_BIN) run test --workspace=packages/ext-postgres
+
+test-mysql:
+	$(NPM_BIN) run test --workspace=packages/ext-mysql
+
+test-sqlite:
+	$(NPM_BIN) run test --workspace=packages/ext-sqlite
+
+test-mssql:
+	$(NPM_BIN) run test --workspace=packages/ext-mssql
+
+test-oracle:
+	$(NPM_BIN) run test --workspace=packages/ext-oracle
+
+# ──────────────────────────────────────────────────────────────────────
+# Per-package package targets
+# ──────────────────────────────────────────────────────────────────────
+
+package-core: build-core
+	$(NPM_BIN) run package --workspace=packages/core
+
+package-postgres: build-postgres
+	$(NPM_BIN) run package --workspace=packages/ext-postgres
+
+package-mysql: build-mysql
+	$(NPM_BIN) run package --workspace=packages/ext-mysql
+
+package-sqlite: build-sqlite
+	$(NPM_BIN) run package --workspace=packages/ext-sqlite
+
+package-mssql: build-mssql
+	$(NPM_BIN) run package --workspace=packages/ext-mssql
+
+package-oracle: build-oracle
+	$(NPM_BIN) run package --workspace=packages/ext-oracle
+
+# ──────────────────────────────────────────────────────────────────────
+# Per-package package-nightly targets
+# ──────────────────────────────────────────────────────────────────────
+
+package-nightly-core: build-core
+	$(NPM_BIN) run package:nightly --workspace=packages/core
+
+package-nightly-postgres: build-postgres
+	$(NPM_BIN) run package:nightly --workspace=packages/ext-postgres
+
+package-nightly-mysql: build-mysql
+	$(NPM_BIN) run package:nightly --workspace=packages/ext-mysql
+
+package-nightly-sqlite: build-sqlite
+	$(NPM_BIN) run package:nightly --workspace=packages/ext-sqlite
+
+package-nightly-mssql: build-mssql
+	$(NPM_BIN) run package:nightly --workspace=packages/ext-mssql
+
+package-nightly-oracle: build-oracle
+	$(NPM_BIN) run package:nightly --workspace=packages/ext-oracle
+
+# ──────────────────────────────────────────────────────────────────────
+# Per-package publish targets (stable)
+# ──────────────────────────────────────────────────────────────────────
+
+publish-core: package-core
+	$(NPM_BIN) run publish:vsce --workspace=packages/core
+	$(NPM_BIN) run publish:ovsx --workspace=packages/core
+
+publish-postgres: package-postgres
+	$(NPM_BIN) run publish:vsce --workspace=packages/ext-postgres
+	$(NPM_BIN) run publish:ovsx --workspace=packages/ext-postgres
+
+publish-mysql: package-mysql
+	$(NPM_BIN) run publish:vsce --workspace=packages/ext-mysql
+	$(NPM_BIN) run publish:ovsx --workspace=packages/ext-mysql
+
+publish-sqlite: package-sqlite
+	$(NPM_BIN) run publish:vsce --workspace=packages/ext-sqlite
+	$(NPM_BIN) run publish:ovsx --workspace=packages/ext-sqlite
+
+publish-mssql: package-mssql
+	$(NPM_BIN) run publish:vsce --workspace=packages/ext-mssql
+	$(NPM_BIN) run publish:ovsx --workspace=packages/ext-mssql
+
+publish-oracle: package-oracle
+	$(NPM_BIN) run publish:vsce --workspace=packages/ext-oracle
+	$(NPM_BIN) run publish:ovsx --workspace=packages/ext-oracle
+
+# ──────────────────────────────────────────────────────────────────────
+# Per-package publish-nightly targets
+# ──────────────────────────────────────────────────────────────────────
+
+publish-nightly-core: package-nightly-core
+	$(NPM_BIN) run publish:vsce --workspace=packages/core
+	$(NPM_BIN) run publish:ovsx --workspace=packages/core
+
+publish-nightly-postgres: package-nightly-postgres
+	$(NPM_BIN) run publish:vsce --workspace=packages/ext-postgres
+	$(NPM_BIN) run publish:ovsx --workspace=packages/ext-postgres
+
+publish-nightly-mysql: package-nightly-mysql
+	$(NPM_BIN) run publish:vsce --workspace=packages/ext-mysql
+	$(NPM_BIN) run publish:ovsx --workspace=packages/ext-mysql
+
+publish-nightly-sqlite: package-nightly-sqlite
+	$(NPM_BIN) run publish:vsce --workspace=packages/ext-sqlite
+	$(NPM_BIN) run publish:ovsx --workspace=packages/ext-sqlite
+
+publish-nightly-mssql: package-nightly-mssql
+	$(NPM_BIN) run publish:vsce --workspace=packages/ext-mssql
+	$(NPM_BIN) run publish:ovsx --workspace=packages/ext-mssql
+
+publish-nightly-oracle: package-nightly-oracle
+	$(NPM_BIN) run publish:vsce --workspace=packages/ext-oracle
+	$(NPM_BIN) run publish:ovsx --workspace=packages/ext-oracle
+
+# ──────────────────────────────────────────────────────────────────────
+# Help
+# ──────────────────────────────────────────────────────────────────────
+
 help:
-	@echo "Available targets:"
-	@echo "  all             : Clean, install, build, and package"
-	@echo "  clean           : Remove build artifacts"
-	@echo "  install         : Install dependencies"
-	@echo "  build           : Build the extension"
-	@echo "  package         : Create VSIX package"
-	@echo "  package-nightly : Create nightly VSIX packages (Marketplace pre-release + Open VSX companion)"
-	@echo "  publish         : Publish to BOTH VS Code Marketplace and Open VSX"
-	@echo "  publish-nightly : Publish nightly builds to BOTH VS Code Marketplace and Open VSX"
-	@echo "  publish-vsx     : Publish to VS Code Marketplace only"
-	@echo "  publish-ovsx    : Publish to Open VSX Registry only"
-	@echo "  git-tag         : Interactive version bump, commit, tag, and push"
+	@echo "NexQL Monorepo — Available targets"
 	@echo ""
-	@echo "Testing targets:"
-	@echo "  test            : Run unit tests"
-	@echo "  test-unit       : Run unit tests only"
-	@echo "  test-integration: Run integration tests"
-	@echo "  test-renderer   : Run renderer component tests"
-	@echo "  test-all        : Run all tests"
-	@echo "  coverage        : Generate coverage report"
-	@echo "  coverage-report : Generate HTML coverage report"
+	@echo "All-package targets:"
+	@echo "  all              : Clean, install, build, and package all packages"
+	@echo "  install          : Install dependencies for all packages"
+	@echo "  build            : Build all packages (core first, then extensions)"
+	@echo "  test             : Test all packages"
+	@echo "  package          : Package all packages into .vsix files"
+	@echo "  package-nightly  : Package all packages as nightly/pre-release .vsix files"
+	@echo "  publish          : Publish all packages (core first) to VS Code Marketplace and Open VSX"
+	@echo "  publish-nightly  : Publish all packages (core first) as nightly to both marketplaces"
+	@echo "  clean            : Remove build artifacts from all packages"
 	@echo ""
-	@echo "Docker testing targets:"
-	@echo "  docker-up       : Start PostgreSQL test containers (12-17)"
-	@echo "  docker-down     : Stop and remove test containers"
-	@echo "  docker-logs     : View container logs"
-	@echo "  docker-clean    : Remove containers and volumes"
-	@echo "  test-full       : Run full test suite with Docker (docker-up → test-all → docker-down)"
+	@echo "Per-package build targets:"
+	@echo "  build-core       build-postgres    build-mysql"
+	@echo "  build-sqlite     build-mssql       build-oracle"
+	@echo ""
+	@echo "Per-package test targets:"
+	@echo "  test-core        test-postgres     test-mysql"
+	@echo "  test-sqlite      test-mssql        test-oracle"
+	@echo ""
+	@echo "Per-package package targets:"
+	@echo "  package-core     package-postgres   package-mysql"
+	@echo "  package-sqlite   package-mssql      package-oracle"
+	@echo ""
+	@echo "Per-package publish targets (stable):"
+	@echo "  publish-core     publish-postgres   publish-mysql"
+	@echo "  publish-sqlite   publish-mssql      publish-oracle"
+	@echo ""
+	@echo "Per-package publish targets (nightly):"
+	@echo "  publish-nightly-core     publish-nightly-postgres   publish-nightly-mysql"
+	@echo "  publish-nightly-sqlite   publish-nightly-mssql      publish-nightly-oracle"

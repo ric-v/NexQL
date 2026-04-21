@@ -1,0 +1,59 @@
+{
+  "name": "nexql-ext-postgres",
+  "displayName": "NexQL - PostgreSQL",
+  "version": "1.0.0",
+  "description": "PostgreSQL database support for NexQL",
+  "publisher": "ric-v",
+  "license": "MIT",
+  "id": "ric-v.postgres-explorer",
+  "engines": {
+    "vscode": "^1.105.0",
+    "node": ">=18.0.0"
+  },
+  "extensionDependencies": [
+    "ric-v.nexql"
+  ],
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "postgresql",
+    "postgres",
+    "pg",
+    "database",
+    "sql",
+    "nexql",
+    "query",
+    "explorer"
+  ],
+  "icon": "resources/postgres-vsc-icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nicric/nexql"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "scripts": {
+    "vscode:prepublish": "npm run esbuild-base -- --minify",
+    "build": "npm run compile",
+    "compile": "npm run esbuild-base",
+    "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:pg --format=cjs --platform=node --main-fields=main --alias:@nexql/core=../core/src",
+    "watch": "npm run esbuild-base -- --sourcemap --watch",
+    "package": "npx @vscode/vsce package",
+    "package:nightly": "npx @vscode/vsce package --pre-release",
+    "publish:vsce": "npx @vscode/vsce publish -p $VSCE_PAT",
+    "publish:ovsx": "npx ovsx publish -p $OVSX_PAT",
+    "test": "echo 'no tests yet' && exit 0",
+    "typecheck": "tsc -p ./ --noEmit"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0",
+    "@types/vscode": "^1.105.0",
+    "typescript": "^6.0.2"
+  }
+}

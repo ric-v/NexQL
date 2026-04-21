@@ -1,6 +1,6 @@
-name: Publish Extension
+name: Publish Extensions
 permissions:
-  contents: read
+  contents: write
 
 on:
   push:
@@ -9,73 +9,116 @@ on:
   workflow_dispatch:
 
 jobs:
-  publish:
+  publish-core:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          # Use Node 20 so web platform globals (File/Blob) are available
           node-version: '20'
           cache: 'npm'
 
       - name: Get version from tag
         id: version
         run: |
-          # Extract version from git tag (remove 'v' prefix)
           TAG_VERSION=${GITHUB_REF_NAME#v}
           echo "VERSION=$TAG_VERSION" >> $GITHUB_OUTPUT
-          
-          # Verify package.json version matches tag
-          PKG_VERSION=$(node -p "require('./package.json').version")
+
+          # Verify core package.json version matches tag
+          PKG_VERSION=$(node -p "require('./packages/core/package.json').version")
           echo "Tag version: $TAG_VERSION"
-          echo "Package.json version: $PKG_VERSION"
-          
+          echo "Core package.json version: $PKG_VERSION"
+
           if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "::error::Tag version ($TAG_VERSION) doesn't match package.json version ($PKG_VERSION)"
+            echo "::error::Tag version ($TAG_VERSION) doesn't match core package.json version ($PKG_VERSION)"
             exit 1
           fi
-          
-          # Set VSIX filename
-          EXTENSION_NAME=$(node -p "require('./package.json').name")
-          echo "VSIX_FILE=${EXTENSION_NAME}-${PKG_VERSION}.vsix" >> $GITHUB_OUTPUT
-          
+
       - name: Install dependencies
         run: npm ci
-        
-      - name: Build
-        run: npm run vscode:prepublish
-        
-      - name: Package Extension
-        run: npx @vscode/vsce package
 
-      - name: Upload VSIX as Artifact
+      - name: Build core
+        run: npm run build --workspace=packages/core
+
+      - name: Package core
+        run: npm run package --workspace=packages/core
+
+      - name: Upload core VSIX
         uses: actions/upload-artifact@v4
         with:
-          name: extension
-          path: "*.vsix"
+          name: vsix-core
+          path: packages/core/*.vsix
+          retention-days: 90
+
+      - name: Publish core to VS Code Marketplace
+        run: npx @vscode/vsce publish --packagePath packages/core/*.vsix -p ${{ secrets.VSCE_PAT }}
+
+      - name: Publish core to Open VSX Registry
+        run: npx ovsx publish packages/core/*.vsix -p ${{ secrets.OVSX_PAT }}
+
+  publish-extensions:
+    needs: publish-core
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [ext-postgres, ext-mysql, ext-sqlite, ext-mssql, ext-oracle]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build ${{ matrix.package }}
+        run: npm run build --workspace=packages/${{ matrix.package }}
+
+      - name: Package ${{ matrix.package }}
+        run: npm run package --workspace=packages/${{ matrix.package }}
+
+      - name: Upload VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix-${{ matrix.package }}
+          path: packages/${{ matrix.package }}/*.vsix
           retention-days: 90
 
       - name: Publish to VS Code Marketplace
-        run: |
-          echo "Publishing ${{ steps.version.outputs.VSIX_FILE }} to VS Code Marketplace..."
-          npx @vscode/vsce publish --packagePath ${{ steps.version.outputs.VSIX_FILE }} -p ${{ secrets.VSCE_PAT }}
+        run: npx @vscode/vsce publish --packagePath packages/${{ matrix.package }}/*.vsix -p ${{ secrets.VSCE_PAT }}
 
       - name: Publish to Open VSX Registry
-        run: |
-          echo "Publishing ${{ steps.version.outputs.VSIX_FILE }} to Open VSX Registry..."
-          npx ovsx publish ${{ steps.version.outputs.VSIX_FILE }} -p ${{ secrets.OVSX_PAT }}
+        run: npx ovsx publish packages/${{ matrix.package }}/*.vsix -p ${{ secrets.OVSX_PAT }}
+
+  create-release:
+    needs: [publish-core, publish-extensions]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all VSIX artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: vsix-artifacts
+          pattern: vsix-*
+          merge-multiple: true
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          files: "*.vsix"
+          files: vsix-artifacts/*.vsix
           draft: false
           prerelease: false
           generate_release_notes: true

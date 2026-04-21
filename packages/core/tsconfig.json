@@ -1,0 +1,35 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": "src",
+    "paths": {
+      "@features/*": ["features/*"],
+      "@core/*": ["core/*"],
+      "@ui/*": ["ui/*"]
+    },
+    "jsx": "react",
+    "outDir": "out",
+    "rootDir": "src",
+    "types": [
+      "node",
+      "vscode",
+      "pg"
+    ],
+    "ignoreDeprecations": "6.0"
+  },
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    ".vscode-test",
+    "src/test/unit/**",
+    "src/test/integration/**",
+    "src/test/runTest.ts",
+    "src/test/setup.ts",
+    "src/test/testUtils.ts",
+    "src/ui/renderer/**",
+    "src/ui/theme/**",
+    "src/renderer/**"
+  ]
+}

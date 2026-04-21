@@ -1,0 +1,2244 @@
+{
+  "name": "nexql",
+  "displayName": "NexQL",
+  "version": "1.0.0",
+  "description": "Universal SQL database management for VS Code — supports PostgreSQL, MySQL, SQLite, MSSQL, Oracle with notebook, AI assistant, and schema designer",
+  "publisher": "ric-v",
+  "private": false,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dev-asterix/PgStudio.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dev-asterix/PgStudio/issues"
+  },
+  "homepage": "https://pgstudio.astrx.dev/",
+  "icon": "resources/NexQL.png",
+  "galleryBanner": {
+    "color": "#575584",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.105.0",
+    "node": ">=18.0.0"
+  },
+  "categories": [
+    "Data Science",
+    "Notebooks",
+    "Other"
+  ],
+  "keywords": [
+    "database",
+    "sql",
+    "postgresql",
+    "mysql",
+    "sqlite",
+    "mssql",
+    "oracle",
+    "sql notebook",
+    "ai sql",
+    "database explorer",
+    "db client",
+    "database management",
+    "sql notebook vs code",
+    "ai sql assistant",
+    "multi-database"
+  ],
+  "main": "./dist/extension.js",
+  "extensionPack": [
+    "ric-v.postgres-explorer",
+    "ric-v.nexql-mysql",
+    "ric-v.nexql-sqlite",
+    "ric-v.nexql-mssql",
+    "ric-v.nexql-oracle"
+  ],
+  "scripts": {
+    "vscode:prepublish": "npm run esbuild-base -- --minify && npm run esbuild-renderer -- --minify",
+    "build": "npm run compile",
+    "package": "npx @vscode/vsce package",
+    "package:nightly": "npx @vscode/vsce package --pre-release",
+    "publish:vsce": "npx @vscode/vsce publish -p $VSCE_PAT",
+    "publish:ovsx": "npx ovsx publish -p $OVSX_PAT",
+    "prepare:nightly:manifests": "node ./scripts/prepare-nightly-manifests.js",
+    "package:prerelease": "npx @vscode/vsce package --pre-release",
+    "package:openvsx:nightly": "npx @vscode/vsce package",
+    "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:ssh2 --external:pg --external:mysql2/promise --external:mysql2 --external:better-sqlite3 --format=cjs --platform=node --main-fields=main",
+    "esbuild-renderer": "esbuild ./src/ui/renderer/renderer_v2.ts --bundle --outfile=dist/renderer_v2.js --format=esm --platform=browser",
+    "copy-templates": "cp -r templates dist/",
+    "compile": "tsc -p ./ && npm run esbuild-renderer && npm run copy-templates",
+    "watch": "tsc -watch -p ./",
+    "esbuild": "npm run esbuild-base -- --sourcemap && npm run esbuild-renderer -- --sourcemap",
+    "esbuild-watch": "npm run esbuild-base -- --sourcemap --watch & npm run esbuild-renderer -- --sourcemap --watch",
+    "test": "npm run compile && mocha --loader ./node_modules/ts-node/esm/transpile-only.mjs -r tsconfig-paths/register -r src/test/setup.ts 'src/test/unit/**/*.test.ts'",
+    "test:unit": "npm run compile && TS_NODE_PROJECT=src/test/tsconfig.json node -r ts-node/register/transpile-only -r tsconfig-paths/register -r ./src/test/setup.ts ./node_modules/mocha/bin/mocha --exit 'src/test/unit/**/*.test.ts'",
+    "test:integration": "npm run compile && ts-mocha -p src/test/tsconfig.json -r tsconfig-paths/register -r src/test/setup.ts 'src/test/integration/**/*.test.ts'",
+    "test:renderer": "npm run compile && ts-mocha -p src/test/tsconfig.json -r tsconfig-paths/register -r src/test/setup.ts 'src/test/unit/RendererComponents.test.ts'",
+    "test:all": "npm run compile && ts-mocha -p src/test/tsconfig.json -r ts-node/register -r tsconfig-paths/register -r src/test/setup.ts 'src/test/**/*.test.ts'",
+    "lint": "eslint \"src/**/*.ts\" \"scripts/**/*.js\" \"*.js\"",
+    "lint:fix": "npm run lint -- --fix",
+    "format": "prettier --check \"src/**/*.{ts,js,json,md,css,html,yml,yaml}\" \"scripts/**/*.js\" \"*.js\" \"*.{md,json,yml,yaml,css,html}\"",
+    "format:fix": "prettier --write \"src/**/*.{ts,js,json,md,css,html,yml,yaml}\" \"scripts/**/*.js\" \"*.js\" \"*.{md,json,yml,yaml,css,html}\"",
+    "clean:src-js": "node ./scripts/clean-generated-src-js.js",
+    "postesbuild-base": "npm run clean:src-js",
+    "postesbuild": "npm run clean:src-js",
+    "postcompile": "npm run clean:src-js",
+    "coverage": "npm run compile && nyc ts-mocha -p src/test/tsconfig.json -r tsconfig-paths/register -r src/test/setup.ts --exit 'src/test/unit/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@types/pg-cursor": "^2.7.2",
+    "chart.js": "^4.5.1",
+    "esbuild": ">=0.28.0",
+    "pg": "^8.20.0",
+    "pg-cursor": "^2.19.0",
+    "sql-formatter": "^15.7.3",
+    "ssh2": "^1.17.0"
+  },
+  "devDependencies": {
+    "@types/chai": "^5.2.3",
+    "@types/jsdom": "^28.0.1",
+    "@types/mocha": "^10.0.10",
+    "@types/module-alias": "^2.0.4",
+    "@types/node": "^25.5.1",
+    "@types/pg": "^8.20.0",
+    "@types/sinon": "^21.0.1",
+    "@types/ssh2": "^1.15.5",
+    "@types/vscode": "^1.105.0",
+    "@types/vscode-notebook-renderer": "^1.72.4",
+    "@typescript-eslint/eslint-plugin": "^8.58.2",
+    "@typescript-eslint/parser": "^8.58.2",
+    "chai": "^6.2.2",
+    "esbuild": ">=0.28.0",
+    "eslint": "^9.39.4",
+    "eslint-config-prettier": "^10.1.8",
+    "fast-check": "^4.6.0",
+    "jsdom": "^29.0.1",
+    "mocha": "^11.7.5",
+    "module-alias": "^2.3.4",
+    "nyc": "^18.0.0",
+    "prettier": "^3.8.2",
+    "sinon": "^21.0.3",
+    "ts-mocha": "^11.1.0",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^6.0.2"
+  },
+  "overrides": {
+    "diff": "^8.0.4",
+    "serialize-javascript": "^7.0.5"
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "postgres",
+        "aliases": [
+          "PostgreSQL",
+          "postgres"
+        ],
+        "extensions": [
+          ".pgsql"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "nexql.addConnection",
+        "title": "Add PostgreSQL Connection",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.refreshConnections",
+        "title": "Refresh Connections",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nexql.editConnection",
+        "title": "Edit Connection",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "nexql.addToFavorites",
+        "title": "Add to Favorites",
+        "icon": "$(star-empty)"
+      },
+      {
+        "command": "nexql.removeFromFavorites",
+        "title": "Remove from Favorites",
+        "icon": "$(star-full)"
+      },
+      {
+        "command": "nexql.manageConnections",
+        "title": "Manage Connections",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "nexql.aiSettings",
+        "title": "AI Settings",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "nexql.showTableProperties",
+        "title": "Show Table Properties",
+        "icon": "$(info)"
+      },
+      {
+        "command": "nexql.newNotebook",
+        "title": "New PostgreSQL Notebook",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "nexql.jumpToSection",
+        "title": "Jump to Section",
+        "category": "PgStudio",
+        "icon": "$(list-unordered)"
+      },
+      {
+        "command": "nexql.notebooks.open",
+        "title": "Open Notebook",
+        "category": "PgStudio",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "nexql.notebooks.rename",
+        "title": "Rename Notebook",
+        "category": "PgStudio",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "nexql.notebooks.delete",
+        "title": "Delete Notebook",
+        "category": "PgStudio",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "nexql.notebooks.refresh",
+        "title": "Refresh Notebooks",
+        "category": "PgStudio",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nexql.generateQuery",
+        "title": "AI: Generate Query",
+        "category": "PgStudio"
+      },
+      {
+        "command": "nexql.optimizeQuery",
+        "title": "AI: Optimize Query",
+        "category": "PgStudio"
+      },
+      {
+        "command": "nexql.connect",
+        "title": "Connect to PostgreSQL Database"
+      },
+      {
+        "command": "nexql.disconnect",
+        "title": "Disconnect PostgreSQL Database"
+      },
+      {
+        "command": "nexql.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nexql.deleteConnection",
+        "title": "Delete Connection",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "nexql.openColumnNotebook",
+        "title": "Open Column Analysis",
+        "category": "Postgres Explorer"
+      },
+      {
+        "command": "nexql.showViewProperties",
+        "title": "Show View Properties",
+        "icon": "$(info)"
+      },
+      {
+        "command": "nexql.showFunctionProperties",
+        "title": "Show Function Properties",
+        "icon": "$(info)"
+      },
+      {
+        "command": "nexql.functionOperations",
+        "title": "Function Operations",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "nexql.createReplaceFunction",
+        "title": "Edit Function Definition",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "nexql.callFunction",
+        "title": "Call Function",
+        "icon": "$(play)"
+      },
+      {
+        "command": "nexql.dropFunction",
+        "title": "Drop Function",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "nexql.viewTableData",
+        "title": "View Table Data",
+        "icon": "$(table)"
+      },
+      {
+        "command": "nexql.dropTable",
+        "title": "Drop Table",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "nexql.editViewDefinition",
+        "title": "Edit View Definition",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "nexql.viewViewData",
+        "title": "View View Data",
+        "icon": "$(table)"
+      },
+      {
+        "command": "nexql.dropView",
+        "title": "Drop View",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "nexql.tableOperations",
+        "title": "Table Operations",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "nexql.viewOperations",
+        "title": "View Operations",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "nexql.viewScriptSelect",
+        "title": "Script as SELECT",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "nexql.viewScriptCreate",
+        "title": "Script as CREATE",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "nexql.viewMaintenanceVacuum",
+        "title": "VACUUM",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "nexql.viewMaintenanceAnalyze",
+        "title": "ANALYZE",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "nexql.truncateTable",
+        "title": "Truncate Table",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "nexql.insertData",
+        "title": "Insert Data",
+        "icon": "$(insert)"
+      },
+      {
+        "command": "nexql.updateData",
+        "title": "Update Data",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "nexql.quickClone",
+        "title": "Quick Clone Table",
+        "icon": "$(files)"
+      },
+      {
+        "command": "nexql.exportTable",
+        "title": "Export Table Data",
+        "icon": "$(export)"
+      },
+      {
+        "command": "nexql.createInSchema",
+        "title": "Create Object",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.schemaOperations",
+        "title": "Schema Operations",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "nexql.createSchema",
+        "title": "Create Schema",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.pasteTable",
+        "title": "Smart Paste (create table from clipboard)",
+        "icon": "$(clippy)"
+      },
+      {
+        "command": "nexql.refreshMaterializedView",
+        "title": "Refresh Materialized View",
+        "category": "Postgres Explorer",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nexql.materializedViewOperations",
+        "title": "Materialized View Operations",
+        "category": "Postgres Explorer",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "nexql.foreignTableOperations",
+        "title": "Foreign Table Operations",
+        "category": "Postgres Explorer",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "nexql.dropForeignTable",
+        "title": "Drop Foreign Table",
+        "category": "Postgres Explorer",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "nexql.typeOperations",
+        "title": "Type Operations",
+        "category": "Postgres Explorer",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "nexql.dropType",
+        "title": "Drop Type",
+        "category": "Postgres Explorer",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "nexql.createTable",
+        "title": "Create Table",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.createView",
+        "title": "Create View",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.createFunction",
+        "title": "Create Function",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.createType",
+        "title": "Create Type",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.createMaterializedView",
+        "title": "Create Materialized View",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.createForeignTable",
+        "title": "Create Foreign Table",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.foreignDataWrapperOperations",
+        "title": "FDW Operations"
+      },
+      {
+        "command": "nexql.showForeignDataWrapperProperties",
+        "title": "Show FDW Properties",
+        "icon": "$(info)"
+      },
+      {
+        "command": "nexql.refreshForeignDataWrapper",
+        "title": "Refresh FDW",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nexql.createForeignServer",
+        "title": "Create Foreign Server",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.foreignServerOperations",
+        "title": "Server Operations"
+      },
+      {
+        "command": "nexql.showForeignServerProperties",
+        "title": "Show Server Properties",
+        "icon": "$(info)"
+      },
+      {
+        "command": "nexql.dropForeignServer",
+        "title": "Drop Foreign Server"
+      },
+      {
+        "command": "nexql.refreshForeignServer",
+        "title": "Refresh Server",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nexql.createUserMapping",
+        "title": "Create User Mapping",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.userMappingOperations",
+        "title": "User Mapping Operations"
+      },
+      {
+        "command": "nexql.showUserMappingProperties",
+        "title": "Show User Mapping Properties",
+        "icon": "$(info)"
+      },
+      {
+        "command": "nexql.dropUserMapping",
+        "title": "Drop User Mapping"
+      },
+      {
+        "command": "nexql.refreshUserMapping",
+        "title": "Refresh User Mapping",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nexql.createRole",
+        "title": "Create Role",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.enableExtension",
+        "title": "Enable Extension",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.viewMaterializedViewData",
+        "title": "View Data",
+        "category": "Postgres Explorer",
+        "icon": "$(table)"
+      },
+      {
+        "command": "nexql.disconnectConnection",
+        "title": "Disconnect",
+        "category": "Postgres Explorer",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "nexql.reconnectConnection",
+        "title": "Connect",
+        "category": "Postgres Explorer",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "nexql.editMatView",
+        "title": "Edit Materialized View",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "nexql.editType",
+        "title": "Edit Type",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "nexql.showTypeProperties",
+        "title": "Show Type Properties",
+        "icon": "$(info)"
+      },
+      {
+        "command": "nexql.dropType",
+        "title": "Drop Type",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "nexql.editForeignTable",
+        "title": "Edit Foreign Table",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "nexql.viewForeignTableData",
+        "title": "Query Foreign Table Data",
+        "icon": "$(table)"
+      },
+      {
+        "command": "nexql.showForeignTableProperties",
+        "title": "Show Foreign Table Properties",
+        "icon": "$(info)"
+      },
+      {
+        "command": "nexql.dropForeignTable",
+        "title": "Drop Foreign Table",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "nexql.dropMatView",
+        "title": "Drop Materialized View",
+        "category": "Postgres Explorer",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "nexql.editMaterializedView",
+        "title": "Edit Materialized View",
+        "category": "Postgres Explorer",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "nexql.showMaterializedViewProperties",
+        "title": "Show Materialized View Properties",
+        "category": "Postgres Explorer",
+        "icon": "$(info)"
+      },
+      {
+        "command": "nexql.extensionOperations",
+        "title": "Extension Operations",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "nexql.dropExtension",
+        "title": "Drop Extension",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "nexql.editRole",
+        "title": "Edit Role",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "nexql.grantRevoke",
+        "title": "Grant/Revoke Privileges",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "nexql.dropRole",
+        "title": "Drop Role",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "nexql.roleOperations",
+        "title": "Role Operations",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "nexql.showRoleProperties",
+        "title": "Show Role Properties",
+        "icon": "$(info)"
+      },
+      {
+        "command": "nexql.createInDatabase",
+        "title": "Create Object",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.databaseOperations",
+        "title": "Database Operations",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "nexql.showDashboard",
+        "title": "Show Database Dashboard",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "nexql.showSchemaProperties",
+        "title": "Properties",
+        "icon": "$(settings)"
+      },
+      {
+        "command": "nexql.editTable",
+        "title": "Edit Table Definition",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "nexql.scriptSelect",
+        "title": "SELECT Script",
+        "icon": "$(list-selection)"
+      },
+      {
+        "command": "nexql.scriptInsert",
+        "title": "INSERT Script",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.scriptUpdate",
+        "title": "UPDATE Script",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "nexql.scriptDelete",
+        "title": "DELETE Script",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "nexql.scriptCreate",
+        "title": "CREATE Script",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.maintenanceVacuum",
+        "title": "VACUUM",
+        "icon": "$(broom)"
+      },
+      {
+        "command": "nexql.maintenanceAnalyze",
+        "title": "ANALYZE",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "nexql.maintenanceReindex",
+        "title": "REINDEX",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nexql.backupDatabase",
+        "title": "Backup...",
+        "icon": "$(save)"
+      },
+      {
+        "command": "nexql.restoreDatabase",
+        "title": "Restore...",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "nexql.generateCreateScript",
+        "title": "CREATE Script",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "nexql.disconnectDatabase",
+        "title": "Disconnect from database",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "nexql.maintenanceDatabase",
+        "title": "Maintenance...",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "nexql.queryTool",
+        "title": "Query Tool",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "nexql.psqlTool",
+        "title": "PSQL Tool",
+        "category": "PostgreSQL"
+      },
+      {
+        "command": "nexql.showConfiguration",
+        "title": "Show Configuration",
+        "category": "PostgreSQL"
+      },
+      {
+        "command": "nexql.createDatabase",
+        "title": "Create Database",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.dropDatabase",
+        "title": "Drop Database",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "nexql.scriptAlterDatabase",
+        "title": "ALTER Script",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "nexql.aiAssist",
+        "title": "Put AI to work",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "nexql.attachToChat",
+        "title": "Attach to SQL Assistant",
+        "icon": "$(mention)"
+      },
+      {
+        "command": "nexql.showColumnProperties",
+        "title": "Show Column Properties",
+        "icon": "$(info)"
+      },
+      {
+        "command": "nexql.copyColumnName",
+        "title": "Copy Column Name",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "nexql.copyColumnNameQuoted",
+        "title": "Copy Column Name (Quoted)",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "nexql.generateSelectStatement",
+        "title": "SELECT Statement",
+        "icon": "$(code)"
+      },
+      {
+        "command": "nexql.generateWhereClause",
+        "title": "WHERE Clause",
+        "icon": "$(code)"
+      },
+      {
+        "command": "nexql.generateAlterColumnScript",
+        "title": "ALTER COLUMN Script",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "nexql.generateDropColumnScript",
+        "title": "DROP COLUMN Script",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "nexql.generateRenameColumnScript",
+        "title": "RENAME COLUMN Script",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "nexql.addColumnComment",
+        "title": "Add/Edit Column Comment",
+        "icon": "$(comment)"
+      },
+      {
+        "command": "nexql.generateIndexOnColumn",
+        "title": "CREATE INDEX Script",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.viewColumnStatistics",
+        "title": "View Column Statistics",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "nexql.showConstraintProperties",
+        "title": "Properties",
+        "icon": "$(info)"
+      },
+      {
+        "command": "nexql.copyConstraintName",
+        "title": "Copy Constraint Name",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "nexql.generateDropConstraintScript",
+        "title": "DROP CONSTRAINT Script",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "nexql.generateAlterConstraintScript",
+        "title": "ALTER CONSTRAINT Script",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "nexql.validateConstraint",
+        "title": "Validate Constraint",
+        "icon": "$(check)"
+      },
+      {
+        "command": "nexql.generateAddConstraintScript",
+        "title": "ADD CONSTRAINT Templates",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.viewConstraintDependencies",
+        "title": "View Dependencies",
+        "icon": "$(references)"
+      },
+      {
+        "command": "nexql.showIndexProperties",
+        "title": "Properties",
+        "icon": "$(info)"
+      },
+      {
+        "command": "nexql.copyIndexName",
+        "title": "Copy Index Name",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "nexql.generateDropIndexScript",
+        "title": "DROP INDEX Script",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "nexql.generateReindexScript",
+        "title": "REINDEX Script",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "nexql.generateScriptCreate",
+        "title": "CREATE Script",
+        "category": "PostgreSQL Explorer"
+      },
+      {
+        "command": "nexql.analyzeIndexUsage",
+        "title": "Analyze Index Usage",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "nexql.generateAlterIndexScript",
+        "title": "ALTER INDEX Script",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "nexql.addIndexComment",
+        "title": "Add Comment",
+        "icon": "$(comment)"
+      },
+      {
+        "command": "nexql.constraintOperations",
+        "title": "Constraint Operations",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "nexql.indexOperations",
+        "title": "Index Operations",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "nexql.addColumn",
+        "title": "Add Column",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.addConstraint",
+        "title": "Add Constraint",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.addIndex",
+        "title": "Add Index",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nexql.clearHistory",
+        "title": "Clear History",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "nexql.copyQuery",
+        "title": "Copy Query",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "nexql.openQuery",
+        "title": "Open Query",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "nexql.deleteHistoryItem",
+        "title": "Delete",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "nexql.explainQuery",
+        "title": "EXPLAIN Query",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "nexql.tableProfile",
+        "title": "View Table Profile",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "nexql.tableActivity",
+        "title": "View Table Activity",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "nexql.indexUsage",
+        "title": "View Index Usage",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "nexql.tableDefinition",
+        "title": "View Table Definition",
+        "icon": "$(symbol-class)"
+      },
+      {
+        "command": "nexql.switchConnection",
+        "title": "Switch Connection",
+        "icon": "$(server)",
+        "category": "PgStudio"
+      },
+      {
+        "command": "nexql.switchDatabase",
+        "title": "Switch Database",
+        "icon": "$(database)",
+        "category": "PgStudio"
+      },
+      {
+        "command": "nexql.switchConnectionProfile",
+        "title": "Switch Connection Profile",
+        "icon": "$(person)",
+        "category": "PgStudio: Profiles"
+      },
+      {
+        "command": "nexql.createConnectionProfile",
+        "title": "Create Connection Profile",
+        "icon": "$(add)",
+        "category": "PgStudio: Profiles"
+      },
+      {
+        "command": "nexql.deleteConnectionProfile",
+        "title": "Delete Connection Profile",
+        "icon": "$(trash)",
+        "category": "PgStudio: Profiles"
+      },
+      {
+        "command": "nexql.saveQueryToLibrary",
+        "title": "Save Query to Library",
+        "icon": "$(save)",
+        "category": "PgStudio: Queries"
+      },
+      {
+        "command": "nexql.saveQueryToLibraryUI",
+        "title": "\ud83d\udcbe Save Query (UI Form)",
+        "icon": "$(save)",
+        "category": "PgStudio: Queries"
+      },
+      {
+        "command": "nexql.loadSavedQuery",
+        "title": "Load Saved Query",
+        "icon": "$(folder-opened)",
+        "category": "PgStudio: Queries"
+      },
+      {
+        "command": "nexql.loadSavedQueryUI",
+        "title": "\ud83d\udcc2 Load Saved Query",
+        "icon": "$(folder-opened)",
+        "category": "PgStudio: Queries"
+      },
+      {
+        "command": "nexql.viewSavedQuery",
+        "title": "\ud83d\udccc View Saved Query",
+        "icon": "$(preview)",
+        "category": "PgStudio: Queries"
+      },
+      {
+        "command": "nexql.copySavedQuery",
+        "title": "\ud83d\udccb Copy Query",
+        "icon": "$(copy)",
+        "category": "PgStudio: Queries"
+      },
+      {
+        "command": "nexql.editSavedQuery",
+        "title": "\u270f\ufe0f Edit Query",
+        "icon": "$(edit)",
+        "category": "PgStudio: Queries"
+      },
+      {
+        "command": "nexql.openSavedQueryInNotebook",
+        "title": "\ud83d\udcd8 Open in Notebook",
+        "icon": "$(notebook)",
+        "category": "PgStudio: Queries"
+      },
+      {
+        "command": "nexql.deleteSavedQuery",
+        "title": "Delete Saved Query",
+        "icon": "$(trash)",
+        "category": "PgStudio: Queries"
+      },
+      {
+        "command": "nexql.searchSavedQueries",
+        "title": "Search Saved Queries",
+        "icon": "$(search)",
+        "category": "PgStudio: Queries"
+      },
+      {
+        "command": "nexql.showQueryRecommendations",
+        "title": "Show Query Recommendations",
+        "icon": "$(lightbulb)",
+        "category": "PgStudio: Queries"
+      },
+      {
+        "command": "nexql.exportSavedQueries",
+        "title": "Export Saved Queries",
+        "icon": "$(export)",
+        "category": "PgStudio: Queries"
+      },
+      {
+        "command": "nexql.importSavedQueries",
+        "title": "Import Saved Queries",
+        "icon": "$(import)",
+        "category": "PgStudio: Queries"
+      },
+      {
+        "command": "nexql.openTableDesigner",
+        "title": "Open Table Designer (Visual)",
+        "icon": "$(layout)",
+        "category": "PgStudio: Schema"
+      },
+      {
+        "command": "nexql.createTableVisual",
+        "title": "Create Table (Visual)",
+        "icon": "$(add)",
+        "category": "PgStudio: Schema"
+      },
+      {
+        "command": "nexql.openSchemaDiff",
+        "title": "Schema Diff",
+        "icon": "$(diff)",
+        "category": "PgStudio: Schema"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "nexql.scriptsMenu",
+        "label": "Scripts",
+        "icon": "$(code)"
+      },
+      {
+        "id": "nexql.maintenanceMenu",
+        "label": "Maintenance",
+        "icon": "$(tools)"
+      },
+      {
+        "id": "nexql.viewScriptsMenu",
+        "label": "Scripts",
+        "icon": "$(code)"
+      },
+      {
+        "id": "nexql.databaseScriptsMenu",
+        "label": "Scripts",
+        "icon": "$(code)"
+      },
+      {
+        "id": "nexql.columnScriptsMenu",
+        "label": "Scripts",
+        "icon": "$(code)"
+      },
+      {
+        "id": "nexql.constraintScriptsMenu",
+        "label": "Scripts"
+      },
+      {
+        "id": "nexql.indexScriptsMenu",
+        "label": "Scripts"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "nexql-explorer",
+          "title": "NexQL",
+          "icon": "resources/nexql-activity-bar.svg"
+        },
+        {
+          "id": "nexql-sql-assistant",
+          "title": "SQL Assistant",
+          "icon": "resources/sql-assistant-vsc-icon.png"
+        }
+      ]
+    },
+    "views": {
+      "nexql-explorer": [
+        {
+          "id": "nexqlExplorer",
+          "name": "Connections",
+          "contextualTitle": "PG Studio",
+          "icon": "resources/postgres-vsc-icon.png"
+        },
+        {
+          "id": "nexql.notebooks",
+          "name": "Notebooks",
+          "contextualTitle": "PG Studio",
+          "icon": "$(notebook)"
+        },
+        {
+          "id": "nexql.savedQueries",
+          "name": "Saved Queries",
+          "contextualTitle": "PG Studio",
+          "icon": "$(save)",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "nexql.history",
+          "name": "Query History",
+          "contextualTitle": "PG Studio",
+          "icon": "$(history)",
+          "visibility": "collapsed"
+        }
+      ],
+      "nexql-sql-assistant": [
+        {
+          "id": "nexql.chatView",
+          "name": "SQL Assistant",
+          "type": "webview",
+          "contextualTitle": "SQL Assistant",
+          "icon": "resources/sql-assistant-vsc-icon.png"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "nexqlExplorer",
+        "contents": "Welcome to NexQL!\n\nNo database engines are currently available. Install a Database Extension to get started:\n\n[Browse Database Extensions](command:workbench.extensions.search?%22nexql%22)\n\nDatabase Extensions provide support for specific database engines (PostgreSQL, MySQL, SQLite, etc.).",
+        "when": "nexql.noEnginesRegistered"
+      }
+    ],
+    "notebooks": [
+      {
+        "type": "nexql-notebook",
+        "displayName": "SQL Notebook",
+        "selector": [
+          {
+            "filenamePattern": "*.sqlbook"
+          },
+          {
+            "filenamePattern": "*.pgsql"
+          }
+        ],
+        "priority": "default",
+        "enableScripts": true
+      },
+      {
+        "type": "nexql-query",
+        "displayName": "SQL Query",
+        "selector": [
+          {
+            "filenamePattern": "*.pgquery"
+          }
+        ],
+        "priority": "default",
+        "enableScripts": true
+      }
+    ],
+    "notebookRenderer": [
+      {
+        "id": "nexql-query-renderer",
+        "displayName": "SQL Query Renderer",
+        "entrypoint": "./dist/renderer_v2.js",
+        "mimeTypes": [
+          "application/x-nexql-result",
+          "application/vnd.nexql-notebook.result",
+          "application/vnd.nexql-notebook.error",
+          "application/x-nexql-notebook-header+json"
+        ],
+        "requiresMessaging": "always"
+      }
+    ],
+    "configuration": {
+      "title": "NexQL",
+      "properties": {
+        "nexql.connections": {
+          "type": "array",
+          "default": [],
+          "description": "List of saved PostgreSQL connections",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "host",
+              "port",
+              "username"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Unique identifier for the connection"
+              },
+              "name": {
+                "type": "string",
+                "description": "Display name for the connection"
+              },
+              "host": {
+                "type": "string",
+                "description": "Hostname or IP address of the PostgreSQL server"
+              },
+              "port": {
+                "type": "number",
+                "description": "Port number of the PostgreSQL server",
+                "default": 5432
+              },
+              "username": {
+                "type": "string",
+                "description": "Username for authentication"
+              },
+              "database": {
+                "type": "string",
+                "description": "Default database to connect to"
+              },
+              "group": {
+                "type": "string",
+                "description": "Group name for organizing connections"
+              },
+              "environment": {
+                "type": "string",
+                "enum": [
+                  "production",
+                  "staging",
+                  "development"
+                ],
+                "description": "Environment tag for safety warnings and visual indicators"
+              },
+              "readOnlyMode": {
+                "type": "boolean",
+                "default": false,
+                "description": "Force read-only transactions for this connection"
+              }
+            }
+          }
+        },
+        "nexql.aiProvider": {
+          "type": "string",
+          "enum": [
+            "vscode-lm",
+            "github",
+            "openai",
+            "anthropic",
+            "gemini",
+            "custom"
+          ],
+          "default": "vscode-lm",
+          "description": "AI Provider to use for query assistance"
+        },
+        "nexql.aiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API Key for direct AI providers (OpenAI/Anthropic/Gemini/custom)"
+        },
+        "nexql.aiModel": {
+          "type": "string",
+          "default": "",
+          "description": "Model name (e.g., gpt-4, claude-3-opus). Leave empty for defaults."
+        },
+        "nexql.aiEndpoint": {
+          "type": "string",
+          "default": "",
+          "description": "Custom API endpoint (optional)"
+        },
+        "nexql.streaming.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable cursor-based streaming for large result sets"
+        },
+        "nexql.streaming.batchSize": {
+          "type": "number",
+          "default": 200,
+          "description": "Number of rows per batch when streaming results"
+        },
+        "nexql.telemetry.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable performance telemetry (opt-in, privacy-first)"
+        },
+        "nexql.queryTimeout": {
+          "type": "number",
+          "default": 0,
+          "description": "Global query timeout in milliseconds (0 for no timeout). Can be overridden per connection."
+        },
+        "nexql.performance.slowQueryThresholdMs": {
+          "type": "number",
+          "default": 2000,
+          "description": "Threshold in milliseconds to flag slow queries in history and results."
+        },
+        "nexql.performance.defaultLimit": {
+          "type": "number",
+          "default": 1000,
+          "description": "Default row limit for SELECT queries when auto-LIMIT is enabled."
+        },
+        "nexql.query.autoLimitEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically append LIMIT clause to SELECT queries that don't have one. Always enabled in read-only mode."
+        },
+        "nexql.autoRefresh.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable automatic background refresh of the explorer tree and notebooks panel."
+        },
+        "nexql.autoRefresh.pollIntervalSeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 10,
+          "description": "How often (in seconds) to poll PostgreSQL for schema changes."
+        }
+      }
+    },
+    "configurationDefaults": {
+      "[sql]": {
+        "editor.quickSuggestions": {
+          "other": true,
+          "comments": false,
+          "strings": true
+        },
+        "editor.suggestOnTriggerCharacters": true,
+        "editor.wordBasedSuggestions": "allDocuments",
+        "editor.acceptSuggestionOnEnter": "on"
+      }
+    },
+    "menus": {
+      "notebook/toolbar": [
+        {
+          "command": "nexql.jumpToSection",
+          "when": "notebookType == 'nexql-notebook'",
+          "group": "navigation@99"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "nexql.notebooks.refresh",
+          "when": "view == nexql.notebooks",
+          "group": "navigation"
+        },
+        {
+          "command": "nexql.addConnection",
+          "when": "view == nexqlExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "nexql.refreshConnections",
+          "when": "view == nexqlExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "nexql.manageConnections",
+          "when": "view == nexqlExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "nexql.aiSettings",
+          "when": "view == nexqlExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "nexql.clearHistory",
+          "when": "view == nexql.history",
+          "group": "navigation"
+        },
+        {
+          "command": "nexql.switchConnectionProfile",
+          "when": "view == nexqlExplorer",
+          "group": "1_phase7"
+        },
+        {
+          "command": "nexql.createConnectionProfile",
+          "when": "view == nexqlExplorer",
+          "group": "1_phase7"
+        },
+        {
+          "command": "nexql.showQueryRecommendations",
+          "when": "view == nexqlExplorer",
+          "group": "2_phase7"
+        },
+        {
+          "command": "nexql.loadSavedQuery",
+          "when": "view == nexqlExplorer",
+          "group": "2_phase7"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "nexql.notebooks.open",
+          "when": "view == nexql.notebooks && viewItem == notebook-file",
+          "group": "inline@1"
+        },
+        {
+          "command": "nexql.notebooks.rename",
+          "when": "view == nexql.notebooks && viewItem == notebook-file",
+          "group": "1_actions"
+        },
+        {
+          "command": "nexql.notebooks.delete",
+          "when": "view == nexql.notebooks && viewItem == notebook-file",
+          "group": "9_destructive"
+        },
+        {
+          "command": "nexql.copyQuery",
+          "when": "view == nexql.history",
+          "group": "1_modification"
+        },
+        {
+          "command": "nexql.openQuery",
+          "when": "view == nexql.history",
+          "group": "1_modification"
+        },
+        {
+          "command": "nexql.deleteHistoryItem",
+          "when": "view == nexql.history",
+          "group": "2_destructive"
+        },
+        {
+          "command": "nexql.attachToChat",
+          "when": "view == nexqlExplorer && viewItem =~ /^(table|view|function|materialized-view|type|foreign-table|schema)$/",
+          "group": "inline@0"
+        },
+        {
+          "command": "nexql.showTableProperties",
+          "when": "view == nexqlExplorer && viewItem == table",
+          "group": "inline@2"
+        },
+        {
+          "command": "nexql.newNotebook",
+          "when": "view == nexqlExplorer && viewItem =~ /^(schema|table)$/",
+          "group": "1_actions"
+        },
+        {
+          "command": "nexql.deleteConnection",
+          "when": "view == nexqlExplorer && viewItem == connection",
+          "group": "9_delete"
+        },
+        {
+          "command": "nexql.addToFavorites",
+          "when": "view == nexqlExplorer && viewItem =~ /^(table|view|function|materialized-view)$/ && !nexql.isFavorite",
+          "group": "0_favorites"
+        },
+        {
+          "command": "nexql.removeFromFavorites",
+          "when": "view == nexqlExplorer && viewItem =~ /^(table|view|function|materialized-view)$/ && nexql.isFavorite",
+          "group": "0_favorites"
+        },
+        {
+          "command": "nexql.disconnectConnection",
+          "when": "view == nexqlExplorer && viewItem == connection",
+          "group": "inline@1"
+        },
+        {
+          "command": "nexql.reconnectConnection",
+          "when": "view == nexqlExplorer && viewItem == connection-disconnected",
+          "group": "inline@1"
+        },
+        {
+          "command": "nexql.editConnection",
+          "when": "view == nexqlExplorer && (viewItem == connection || viewItem == connection-disconnected)",
+          "group": "inline@2"
+        },
+        {
+          "command": "nexql.createDatabase",
+          "when": "view == nexqlExplorer && viewItem == connection",
+          "group": "1_actions"
+        },
+        {
+          "command": "nexql.showViewProperties",
+          "when": "view == nexqlExplorer && viewItem == view",
+          "group": "inline@2"
+        },
+        {
+          "command": "nexql.showFunctionProperties",
+          "when": "view == nexqlExplorer && viewItem == function",
+          "group": "inline@2"
+        },
+        {
+          "command": "nexql.functionOperations",
+          "when": "view == nexqlExplorer && viewItem == function",
+          "group": "1_actions"
+        },
+        {
+          "command": "nexql.createReplaceFunction",
+          "when": "view == nexqlExplorer && viewItem == function",
+          "group": "1_actions@1"
+        },
+        {
+          "command": "nexql.callFunction",
+          "when": "view == nexqlExplorer && viewItem == function",
+          "group": "1_actions@2"
+        },
+        {
+          "command": "nexql.dropFunction",
+          "when": "view == nexqlExplorer && viewItem == function",
+          "group": "9_delete"
+        },
+        {
+          "command": "nexql.viewTableData",
+          "when": "view == nexqlExplorer && viewItem == table",
+          "group": "inline@2"
+        },
+        {
+          "command": "nexql.dropTable",
+          "when": "view == nexqlExplorer && viewItem == table",
+          "group": "9_delete"
+        },
+        {
+          "command": "nexql.viewViewData",
+          "when": "view == nexqlExplorer && viewItem == view",
+          "group": "inline@2"
+        },
+        {
+          "command": "nexql.dropView",
+          "when": "view == nexqlExplorer && viewItem == view",
+          "group": "9_delete"
+        },
+        {
+          "command": "nexql.tableOperations",
+          "when": "view == nexqlExplorer && viewItem == table",
+          "group": "1_actions@0"
+        },
+        {
+          "submenu": "nexql.scriptsMenu",
+          "when": "view == nexqlExplorer && viewItem == table",
+          "group": "1_actions@1"
+        },
+        {
+          "submenu": "nexql.maintenanceMenu",
+          "when": "view == nexqlExplorer && viewItem == table",
+          "group": "1_actions@2"
+        },
+        {
+          "command": "nexql.tableProfile",
+          "when": "view == nexqlExplorer && viewItem == table",
+          "group": "2_analysis@0"
+        },
+        {
+          "command": "nexql.tableActivity",
+          "when": "view == nexqlExplorer && viewItem == table",
+          "group": "2_analysis@1"
+        },
+        {
+          "command": "nexql.indexUsage",
+          "when": "view == nexqlExplorer && viewItem == table",
+          "group": "2_analysis@2"
+        },
+        {
+          "command": "nexql.tableDefinition",
+          "when": "view == nexqlExplorer && viewItem == table",
+          "group": "2_analysis@3"
+        },
+        {
+          "command": "nexql.viewOperations",
+          "when": "view == nexqlExplorer && viewItem == view",
+          "group": "1_actions@0"
+        },
+        {
+          "command": "nexql.editViewDefinition",
+          "when": "view == nexqlExplorer && viewItem == view",
+          "group": "1_actions@1"
+        },
+        {
+          "submenu": "nexql.viewScriptsMenu",
+          "when": "view == nexqlExplorer && viewItem == view",
+          "group": "1_actions@2"
+        },
+        {
+          "command": "nexql.truncateTable",
+          "when": "view == nexqlExplorer && viewItem == table",
+          "group": "2_operations@1"
+        },
+        {
+          "command": "nexql.quickClone",
+          "when": "view == nexqlExplorer && viewItem == table",
+          "group": "2_operations@0"
+        },
+        {
+          "command": "nexql.insertData",
+          "when": "view == nexqlExplorer && viewItem == table",
+          "group": "2_operations@2"
+        },
+        {
+          "command": "nexql.exportTable",
+          "when": "view == nexqlExplorer && viewItem == table",
+          "group": "2_operations@3"
+        },
+        {
+          "command": "nexql.updateData",
+          "when": "view == nexqlExplorer && viewItem == table",
+          "group": "2_operations@3"
+        },
+        {
+          "command": "nexql.showSchemaProperties",
+          "when": "view == nexqlExplorer && viewItem == schema",
+          "group": "inline@2"
+        },
+        {
+          "command": "nexql.pasteTable",
+          "when": "view == nexqlExplorer && viewItem == schema",
+          "group": "1_actions"
+        },
+        {
+          "command": "nexql.pasteTable",
+          "when": "view == nexqlExplorer && viewItem == table",
+          "group": "1_actions"
+        },
+        {
+          "command": "nexql.schemaOperations",
+          "when": "view == nexqlExplorer && viewItem == schema",
+          "group": "inline@1",
+          "icon": "$(add)"
+        },
+        {
+          "command": "nexql.schemaOperations",
+          "when": "view == nexqlExplorer && viewItem == schema",
+          "group": "1_actions",
+          "icon": "$(notebook)"
+        },
+        {
+          "command": "nexql.refreshMaterializedView",
+          "when": "view == nexqlExplorer && viewItem == materialized-view",
+          "group": "inline"
+        },
+        {
+          "command": "nexql.materializedViewOperations",
+          "when": "view == nexqlExplorer && viewItem == materialized-view",
+          "group": "1_operations@0"
+        },
+        {
+          "command": "nexql.editMaterializedView",
+          "when": "view == nexqlExplorer && viewItem == materialized-view",
+          "group": "1_operations@1"
+        },
+        {
+          "command": "nexql.foreignTableOperations",
+          "when": "view == nexqlExplorer && viewItem == foreign-table",
+          "group": "1_operations@0"
+        },
+        {
+          "command": "nexql.typeOperations",
+          "when": "view == nexqlExplorer && viewItem == type",
+          "group": "1_operations@0"
+        },
+        {
+          "command": "nexql.editType",
+          "when": "view == nexqlExplorer && viewItem == type",
+          "group": "1_operations@1"
+        },
+        {
+          "command": "nexql.createDatabase",
+          "when": "view == nexqlExplorer && viewItem == databases-group",
+          "group": "inline"
+        },
+        {
+          "command": "nexql.createSchema",
+          "when": "view == nexqlExplorer && viewItem == category-schemas",
+          "group": "inline"
+        },
+        {
+          "command": "nexql.createRole",
+          "when": "view == nexqlExplorer && viewItem == category-users-roles",
+          "group": "inline"
+        },
+        {
+          "command": "nexql.enableExtension",
+          "when": "view == nexqlExplorer && viewItem == category-extensions",
+          "group": "inline"
+        },
+        {
+          "command": "nexql.createTable",
+          "when": "view == nexqlExplorer && viewItem == category-tables",
+          "group": "inline"
+        },
+        {
+          "command": "nexql.createView",
+          "when": "view == nexqlExplorer && viewItem == category-views",
+          "group": "inline"
+        },
+        {
+          "command": "nexql.createFunction",
+          "when": "view == nexqlExplorer && viewItem == category-functions",
+          "group": "inline"
+        },
+        {
+          "command": "nexql.createMaterializedView",
+          "when": "view == nexqlExplorer && viewItem == category-materialized-views",
+          "group": "inline"
+        },
+        {
+          "command": "nexql.createType",
+          "when": "view == nexqlExplorer && viewItem == category-types",
+          "group": "inline"
+        },
+        {
+          "command": "nexql.createForeignTable",
+          "when": "view == nexqlExplorer && viewItem == category-foreign-tables",
+          "group": "inline"
+        },
+        {
+          "command": "nexql.createForeignServer",
+          "when": "view == nexqlExplorer && viewItem == category-foreign-data-wrappers",
+          "group": "inline"
+        },
+        {
+          "command": "nexql.foreignDataWrapperOperations",
+          "when": "view == nexqlExplorer && viewItem == foreign-data-wrapper",
+          "group": "1_operations@0"
+        },
+        {
+          "command": "nexql.showForeignDataWrapperProperties",
+          "when": "view == nexqlExplorer && viewItem == foreign-data-wrapper",
+          "group": "inline@1"
+        },
+        {
+          "command": "nexql.foreignServerOperations",
+          "when": "view == nexqlExplorer && viewItem == foreign-server",
+          "group": "1_operations@0"
+        },
+        {
+          "command": "nexql.showForeignServerProperties",
+          "when": "view == nexqlExplorer && viewItem == foreign-server",
+          "group": "inline@1"
+        },
+        {
+          "command": "nexql.createUserMapping",
+          "when": "view == nexqlExplorer && viewItem == foreign-server",
+          "group": "1_operations@1"
+        },
+        {
+          "command": "nexql.dropForeignServer",
+          "when": "view == nexqlExplorer && viewItem == foreign-server",
+          "group": "9_delete"
+        },
+        {
+          "command": "nexql.userMappingOperations",
+          "when": "view == nexqlExplorer && viewItem == user-mapping",
+          "group": "1_operations@0"
+        },
+        {
+          "command": "nexql.showUserMappingProperties",
+          "when": "view == nexqlExplorer && viewItem == user-mapping",
+          "group": "inline@1"
+        },
+        {
+          "command": "nexql.dropUserMapping",
+          "when": "view == nexqlExplorer && viewItem == user-mapping",
+          "group": "9_delete"
+        },
+        {
+          "command": "nexql.addColumn",
+          "when": "view == nexqlExplorer && viewItem == category-columns",
+          "group": "inline"
+        },
+        {
+          "command": "nexql.addConstraint",
+          "when": "view == nexqlExplorer && viewItem == category-constraints",
+          "group": "inline"
+        },
+        {
+          "command": "nexql.addIndex",
+          "when": "view == nexqlExplorer && viewItem == category-indexes",
+          "group": "inline"
+        },
+        {
+          "command": "nexql.viewMaterializedViewData",
+          "when": "view == nexqlExplorer && viewItem == materialized-view",
+          "group": "inline@2"
+        },
+        {
+          "command": "nexql.showMaterializedViewProperties",
+          "when": "view == nexqlExplorer && viewItem == materialized-view",
+          "group": "inline@3"
+        },
+        {
+          "command": "nexql.viewMaterializedViewData",
+          "when": "view == nexqlExplorer && viewItem == materialized-view",
+          "group": "2_query"
+        },
+        {
+          "command": "nexql.dropMatView",
+          "when": "view == nexqlExplorer && viewItem == materialized-view",
+          "group": "9_delete"
+        },
+        {
+          "command": "nexql.showTypeProperties",
+          "when": "view == nexqlExplorer && viewItem == type",
+          "group": "inline@1"
+        },
+        {
+          "command": "nexql.dropType",
+          "when": "view == nexqlExplorer && viewItem == type",
+          "group": "9_delete"
+        },
+        {
+          "command": "nexql.showForeignTableProperties",
+          "when": "view == nexqlExplorer && viewItem == foreign-table",
+          "group": "inline@1"
+        },
+        {
+          "command": "nexql.editForeignTable",
+          "when": "view == nexqlExplorer && viewItem == foreign-table",
+          "group": "inline@2"
+        },
+        {
+          "command": "nexql.viewForeignTableData",
+          "when": "view == nexqlExplorer && viewItem == foreign-table",
+          "group": "inline@3"
+        },
+        {
+          "command": "nexql.dropForeignTable",
+          "when": "view == nexqlExplorer && viewItem == foreign-table",
+          "group": "9_delete"
+        },
+        {
+          "command": "nexql.extensionOperations",
+          "when": "view == nexqlExplorer && viewItem == extension",
+          "group": "1_operations@0"
+        },
+        {
+          "command": "nexql.dropExtension",
+          "when": "view == nexqlExplorer && viewItem == extension-installed",
+          "group": "9_delete"
+        },
+        {
+          "command": "nexql.editRole",
+          "when": "view == nexqlExplorer && viewItem == role",
+          "group": "inline@1"
+        },
+        {
+          "command": "nexql.grantRevoke",
+          "when": "view == nexqlExplorer && viewItem == role",
+          "group": "1_actions"
+        },
+        {
+          "command": "nexql.dropRole",
+          "when": "view == nexqlExplorer && viewItem == role",
+          "group": "9_delete"
+        },
+        {
+          "command": "nexql.roleOperations",
+          "when": "view == nexqlExplorer && viewItem == role",
+          "group": "1_operations@0"
+        },
+        {
+          "command": "nexql.showRoleProperties",
+          "when": "view == nexqlExplorer && viewItem == role",
+          "group": "inline@0"
+        },
+        {
+          "command": "nexql.createInDatabase",
+          "when": "view == nexqlExplorer && viewItem == database",
+          "group": "inline@1",
+          "icon": "$(add)"
+        },
+        {
+          "command": "nexql.showDashboard",
+          "when": "view == nexqlExplorer && viewItem == database",
+          "group": "1_operations@1"
+        },
+        {
+          "command": "nexql.databaseOperations",
+          "when": "view == nexqlExplorer && viewItem == database",
+          "group": "1_operations@3"
+        },
+        {
+          "command": "nexql.backupDatabase",
+          "when": "view == nexqlExplorer && viewItem == database",
+          "group": "1_operations@4"
+        },
+        {
+          "command": "nexql.restoreDatabase",
+          "when": "view == nexqlExplorer && viewItem == database",
+          "group": "1_operations@5"
+        },
+        {
+          "command": "nexql.generateCreateScript",
+          "when": "view == nexqlExplorer && viewItem == database",
+          "group": "1_operations@6"
+        },
+        {
+          "command": "nexql.dropDatabase",
+          "when": "view == nexqlExplorer && viewItem == database",
+          "group": "9_delete"
+        },
+        {
+          "submenu": "nexql.databaseScriptsMenu",
+          "when": "view == nexqlExplorer && viewItem == database",
+          "group": "1_operations@2"
+        },
+        {
+          "command": "nexql.disconnectDatabase",
+          "when": "view == nexqlExplorer && viewItem == database",
+          "group": "9_disconnect"
+        },
+        {
+          "command": "nexql.maintenanceDatabase",
+          "when": "view == nexqlExplorer && viewItem == database",
+          "group": "1_operations@7"
+        },
+        {
+          "command": "nexql.queryTool",
+          "when": "view == nexqlExplorer && viewItem == database",
+          "group": "inline@2"
+        },
+        {
+          "command": "nexql.psqlTool",
+          "when": "viewItem == database",
+          "group": "nexql-database@7"
+        },
+        {
+          "command": "nexql.showConfiguration",
+          "when": "viewItem == database",
+          "group": "nexql-database@8"
+        },
+        {
+          "command": "nexql.showColumnProperties",
+          "when": "view == nexqlExplorer && viewItem == column",
+          "group": "inline@1"
+        },
+        {
+          "command": "nexql.copyColumnName",
+          "when": "view == nexqlExplorer && viewItem == column",
+          "group": "1_copy@1"
+        },
+        {
+          "command": "nexql.copyColumnNameQuoted",
+          "when": "view == nexqlExplorer && viewItem == column",
+          "group": "1_copy@2"
+        },
+        {
+          "submenu": "nexql.columnScriptsMenu",
+          "when": "view == nexqlExplorer && viewItem == column",
+          "group": "2_scripts"
+        },
+        {
+          "command": "nexql.addColumnComment",
+          "when": "view == nexqlExplorer && viewItem == column",
+          "group": "3_edit@1"
+        },
+        {
+          "command": "nexql.generateIndexOnColumn",
+          "when": "view == nexqlExplorer && viewItem == column",
+          "group": "3_edit@2"
+        },
+        {
+          "command": "nexql.viewColumnStatistics",
+          "when": "view == nexqlExplorer && viewItem == column",
+          "group": "4_info"
+        },
+        {
+          "command": "nexql.showConstraintProperties",
+          "when": "view == nexqlExplorer && viewItem == constraint",
+          "group": "inline@1"
+        },
+        {
+          "command": "nexql.copyConstraintName",
+          "when": "view == nexqlExplorer && viewItem == constraint",
+          "group": "1_copy@1"
+        },
+        {
+          "submenu": "nexql.constraintScriptsMenu",
+          "when": "view == nexqlExplorer && viewItem == constraint",
+          "group": "2_scripts"
+        },
+        {
+          "command": "nexql.validateConstraint",
+          "when": "view == nexqlExplorer && viewItem == constraint",
+          "group": "3_operations@1"
+        },
+        {
+          "command": "nexql.constraintOperations",
+          "when": "view == nexqlExplorer && viewItem == constraint",
+          "group": "1_actions@0"
+        },
+        {
+          "command": "nexql.viewConstraintDependencies",
+          "when": "view == nexqlExplorer && viewItem == constraint",
+          "group": "4_info"
+        },
+        {
+          "command": "nexql.showIndexProperties",
+          "when": "view == nexqlExplorer && viewItem == index",
+          "group": "inline@1"
+        },
+        {
+          "command": "nexql.copyIndexName",
+          "when": "view == nexqlExplorer && viewItem == index",
+          "group": "1_copy@1"
+        },
+        {
+          "submenu": "nexql.indexScriptsMenu",
+          "when": "view == nexqlExplorer && viewItem == index",
+          "group": "2_scripts"
+        },
+        {
+          "command": "nexql.generateReindexScript",
+          "when": "view == nexqlExplorer && viewItem == index",
+          "group": "3_operations@1"
+        },
+        {
+          "command": "nexql.analyzeIndexUsage",
+          "when": "view == nexqlExplorer && viewItem == index",
+          "group": "4_info@1"
+        },
+        {
+          "command": "nexql.addIndexComment",
+          "when": "view == nexqlExplorer && viewItem == index",
+          "group": "3_operations@2"
+        },
+        {
+          "command": "nexql.indexOperations",
+          "when": "view == nexqlExplorer && viewItem == index",
+          "group": "1_actions@0"
+        },
+        {
+          "command": "nexql.copySavedQuery",
+          "when": "view == nexql.savedQueries && viewItem == savedQuery",
+          "group": "1_actions@1"
+        },
+        {
+          "command": "nexql.editSavedQuery",
+          "when": "view == nexql.savedQueries && viewItem == savedQuery",
+          "group": "1_actions@2"
+        },
+        {
+          "command": "nexql.openSavedQueryInNotebook",
+          "when": "view == nexql.savedQueries && viewItem == savedQuery",
+          "group": "1_actions@3"
+        },
+        {
+          "command": "nexql.deleteSavedQuery",
+          "when": "view == nexql.savedQueries && viewItem == savedQuery",
+          "group": "2_delete@1"
+        },
+        {
+          "command": "nexql.openTableDesigner",
+          "when": "view == nexqlExplorer && viewItem == table",
+          "group": "1_actions"
+        },
+        {
+          "command": "nexql.openSchemaDiff",
+          "when": "view == nexqlExplorer && viewItem == table",
+          "group": "1_actions"
+        },
+        {
+          "command": "nexql.createTableVisual",
+          "when": "view == nexqlExplorer && viewItem == schema",
+          "group": "1_actions"
+        },
+        {
+          "command": "nexql.openSchemaDiff",
+          "when": "view == nexqlExplorer && viewItem == schema",
+          "group": "1_actions"
+        }
+      ],
+      "nexql.columnScriptsMenu": [
+        {
+          "command": "nexql.generateSelectStatement",
+          "group": "1_query"
+        },
+        {
+          "command": "nexql.generateWhereClause",
+          "group": "1_query"
+        },
+        {
+          "command": "nexql.generateAlterColumnScript",
+          "group": "2_modify"
+        },
+        {
+          "command": "nexql.generateRenameColumnScript",
+          "group": "2_modify"
+        },
+        {
+          "command": "nexql.generateDropColumnScript",
+          "group": "3_delete"
+        }
+      ],
+      "nexql.constraintScriptsMenu": [
+        {
+          "command": "nexql.generateAlterConstraintScript",
+          "group": "2_modify"
+        },
+        {
+          "command": "nexql.generateDropConstraintScript",
+          "group": "3_delete"
+        }
+      ],
+      "nexql.indexScriptsMenu": [
+        {
+          "command": "nexql.generateScriptCreate",
+          "group": "1_create"
+        },
+        {
+          "command": "nexql.generateAlterIndexScript",
+          "group": "2_modify"
+        },
+        {
+          "command": "nexql.generateDropIndexScript",
+          "group": "3_delete"
+        }
+      ],
+      "nexql.scriptsMenu": [
+        {
+          "command": "nexql.scriptSelect",
+          "group": "1_read"
+        },
+        {
+          "command": "nexql.scriptInsert",
+          "group": "2_write"
+        },
+        {
+          "command": "nexql.scriptUpdate",
+          "group": "2_write"
+        },
+        {
+          "command": "nexql.scriptDelete",
+          "group": "2_write"
+        },
+        {
+          "command": "nexql.scriptCreate",
+          "group": "3_ddl"
+        }
+      ],
+      "nexql.maintenanceMenu": [
+        {
+          "command": "nexql.maintenanceVacuum",
+          "group": "1_maintenance"
+        },
+        {
+          "command": "nexql.maintenanceAnalyze",
+          "group": "1_maintenance"
+        },
+        {
+          "command": "nexql.maintenanceReindex",
+          "group": "1_maintenance"
+        }
+      ],
+      "nexql.viewScriptsMenu": [
+        {
+          "command": "nexql.viewScriptSelect",
+          "group": "1_read"
+        },
+        {
+          "command": "nexql.viewScriptCreate",
+          "group": "2_ddl"
+        }
+      ],
+      "nexql.databaseScriptsMenu": [
+        {
+          "command": "nexql.generateCreateScript",
+          "group": "1_create"
+        },
+        {
+          "command": "nexql.scriptAlterDatabase",
+          "group": "2_write"
+        },
+        {
+          "command": "nexql.dropDatabase",
+          "group": "3_delete"
+        }
+      ],
+      "notebook/cell/title": [
+        {
+          "command": "nexql.aiAssist",
+          "when": "notebookType == nexql-notebook",
+          "group": "inline"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "nexql.newNotebook",
+        "key": "ctrl+alt+n",
+        "mac": "cmd+alt+n"
+      },
+      {
+        "command": "nexql.addConnection",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a"
+      },
+      {
+        "command": "nexql.showDashboard",
+        "key": "ctrl+alt+d",
+        "mac": "cmd+alt+d"
+      },
+      {
+        "command": "nexql.queryTool",
+        "key": "ctrl+alt+e",
+        "mac": "cmd+alt+e"
+      }
+    ]
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ]
+}

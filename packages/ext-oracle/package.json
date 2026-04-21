@@ -1,0 +1,57 @@
+{
+  "name": "nexql-oracle",
+  "displayName": "NexQL - Oracle",
+  "version": "1.0.0",
+  "description": "Oracle database support for NexQL",
+  "publisher": "ric-v",
+  "private": false,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dev-asterix/PgStudio.git",
+    "directory": "packages/ext-oracle"
+  },
+  "engines": {
+    "vscode": "^1.105.0",
+    "node": ">=18.0.0"
+  },
+  "extensionDependencies": [
+    "ric-v.nexql"
+  ],
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "oracle",
+    "plsql",
+    "database",
+    "sql",
+    "nexql"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "dependencies": {
+    "oracledb": "^6.7.1"
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run esbuild-base -- --minify",
+    "build": "npm run compile",
+    "compile": "npm run esbuild-base",
+    "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:oracledb --format=cjs --platform=node --main-fields=main --alias:@nexql/core=../core/src",
+    "watch": "npm run esbuild-base -- --sourcemap --watch",
+    "typecheck": "tsc -p ./ --noEmit",
+    "package": "npx @vscode/vsce package",
+    "package:nightly": "npx @vscode/vsce package --pre-release",
+    "publish:vsce": "npx @vscode/vsce publish -p $VSCE_PAT",
+    "publish:ovsx": "npx ovsx publish -p $OVSX_PAT",
+    "test": "echo 'no tests yet' && exit 0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.1",
+    "@types/vscode": "^1.105.0",
+    "esbuild": ">=0.28.0",
+    "typescript": "^6.0.2"
+  }
+}

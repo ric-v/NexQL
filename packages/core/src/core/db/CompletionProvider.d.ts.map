@@ -1,0 +1,1 @@
+{"version":3,"file":"CompletionProvider.d.ts","sourceRoot":"","sources":["CompletionProvider.ts"],"names":[],"mappings":"AAAA;;;;GAIG;AACH,MAAM,WAAW,kBAAkB;IACjC;;;OAGG;IACH,WAAW,IAAI,MAAM,EAAE,CAAC;IAExB;;OAEG;IACH,mBAAmB,IAAI,MAAM,EAAE,CAAC;IAEhC;;;OAGG;IACH,gBAAgB,IAAI,MAAM,EAAE,CAAC;CAC9B"}

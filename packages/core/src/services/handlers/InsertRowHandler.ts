@@ -1,0 +1,140 @@
+/**
+ * InsertRowHandler.ts
+ * Handles in-grid INSERT of a new row.
+ * Executes the INSERT and returns the actual inserted row (with DB defaults applied).
+ * Delegates SQL generation to SqlTemplateProvider.insertRow() when available.
+ */
+
+import { IMessageHandler } from '../MessageHandler';
+import { ConnectionManager } from '../ConnectionManager';
+import { PostgresMetadata, TableInfo } from '../../common/types';
+import { DEFAULT_DB_ENGINE, resolveDbEngine } from '../../core/db/DbEngine';
+import { DriverRegistry } from '../../core/db/registry';
+import { safelyPostMessage } from './messaging';
+
+interface InsertRowMessage {
+  type: 'insertRow';
+  tableInfo: TableInfo;
+  values: Record<string, any>;
+  tempId: string;
+}
+
+function quoteIdentifier(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+export class InsertRowHandler implements IMessageHandler {
+  async handle(message: InsertRowMessage, context: {
+    editor?: any;
+    webview?: any;
+    postMessage?: (message: any) => Thenable<boolean>;
+    [key: string]: any;
+  }): Promise<void> {
+    const { tableInfo, values, tempId } = message;
+    const postMessage = context.postMessage;
+    if (!postMessage) { return; }
+
+    const editor = context.editor;
+    if (!editor?.notebook?.metadata?.connectionId) {
+      await safelyPostMessage(postMessage, { type: 'insertFailed', tempId, error: 'No active connection found' }, {
+        contextLabel: 'Insert Row',
+        notifyOnFailure: true,
+      });
+      return;
+    }
+
+    const metadata = editor.notebook.metadata as PostgresMetadata;
+    let client: any;
+
+    try {
+      const connectionConfig = {
+        id: metadata.connectionId,
+        name: metadata.host,
+        engine: metadata.engine || DEFAULT_DB_ENGINE,
+        host: metadata.host,
+        port: metadata.port,
+        username: metadata.username,
+        database: metadata.databaseName,
+      };
+
+      client = await ConnectionManager.getInstance().getPooledClient(connectionConfig);
+
+      const schema = tableInfo.schema || 'public';
+      const table = tableInfo.table;
+      if (!table) {
+        await safelyPostMessage(postMessage, { type: 'insertFailed', tempId, error: 'No table name in tableInfo' }, {
+          contextLabel: 'Insert Row',
+          notifyOnFailure: true,
+        });
+        return;
+      }
+
+      // Filter out null values for columns the user left empty
+      // (let DB defaults apply)
+      const filteredValues: Record<string, any> = {};
+      for (const [col, val] of Object.entries(values)) {
+        if (val !== '' && val !== undefined) {
+          filteredValues[col] = val === '__NULL__' ? null : val;
+        }
+      }
+
+      if (Object.keys(filteredValues).length === 0) {
+        await safelyPostMessage(postMessage, { type: 'insertFailed', tempId, error: 'No values provided for INSERT' }, {
+          contextLabel: 'Insert Row',
+          notifyOnFailure: true,
+        });
+        return;
+      }
+
+      const columns = Object.keys(filteredValues);
+      const paramValues = Object.values(filteredValues);
+      const columnList = columns.map(quoteIdentifier).join(', ');
+      const paramList = columns.map((_, i) => `$${i + 1}`).join(', ');
+      const tableRef = quoteIdentifier(schema) + '.' + quoteIdentifier(table);
+
+      // Delegate to SqlTemplateProvider.insertRow() if available for this engine
+      const engine = resolveDbEngine(metadata.engine || DEFAULT_DB_ENGINE);
+      const registry = DriverRegistry.getInstance();
+      let sql: string;
+
+      if (registry.isRegistered(engine)) {
+        const sqlTemplates = registry.getSqlTemplates(engine);
+        if (sqlTemplates?.insertRow) {
+          // Use the provider's insertRow method for engine-specific syntax
+          sql = sqlTemplates.insertRow(schema + '.' + table, filteredValues);
+          // Provider-generated SQL may not include RETURNING *, append if needed
+          if (!sql.toUpperCase().includes('RETURNING')) {
+            sql = sql.replace(/;?\s*$/, ' RETURNING *');
+          }
+        } else {
+          sql = 'INSERT INTO ' + tableRef + ' (' + columnList + ') VALUES (' + paramList + ') RETURNING *';
+        }
+      } else {
+        // Use RETURNING * to get the actual inserted row with DB defaults applied
+        sql = 'INSERT INTO ' + tableRef + ' (' + columnList + ') VALUES (' + paramList + ') RETURNING *';
+      }
+
+      const result = await client.query(sql, paramValues);
+
+      if (result.rows.length > 0) {
+        await safelyPostMessage(postMessage, { type: 'insertSuccess', tempId, actualRow: result.rows[0] }, {
+          contextLabel: 'Insert Row',
+          notifyOnFailure: true,
+        });
+      } else {
+        await safelyPostMessage(postMessage, { type: 'insertFailed', tempId, error: 'INSERT did not return a row' }, {
+          contextLabel: 'Insert Row',
+          notifyOnFailure: true,
+        });
+      }
+    } catch (err: any) {
+      const errorMsg = err?.message || String(err);
+      await safelyPostMessage(postMessage, { type: 'insertFailed', tempId, error: errorMsg }, {
+        contextLabel: 'Insert Row',
+        notifyOnFailure: true,
+      });
+    } finally {
+      if (client) { client.release(); }
+    }
+  }
+}

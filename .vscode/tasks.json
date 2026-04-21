@@ -2,28 +2,36 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "type": "npm",
-      "script": "esbuild",
+      "label": "build-dev",
+      "type": "shell",
+      "command": "npm run esbuild --workspace=packages/core && npm run build --workspace=packages/ext-postgres && npm run build --workspace=packages/ext-mysql && npm run build --workspace=packages/ext-sqlite && npm run build --workspace=packages/ext-mssql && npm run build --workspace=packages/ext-oracle",
       "group": {
         "kind": "build",
         "isDefault": true
       },
-      "problemMatcher": []
+      "problemMatcher": ["$tsc"]
     },
     {
+      "label": "build-dev-postgres-only",
+      "type": "shell",
+      "command": "npm run esbuild --workspace=packages/core && npm run build --workspace=packages/ext-postgres",
+      "group": "build",
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "build-all",
+      "type": "shell",
+      "command": "make build",
+      "group": "build",
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "watch-core",
       "type": "npm",
       "script": "watch",
+      "path": "packages/core",
       "problemMatcher": "$tsc-watch",
       "isBackground": true,
-      "presentation": {
-        "reveal": "never"
-      },
-      "group": "build"
-    },
-    {
-      "type": "npm",
-      "script": "compile",
-      "problemMatcher": "$tsc",
       "presentation": {
         "reveal": "never"
       },

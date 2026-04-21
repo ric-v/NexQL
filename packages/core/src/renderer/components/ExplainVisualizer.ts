@@ -1,0 +1,724 @@
+export interface ExplainNode {
+  'Node Type': string;
+  'Total Cost'?: number;
+  'Startup Cost'?: number;
+  'Plan Rows'?: number;
+  'Plan Width'?: number;
+  'Actual Startup Time'?: number;
+  'Actual Total Time'?: number;
+  'Actual Rows'?: number;
+  'Actual Loops'?: number;
+  Plans?: ExplainNode[];
+  [key: string]: any;
+}
+
+interface ExplainMeta {
+  planningTime: number | null;
+  executionTime: number | null;
+  rootCost: number | null;
+  nodeCount: number;
+}
+
+/**
+ * Normalized node structure from ExplainPlanNormalizer.
+ * When provided, the visualizer skips its own normalization and renders this directly.
+ */
+export interface NormalizedExplainNode {
+  nodeType: string;
+  cost?: number;
+  estimatedRows?: number;
+  actualRows?: number;
+  actualTime?: number;
+  loops?: number;
+  properties?: Record<string, unknown>;
+  children?: NormalizedExplainNode[];
+}
+
+export interface NormalizedExplainMeta {
+  planningTime: number | null;
+  executionTime: number | null;
+  nodeCount?: number;
+}
+
+export class ExplainVisualizer {
+  private container: HTMLElement;
+  private root: ExplainNode | null = null;
+  private maxCost: number = 0;
+  private meta: ExplainMeta = {
+    planningTime: null,
+    executionTime: null,
+    rootCost: null,
+    nodeCount: 0,
+  };
+
+  /**
+   * @param container - The DOM element to render into
+   * @param planPayload - Raw EXPLAIN plan data (engine-specific format)
+   * @param normalizedData - Optional pre-normalized data from ExplainPlanNormalizer.
+   *   When provided, the visualizer uses this instead of parsing planPayload directly.
+   */
+  constructor(container: HTMLElement, planPayload: unknown, normalizedData?: { root: NormalizedExplainNode | null; meta: NormalizedExplainMeta }) {
+    this.container = container;
+
+    if (normalizedData && normalizedData.root) {
+      // Use pre-normalized data from ExplainPlanNormalizer
+      const converted = this.convertNormalizedToExplainNode(normalizedData.root);
+      this.root = converted;
+      this.meta = {
+        planningTime: normalizedData.meta.planningTime,
+        executionTime: normalizedData.meta.executionTime,
+        rootCost: this.asFiniteNumber(converted?.['Total Cost']) ?? null,
+        nodeCount: normalizedData.meta.nodeCount ?? (converted ? this.countNodes(converted) : 0),
+      };
+    } else {
+      // Legacy: parse raw plan payload directly (PG JSON format)
+      const normalized = this.normalizePlanPayload(planPayload);
+      this.root = normalized.root;
+      this.meta = normalized.meta;
+    }
+
+    this.maxCost = this.root ? this.findMaxCost(this.root) : 0;
+  }
+
+  /**
+   * Converts a NormalizedExplainNode tree into the internal ExplainNode format.
+   */
+  private convertNormalizedToExplainNode(node: NormalizedExplainNode): ExplainNode {
+    const result: ExplainNode = {
+      'Node Type': node.nodeType,
+      'Total Cost': node.cost,
+      'Plan Rows': node.estimatedRows,
+      'Actual Rows': node.actualRows,
+      'Actual Total Time': node.actualTime,
+      'Actual Loops': node.loops,
+    };
+
+    // Copy additional properties
+    if (node.properties) {
+      for (const [key, value] of Object.entries(node.properties)) {
+        if (!(key in result)) {
+          result[key] = value;
+        }
+      }
+    }
+
+    // Convert children recursively
+    if (node.children && node.children.length > 0) {
+      result.Plans = node.children.map(child => this.convertNormalizedToExplainNode(child));
+    }
+
+    return result;
+  }
+
+  private asFiniteNumber(value: unknown): number | null {
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : null;
+    }
+    if (typeof value === 'string' && value.trim().length > 0) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  }
+
+  private formatNumber(value: unknown, decimals = 2, fallback = '?'): string {
+    const num = this.asFiniteNumber(value);
+    return num === null ? fallback : num.toFixed(decimals);
+  }
+
+  private normalizePlanPayload(payload: unknown): { root: ExplainNode | null; meta: ExplainMeta } {
+    const parsedPayload = this.parseIfString(payload);
+
+    let wrapper: any = null;
+    let root: ExplainNode | null = null;
+
+    if (Array.isArray(parsedPayload)) {
+      const first = parsedPayload[0];
+      if (first && typeof first === 'object' && first.Plan) {
+        wrapper = first;
+        root = this.ensurePlanNode(first.Plan);
+      } else if (first && typeof first === 'object') {
+        root = this.ensurePlanNode(first);
+      }
+    } else if (parsedPayload && typeof parsedPayload === 'object') {
+      const obj = parsedPayload as any;
+      if (obj.Plan) {
+        wrapper = obj;
+        root = this.ensurePlanNode(obj.Plan);
+      } else {
+        root = this.ensurePlanNode(obj);
+      }
+    }
+
+    const nodeCount = root ? this.countNodes(root) : 0;
+    const rootCost = root ? this.asFiniteNumber(root['Total Cost']) : null;
+
+    return {
+      root,
+      meta: {
+        planningTime: this.asFiniteNumber(wrapper?.['Planning Time']),
+        executionTime: this.asFiniteNumber(wrapper?.['Execution Time']),
+        rootCost,
+        nodeCount,
+      },
+    };
+  }
+
+  private parseIfString(value: unknown): unknown {
+    if (typeof value !== 'string') {
+      return value;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+  }
+
+  private ensurePlanNode(value: unknown): ExplainNode | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return null;
+    }
+
+    const candidate = value as ExplainNode;
+    if (typeof candidate['Node Type'] === 'string') {
+      return candidate;
+    }
+
+    // Some malformed payloads may place the node directly under Plan again.
+    if (candidate.Plan && typeof candidate.Plan === 'object') {
+      return this.ensurePlanNode(candidate.Plan);
+    }
+
+    return null;
+  }
+
+  private countNodes(node: ExplainNode): number {
+    const children = Array.isArray(node.Plans) ? node.Plans : [];
+    return 1 + children.reduce((sum, child) => sum + this.countNodes(child), 0);
+  }
+
+  private findMaxCost(node: ExplainNode): number {
+    const current = this.asFiniteNumber(node['Total Cost']) ?? 0;
+    const children = Array.isArray(node.Plans) ? node.Plans : [];
+
+    if (children.length === 0) {
+      return current;
+    }
+
+    return children.reduce((max, child) => Math.max(max, this.findMaxCost(child)), current);
+  }
+
+  private getNodeTime(node: ExplainNode): number {
+    return this.asFiniteNumber(node['Actual Total Time']) ?? -1;
+  }
+
+  private findHottestNode(node: ExplainNode): ExplainNode {
+    let hottest = node;
+    let hottestTime = this.getNodeTime(node);
+
+    const visit = (current: ExplainNode) => {
+      const currentTime = this.getNodeTime(current);
+      if (currentTime > hottestTime) {
+        hottestTime = currentTime;
+        hottest = current;
+      }
+
+      const children = Array.isArray(current.Plans) ? current.Plans : [];
+      children.forEach(visit);
+    };
+
+    visit(node);
+
+    if (hottestTime >= 0) {
+      return hottest;
+    }
+
+    // Fallback to max total cost when ANALYZE timing is not available.
+    const findByCost = (current: ExplainNode): ExplainNode => {
+      const children = Array.isArray(current.Plans) ? current.Plans : [];
+      let best = current;
+      let bestCost = this.asFiniteNumber(current['Total Cost']) ?? -1;
+
+      children.forEach((child) => {
+        const childBest = findByCost(child);
+        const childCost = this.asFiniteNumber(childBest['Total Cost']) ?? -1;
+        if (childCost > bestCost) {
+          best = childBest;
+          bestCost = childCost;
+        }
+      });
+
+      return best;
+    };
+
+    return findByCost(node);
+  }
+
+  private getNodeTypeLabel(nodeType: string): string {
+    return nodeType || 'Unknown Node';
+  }
+
+  private getTimeBadgeColor(ms: number | null): 'green' | 'amber' | 'red' {
+    if (ms === null || ms < 10) return 'green';
+    if (ms <= 100) return 'amber';
+    return 'red';
+  }
+
+  private formatDetailValue(value: unknown): string {
+    if (value === null || value === undefined) {
+      return '?';
+    }
+    if (Array.isArray(value)) {
+      return value.map(v => this.formatDetailValue(v)).join(', ');
+    }
+    if (typeof value === 'object') {
+      try {
+        return JSON.stringify(value);
+      } catch {
+        return '[object]';
+      }
+    }
+    return String(value);
+  }
+
+  private shouldUseMonospace(label: string): boolean {
+    return /cond|filter|output|key|name/i.test(label);
+  }
+
+  public render() {
+    this.container.innerHTML = '';
+    this.container.appendChild(this.buildStyles());
+
+    if (!this.root) {
+      this.container.appendChild(this.renderEmptyState());
+      return;
+    }
+
+    const hottestNode = this.findHottestNode(this.root);
+
+    this.container.appendChild(this.renderSummaryCard(hottestNode));
+
+    const treeContainer = document.createElement('div');
+    treeContainer.className = 'explain-tree';
+
+    treeContainer.appendChild(this.renderToolbar(treeContainer));
+    treeContainer.appendChild(this.createNodeElement(this.root, hottestNode, 0));
+
+    this.container.appendChild(treeContainer);
+  }
+
+  private buildStyles(): HTMLStyleElement {
+    const style = document.createElement('style');
+    style.textContent = `
+      .explain-tree {
+        font-family: var(--vscode-editor-font-family);
+        font-size: 12px;
+        padding: 12px 16px 16px;
+        overflow: auto;
+        height: 100%;
+        background: var(--vscode-editor-background);
+        color: var(--vscode-editor-foreground);
+      }
+      .explain-toolbar {
+        display: flex;
+        gap: 8px;
+        padding: 0 0 10px;
+      }
+      .explain-toolbar button {
+        padding: 3px 10px;
+        font-size: 11px;
+        cursor: pointer;
+        border: 1px solid var(--vscode-widget-border);
+        border-radius: 3px;
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-button-secondaryForeground);
+      }
+      .explain-summary-card {
+        margin: 10px 16px 10px;
+        padding: 12px;
+        border: 1px solid var(--vscode-widget-border);
+        border-radius: 6px;
+        background: color-mix(in srgb, var(--vscode-editor-background) 86%, var(--vscode-badge-background) 14%);
+        font-family: var(--vscode-editor-font-family);
+      }
+      .explain-summary-title {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        opacity: 0.75;
+        margin-bottom: 8px;
+      }
+      .explain-summary-main {
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 10px;
+      }
+      .explain-metric-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 8px;
+      }
+      .explain-metric {
+        border: 1px solid var(--vscode-widget-border);
+        border-radius: 4px;
+        padding: 6px 8px;
+        background: var(--vscode-editor-background);
+      }
+      .explain-metric-label {
+        display: block;
+        font-size: 10px;
+        text-transform: uppercase;
+        opacity: 0.7;
+      }
+      .explain-metric-value {
+        font-size: 13px;
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+      }
+      .explain-node {
+        border: 1px solid var(--vscode-widget-border);
+        border-radius: 6px;
+        margin: 8px 0;
+        background: var(--vscode-editor-background);
+      }
+      .explain-node.hottest {
+        border-color: var(--vscode-focusBorder);
+      }
+      .explain-node-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 8px 10px;
+        cursor: pointer;
+      }
+      .explain-node-left {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+      .toggle-icon {
+        width: 14px;
+        text-align: center;
+        opacity: 0.8;
+      }
+      .explain-node-type {
+        font-weight: 600;
+      }
+      .explain-node-stats {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 6px;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 7px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+        border: 1px solid var(--vscode-widget-border);
+        font-variant-numeric: tabular-nums;
+      }
+      .time-green { background: rgba(64, 170, 68, 0.16); }
+      .time-amber { background: rgba(218, 160, 48, 0.16); }
+      .time-red { background: rgba(220, 70, 70, 0.16); }
+      .cost-bar {
+        height: 4px;
+        background: var(--vscode-progressBar-background);
+        opacity: 0.55;
+      }
+      .explain-details {
+        padding: 8px 10px 10px;
+        border-top: 1px dashed var(--vscode-widget-border);
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 8px;
+      }
+      .explain-detail-item {
+        min-width: 0;
+      }
+      .explain-label {
+        display: block;
+        font-size: 10px;
+        text-transform: uppercase;
+        opacity: 0.7;
+        margin-bottom: 2px;
+      }
+      .explain-value {
+        display: block;
+        font-size: 12px;
+        line-height: 1.35;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .explain-value.mono {
+        font-family: var(--vscode-editor-font-family);
+      }
+      .explain-children {
+        margin-left: 16px;
+        padding-left: 10px;
+        border-left: 1px solid color-mix(in srgb, var(--vscode-widget-border) 70%, transparent 30%);
+      }
+      .explain-node.collapsed .explain-details,
+      .explain-node.collapsed .explain-children {
+        display: none;
+      }
+      .explain-node.collapsed .toggle-icon {
+        transform: rotate(-90deg);
+      }
+      .explain-empty {
+        margin: 12px 16px;
+        border: 1px solid var(--vscode-widget-border);
+        border-radius: 6px;
+        padding: 12px;
+        font-family: var(--vscode-editor-font-family);
+      }
+      .explain-empty h4 {
+        margin: 0 0 8px;
+        font-size: 13px;
+      }
+      .explain-empty p {
+        margin: 6px 0;
+        line-height: 1.4;
+      }
+    `;
+    return style;
+  }
+
+  private renderEmptyState(): HTMLElement {
+    const box = document.createElement('div');
+    box.className = 'explain-empty';
+
+    const title = document.createElement('h4');
+    title.textContent = 'Explain plan is not in JSON format';
+
+    const p1 = document.createElement('p');
+    p1.textContent = 'Run EXPLAIN with FORMAT JSON to open the visual plan.';
+
+    const p2 = document.createElement('p');
+    p2.textContent = 'Example: EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT ...';
+
+    box.appendChild(title);
+    box.appendChild(p1);
+    box.appendChild(p2);
+    return box;
+  }
+
+  private renderSummaryCard(hottestNode: ExplainNode): HTMLElement {
+    const card = document.createElement('div');
+    card.className = 'explain-summary-card';
+
+    const title = document.createElement('div');
+    title.className = 'explain-summary-title';
+    title.textContent = 'Performance Summary';
+
+    const bottleneck = document.createElement('div');
+    bottleneck.className = 'explain-summary-main';
+    const hotTime = this.asFiniteNumber(hottestNode['Actual Total Time']);
+    const hotTimeText = hotTime === null ? '' : ` (${hotTime.toFixed(2)} ms)`;
+    bottleneck.textContent = `Primary bottleneck: ${this.getNodeTypeLabel(hottestNode['Node Type'])}${hotTimeText}`;
+
+    const metrics = document.createElement('div');
+    metrics.className = 'explain-metric-grid';
+
+    const addMetric = (label: string, value: string) => {
+      const item = document.createElement('div');
+      item.className = 'explain-metric';
+      item.innerHTML = `<span class="explain-metric-label">${label}</span><span class="explain-metric-value">${value}</span>`;
+      metrics.appendChild(item);
+    };
+
+    addMetric('Planning', this.meta.planningTime === null ? '?' : `${this.meta.planningTime.toFixed(2)} ms`);
+    addMetric('Execution', this.meta.executionTime === null ? '?' : `${this.meta.executionTime.toFixed(2)} ms`);
+    addMetric('Root Cost', this.meta.rootCost === null ? '?' : this.meta.rootCost.toFixed(2));
+    addMetric('Plan Nodes', String(this.meta.nodeCount));
+
+    card.appendChild(title);
+    card.appendChild(bottleneck);
+    card.appendChild(metrics);
+
+    if (hottestNode['Node Type'] === 'Seq Scan') {
+      const hint = document.createElement('div');
+      hint.style.marginTop = '10px';
+      hint.style.padding = '8px';
+      hint.style.borderLeft = '3px solid #d7a000';
+      hint.style.background = 'rgba(215, 160, 0, 0.12)';
+      const relationName = String(hottestNode['Relation Name'] ?? 'table_name');
+      hint.textContent = `Hint: consider an index for relation \"${relationName}\" if this path is frequently used.`;
+      card.appendChild(hint);
+    }
+
+    return card;
+  }
+
+  private renderToolbar(treeContainer: HTMLElement): HTMLElement {
+    const toolbar = document.createElement('div');
+    toolbar.className = 'explain-toolbar';
+
+    const expandAll = document.createElement('button');
+    expandAll.textContent = 'Expand All';
+    expandAll.onclick = () => {
+      treeContainer.querySelectorAll('.explain-node.collapsed').forEach((n) => n.classList.remove('collapsed'));
+    };
+
+    const collapseAll = document.createElement('button');
+    collapseAll.textContent = 'Collapse All';
+    collapseAll.onclick = () => {
+      treeContainer.querySelectorAll('.explain-node').forEach((n) => {
+        if (n.querySelector('.explain-children')) {
+          n.classList.add('collapsed');
+        }
+      });
+    };
+
+    toolbar.appendChild(expandAll);
+    toolbar.appendChild(collapseAll);
+    return toolbar;
+  }
+
+  private createNodeElement(node: ExplainNode, hottestNode: ExplainNode, depth: number): HTMLElement {
+    const el = document.createElement('div');
+    el.className = 'explain-node';
+
+    if (node === hottestNode) {
+      el.classList.add('hottest');
+    }
+
+    const children = Array.isArray(node.Plans) ? node.Plans : [];
+    const hasChildren = children.length > 0;
+
+    if (depth > 1 && hasChildren) {
+      el.classList.add('collapsed');
+    }
+
+    const header = document.createElement('div');
+    header.className = 'explain-node-header';
+
+    const left = document.createElement('div');
+    left.className = 'explain-node-left';
+
+    const toggle = document.createElement('span');
+    toggle.className = 'toggle-icon';
+    toggle.textContent = hasChildren ? 'v' : '';
+    left.appendChild(toggle);
+
+    const typeName = document.createElement('span');
+    typeName.className = 'explain-node-type';
+    typeName.textContent = this.getNodeTypeLabel(node['Node Type']);
+    left.appendChild(typeName);
+
+    header.appendChild(left);
+
+    const stats = document.createElement('div');
+    stats.className = 'explain-node-stats';
+
+    const time = this.asFiniteNumber(node['Actual Total Time']);
+    const cost = this.asFiniteNumber(node['Total Cost']);
+    const rows = this.asFiniteNumber(node['Actual Rows']) ?? this.asFiniteNumber(node['Plan Rows']);
+
+    const addPill = (text: string, className = '') => {
+      const pill = document.createElement('span');
+      pill.className = `pill ${className}`.trim();
+      pill.textContent = text;
+      stats.appendChild(pill);
+    };
+
+    const timeColor = this.getTimeBadgeColor(time);
+    addPill(`time ${time === null ? '?' : `${time.toFixed(2)}ms`}`, `time-${timeColor}`);
+    addPill(`cost ${cost === null ? '?' : cost.toFixed(2)}`);
+    addPill(`rows ${rows === null ? '?' : rows.toLocaleString()}`);
+
+    const planRows = this.asFiniteNumber(node['Plan Rows']);
+    const actualRows = this.asFiniteNumber(node['Actual Rows']);
+    if (planRows && actualRows && planRows > 0) {
+      const ratio = actualRows / planRows;
+      if (ratio > 10 || ratio < 0.1) {
+        const magnitude = ratio >= 1 ? Math.round(ratio) : Math.round(1 / ratio);
+        const direction = ratio >= 1 ? 'over' : 'under';
+        addPill(`est ${magnitude}x ${direction}`);
+      }
+    }
+
+    header.appendChild(stats);
+    el.appendChild(header);
+
+    if (hasChildren) {
+      header.onclick = (e) => {
+        el.classList.toggle('collapsed');
+        e.stopPropagation();
+      };
+    }
+
+    const costBar = document.createElement('div');
+    costBar.className = 'cost-bar';
+    const barRatio = this.maxCost > 0 && cost !== null ? (cost / this.maxCost) * 100 : 0;
+    costBar.style.width = `${Math.max(2, Math.min(100, barRatio))}%`;
+    el.appendChild(costBar);
+
+    const details = document.createElement('div');
+    details.className = 'explain-details';
+
+    const addDetail = (label: string, value: unknown) => {
+      if (value === null || value === undefined || value === '') {
+        return;
+      }
+
+      const item = document.createElement('div');
+      item.className = 'explain-detail-item';
+
+      const labelEl = document.createElement('span');
+      labelEl.className = 'explain-label';
+      labelEl.textContent = label;
+
+      const valueEl = document.createElement('span');
+      valueEl.className = `explain-value${this.shouldUseMonospace(label) ? ' mono' : ''}`;
+      valueEl.textContent = this.formatDetailValue(value);
+
+      item.appendChild(labelEl);
+      item.appendChild(valueEl);
+      details.appendChild(item);
+    };
+
+    addDetail('Cost', `${this.formatNumber(node['Startup Cost'])} .. ${this.formatNumber(node['Total Cost'])}`);
+    addDetail('Rows', `${this.formatNumber(node['Plan Rows'], 0)} (plan) / ${this.formatNumber(node['Actual Rows'], 0)} (actual)`);
+    addDetail('Loops', this.asFiniteNumber(node['Actual Loops']));
+    addDetail('Relation', node['Relation Name']);
+    addDetail('Alias', node.Alias);
+    addDetail('Index Name', node['Index Name']);
+    addDetail('Join Type', node['Join Type']);
+    addDetail('Strategy', node.Strategy);
+    addDetail('Parallel Aware', node['Parallel Aware']);
+    addDetail('Index Cond', node['Index Cond']);
+    addDetail('Recheck Cond', node['Recheck Cond']);
+    addDetail('Hash Cond', node['Hash Cond']);
+    addDetail('Merge Cond', node['Merge Cond']);
+    addDetail('Join Filter', node['Join Filter']);
+    addDetail('Filter', node.Filter);
+    addDetail('Sort Key', node['Sort Key']);
+    addDetail('Group Key', node['Group Key']);
+    addDetail('Output', node.Output);
+    addDetail('Rows Removed by Filter', node['Rows Removed by Filter']);
+    addDetail('Rows Removed by Join Filter', node['Rows Removed by Join Filter']);
+
+    el.appendChild(details);
+
+    if (hasChildren) {
+      const childrenEl = document.createElement('div');
+      childrenEl.className = 'explain-children';
+      children.forEach((child) => {
+        childrenEl.appendChild(this.createNodeElement(child, hottestNode, depth + 1));
+      });
+      el.appendChild(childrenEl);
+    }
+
+    return el;
+  }
+}
