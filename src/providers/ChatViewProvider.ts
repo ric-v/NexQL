@@ -564,17 +564,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       let usageInfo: string | undefined;
       const aiStartTime = Date.now();
 
-      if (provider === 'vscode-lm') {
-        console.log('[ChatView] Calling VS Code LM API...');
-        const result = await this._aiService.callVsCodeLm(aiMessage, config);
-        responseText = result.text;
-        usageInfo = result.usage;
-      } else {
-        console.log('[ChatView] Calling direct API:', provider);
-        const result = await this._aiService.callDirectApi(provider, aiMessage, config);
-        responseText = result.text;
-        usageInfo = result.usage;
-      }
+      console.log('[ChatView] Calling AI provider:', provider);
+      const result = await this._aiService.callProvider(provider, aiMessage, config);
+      responseText = result.text;
+      usageInfo = result.usage;
 
       const aiElapsed = ((Date.now() - aiStartTime) / 1000).toFixed(1);
       if (usageInfo) {

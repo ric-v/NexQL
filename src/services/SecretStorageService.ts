@@ -22,6 +22,10 @@ export class SecretStorageService {
     return await this.context.secrets.get('postgresExplorer.aiApiKey');
   }
 
+  public async getCursorApiKey(): Promise<string | undefined> {
+    return await this.context.secrets.get('postgresExplorer.cursorApiKey');
+  }
+
   public async setPassword(connectionId: string, password: string): Promise<void> {
     await this.context.secrets.store(`postgres-password-${connectionId}`, password);
   }
@@ -30,12 +34,20 @@ export class SecretStorageService {
     await this.context.secrets.store('postgresExplorer.aiApiKey', apiKey);
   }
 
+  public async setCursorApiKey(apiKey: string): Promise<void> {
+    await this.context.secrets.store('postgresExplorer.cursorApiKey', apiKey);
+  }
+
   public async deletePassword(connectionId: string): Promise<void> {
     await this.context.secrets.delete(`postgres-password-${connectionId}`);
   }
 
   public async deleteAiApiKey(): Promise<void> {
     await this.context.secrets.delete('postgresExplorer.aiApiKey');
+  }
+
+  public async deleteCursorApiKey(): Promise<void> {
+    await this.context.secrets.delete('postgresExplorer.cursorApiKey');
   }
 
   /** GitHub PAT with `gist` scope — used only for “Publish notebook to Gist”. */

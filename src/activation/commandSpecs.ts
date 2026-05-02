@@ -64,6 +64,8 @@ import {
   cmdOpenSchemaDiff,
   cmdOpenSchemaDiffFromPalette,
   cmdOpenErd,
+  cmdOpenErdMultiFromDatabase,
+  cmdImportDbml,
   cmdImportData,
 } from '../commands/schemaDesigner';
 import { NotebookTreeItem, NotebooksTreeProvider } from '../providers/NotebooksTreeProvider';
@@ -1394,6 +1396,14 @@ export function getCommandSpecs(
     {
       command: 'postgres-explorer.openErd',
       callback: (item: DatabaseTreeItem) => cmdOpenErd(item, context)
+    },
+    {
+      command: 'postgres-explorer.openErdMulti',
+      callback: (item: DatabaseTreeItem) => cmdOpenErdMultiFromDatabase(item, context)
+    },
+    {
+      command: 'postgres-explorer.importDbml',
+      callback: (item?: DatabaseTreeItem) => cmdImportDbml(item, context)
     },
     // Import Data
     {
