@@ -5,7 +5,7 @@ All notable changes to the PostgreSQL Explorer extension will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.3] - 2026-05-01
+## [1.2.3] - 2026-05-02
 
 ### Added
 
@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Connection test/save: TCP preflight; SSL cert paths for verify modes.
   - Webviews: typed message IDs + validation; shared panel CSS; chat CSP nonce.
   - Saved-query import: counts + merge by id/title; CI triggers documented; tree item keys; What’s New `command:` URIs.
+- **SQL completion warm cache** — Completions can reuse a warm cache tied to notebook metadata, with invalidation when the tree or executed SQL updates schema-related context.
+- **ERD 2.0 across schemas & DBML import** — Schema designer adds commands to open an ERD spanning multiple schemas and to import DBML for visualization and workflow (DBML parsing via `@dbml/core`).
+- **Lazy result tabs** — Chart, analyst, and explain experiences load on demand in the notebook result renderer to keep heavy UI off the critical path.
 
 ### Changed
 - **Improved SQL keyword suggestions**: Notebook SQL suggestions now pay attention to where you are in the query, so the list feels less random and more helpful.
@@ -25,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Telemetry now uses explicit modes and sinks, with lifecycle, usage, and optional performance events routed more intentionally.
 - Connections no longer silently relax SSL in production, and AI providers are kept on an allowlist with a guard for empty messages.
 - Grid preferences now return structured responses, coverage merges happen before reporting, and `.cursor/` is ignored.
+- **SQL completion depth** — Parser support for stripping comments and normalizing identifiers; completions respect `search_path`-changing statements, derived subquery aliases, and session metadata; shared completion helpers consolidated.
+- **Schema designer / ERD** — ERD panel and webview reorganized into focused modules (queries, types, HTML, DBML import, export/migration draft helpers); AI settings/chat templates updated alongside AI service wiring.
+- **Notebook result renderer** — Chart.js registration is idempotent; large result rendering split into dedicated modules (`renderQueryResult`, review/edit helpers) for clearer structure and easier maintenance.
 
 ### Fixed
 - Explorer favorites key typo (trailing space).
