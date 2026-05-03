@@ -5,6 +5,18 @@ All notable changes to the PostgreSQL Explorer extension will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.4] - 2026-05-03
+
+### Added
+
+- **Backup and restore** — Database backup and restore from the extension: connection/database selection, a dedicated backup/restore webview with guided options, `pg_dump` / `pg_restore` (and related) argument builders with safe identifier handling and extra CLI args parsing, task-provider integration for scheduled dumps from VS Code, and clearer logging and errors across the flow. Chat assistant gains backup-oriented tooling and prompts where relevant.
+- **PostgreSQL server version awareness** — New server-version helper so the extension can adapt queries and metadata reads; SQL helpers and the database tree use the live server version for better behavior on PostgreSQL 10 and 11. SQL completions and the DDL viewer incorporate version-aware paths where capabilities differ by release.
+
+### Changed
+
+- **Database commands** — Refactored database command surface to align with the new backup/restore entry points and shared resolution of connections for external tools.
+- **Chat webview** — Wiring updates to support backup-related assistant flows alongside existing chat behavior.
+
 ## [1.2.3] - 2026-05-02
 
 ### Added
