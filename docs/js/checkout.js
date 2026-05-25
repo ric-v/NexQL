@@ -191,7 +191,7 @@
         name: 'PgStudio Pro',
         description: 'One-time Pro Sponsorship Support',
         order_id: orderData.order_id,
-        image: 'assets/postgres-vsc-icon.png',
+        image: 'assets/NexQL.png',
         prefill: {
           name: 'PostgreSQL Developer',
           email: 'developer@pgstudio.astrx.dev',
