@@ -3,6 +3,7 @@ import { ErrorHandlers, StringUtils } from './helper';
 import { ConnectionManager } from '../services/ConnectionManager';
 import { PostgresMetadata } from '../common/types';
 import { AiService } from '../providers/chat/AiService';
+import { SQL_SELF_CHECK_RULE } from '../providers/chat/prompts';
 import { QueryCodeLensProvider } from '../providers/QueryCodeLensProvider';
 
 interface TableSchemaInfo {
@@ -573,6 +574,7 @@ You are an expert PostgreSQL database developer and query optimizer. Your task i
    - Leverage existing indexes for better performance
    - Respect foreign key relationships
    - Understand nullability constraints
+7. **Self-check (P1.7)**: ${SQL_SELF_CHECK_RULE}
 
 ## Placement Decision
 

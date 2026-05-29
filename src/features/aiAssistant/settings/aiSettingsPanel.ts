@@ -146,19 +146,19 @@ export class AiSettingsPanel {
                 if (!settings.apiKey) {
                   throw new Error('API Key is required for OpenAI');
                 }
-                testResult = await this._testOpenAI(settings.apiKey, settings.model || 'gpt-4');
+                testResult = await this._testOpenAI(settings.apiKey, settings.model || 'gpt-4.1');
               } else if (settings.provider === 'anthropic') {
                 // Test Anthropic connection
                 if (!settings.apiKey) {
                   throw new Error('API Key is required for Anthropic');
                 }
-                testResult = await this._testAnthropic(settings.apiKey, settings.model || 'claude-3-5-sonnet-20241022');
+                testResult = await this._testAnthropic(settings.apiKey, settings.model || 'claude-sonnet-4-20250514');
               } else if (settings.provider === 'gemini') {
                 // Test Gemini connection
                 if (!settings.apiKey) {
                   throw new Error('API Key is required for Gemini');
                 }
-                testResult = await this._testGemini(settings.apiKey, settings.model || 'gemini-pro');
+                testResult = await this._testGemini(settings.apiKey, settings.model || 'gemini-2.5-flash');
               } else if (settings.provider === 'custom') {
                 // Test custom endpoint
                 if (!settings.endpoint) {

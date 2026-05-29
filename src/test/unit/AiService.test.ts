@@ -98,10 +98,12 @@ describe('AiService', () => {
     (service as any)._cancellationTokenSource = { cancel: cancelStub, dispose: disposeStub };
     (service as any)._abortController = { abort: abortStub };
 
+    // v1.4.0: the default (chat) prompt is slimmed — the SQL quality checklist now only
+    // attaches to SQL-producing capabilities, not conceptual chat.
     const prompt = service.buildSystemPrompt();
     expect(prompt).to.contain('PostgreSQL database assistant');
-    expect(prompt).to.contain('SQL QUALITY CHECKLIST');
-    expect(prompt).to.contain('DATABASE SCHEMA CONTEXT');
+    expect(prompt).to.contain('treat it as ground truth');
+    expect(prompt).to.not.contain('SQL QUALITY CHECKLIST');
 
     service.cancel();
 
@@ -287,7 +289,7 @@ describe('AiService', () => {
         expectedEndpoint: 'https://api.openai.com/v1/chat/completions',
         assert: (headers: any, body: any) => {
           expect(headers.Authorization).to.equal('Bearer config-key');
-          expect(body.model).to.equal('gpt-4o');
+          expect(body.model).to.equal('gpt-4.1');
           expect(body.messages[1].role).to.equal('user');
           expect(Array.isArray(body.messages[1].content)).to.be.true;
           expect(body.messages[1].content.some((part: any) => part.type === 'image_url')).to.be.true;
@@ -302,7 +304,7 @@ describe('AiService', () => {
         assert: (headers: any, body: any) => {
           expect(headers['x-api-key']).to.equal('secret-key');
           expect(headers.Authorization).to.be.undefined;
-          expect(body.model).to.equal('claude-3-5-sonnet-20241022');
+          expect(body.model).to.equal('claude-sonnet-4-20250514');
           expect(body.system).to.contain('PostgreSQL database assistant');
           expect(Array.isArray(body.messages[0].content)).to.be.true;
           expect(body.messages[0].content.some((part: any) => part.type === 'image')).to.be.true;
@@ -313,7 +315,7 @@ describe('AiService', () => {
         secretBehavior: () => getAiApiKeyStub.resolves('secret-key'),
         config: createConfig({}),
         messages: [imageMessage],
-        expectedEndpoint: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent',
+        expectedEndpoint: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
         assert: (headers: any, body: any) => {
           expect(headers['X-goog-api-key']).to.equal('secret-key');
           expect(body.contents[0].role).to.equal('user');

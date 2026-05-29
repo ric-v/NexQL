@@ -44,6 +44,9 @@ function createProviderHarness(sandbox: sinon.SinonSandbox) {
     }),
     callVsCodeLm: sandbox.stub().resolves({ text: 'SELECT 1;', usage: 'usage' }),
     callDirectApi: sandbox.stub(),
+    // v1.4.0: ChatViewProvider selects a capability-specific system prompt and passes it
+    // through as customSystemPrompt. Echo the capability so call-site threading is observable.
+    buildSystemPrompt: sandbox.stub().callsFake((capability: string = 'chat') => `SYSTEM[${capability}]`),
     setMessages: sandbox.stub(),
     generateTitle: sandbox.stub().resolves('Generated title'),
     cancel: sandbox.stub()
@@ -157,8 +160,12 @@ describe('ChatViewProvider', () => {
     expect(handleUserMessage.callCount).to.equal(4);
     expect(handleUserMessage.getCall(0).args[0]).to.contain('I ran this SQL query:');
     expect(handleUserMessage.getCall(0).args[0]).to.contain('relation "users" does not exist');
-    expect(handleUserMessage.getCall(1).args[0]).to.contain('I want to optimize this SQL query:');
+    expect(handleUserMessage.getCall(1).args[0]).to.contain('Optimize this SQL query:');
     expect(handleUserMessage.getCall(1).args[0]).to.contain('12.345ms');
+    // v1.4.0: quick actions thread a capability tag as the 4th arg.
+    expect(handleUserMessage.getCall(1).args[3]).to.equal('optimizeQuery');
+    expect(handleUserMessage.getCall(0).args[3]).to.equal('explainError');
+    expect(handleUserMessage.getCall(2).args[3]).to.equal('generateQuery');
     expect(handleUserMessage.getCall(2).args[0]).to.contain('Please generate a SQL query for the following request');
     expect(handleUserMessage.getCall(2).args[0]).to.contain('TABLE: public.users');
     expect(handleUserMessage.getCall(2).args[0]).to.contain('FUNCTION: public.calc_total');

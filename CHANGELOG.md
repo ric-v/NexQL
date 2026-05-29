@@ -5,19 +5,23 @@ All notable changes to the PostgreSQL Explorer extension will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+---
+
 ## [1.2.10] - 2026-05-27
-> Nightly releases - v1.3.12
+> Nightly releases — v1.3.10 • v1.4.0
 
 ### Added
 
-- **Full dataset toggle** — Added cell actions to switch result rendering between the limited preview and the full dataset path.
-- **Tree loader split** — Connection, database, schema, and table loading now live in dedicated loader modules for easier maintenance.
+- **Full dataset toggle** — Switch result cells between preview and full dataset rendering.
+- **Smarter AI assistant** — Task-specific prompts (fix, optimize, explain, analyze, generate); `@mention` schema ranked to your question with per-object caps; configurable context budget (`postgresExplorer.ai.maxContextTokens`, default 8000); self-check against provided schema to reduce invented columns.
+- **Sampled data analysis** — Large result sets analyzed from the first 200 rows with a `(sampled X of Y rows)` note.
 
 ### Changed
 
-- **Notebook toolbar actions & Codelens** — Updated notebook cell commands, labels, and icons to match the new query workflow.
-- **Query result plumbing** — Refined result rendering and webview management to support pooled webviews and lazy chart loading.
-- **Tree and execution internals** — Cleaned up connection utilities, SQL execution, and dashboard/provider wiring to align with the new module layout.
+- **Notebook toolbar** — Updated cell commands, labels, and icons for the query workflow.
+- **AI quick-actions** — Optimize/explain use an attached plan directly instead of asking you to re-run `EXPLAIN`; schema fetches are faster and retry on failure.
+- **Default AI models** — OpenAI `gpt-4.1`, Anthropic `claude-sonnet-4-20250514`, Gemini `gemini-2.5-flash` (override via `postgresExplorer.aiModel`).
+
 
 ## [1.2.9] - 2026-05-23
 > Nightly releases - v1.3.11
