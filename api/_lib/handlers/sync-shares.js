@@ -3,8 +3,8 @@
 //   — create shares from me (owner) to a grantee.
 
 const crypto = require('crypto');
-const { authenticateBearer } = require('../_lib/sync-auth');
-const { createShares, listSharesForGrantee } = require('../_lib/sync-db');
+const { authenticateBearer } = require('../sync-auth');
+const { createShares, listSharesForGrantee } = require('../sync-db');
 
 const MAX_ITEMS_PER_REQUEST = 100;
 const MAX_BLOB_CHARS = 2 * 1024 * 1024; // ~1.5MB binary after base64

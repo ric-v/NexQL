@@ -2,7 +2,35 @@
   "buildCommand": "npm run build:site",
   "outputDirectory": "dist",
   "functions": {
-    "api/**/*.js": {
+    "api/config.js": {
+      "memory": 128,
+      "maxDuration": 10
+    },
+    "api/create-subscription.js": {
+      "memory": 128,
+      "maxDuration": 10
+    },
+    "api/verify-payment.js": {
+      "memory": 128,
+      "maxDuration": 10
+    },
+    "api/webhook.js": {
+      "memory": 128,
+      "maxDuration": 10
+    },
+    "api/cancel-subscription.js": {
+      "memory": 128,
+      "maxDuration": 10
+    },
+    "api/auth/[...route].js": {
+      "memory": 128,
+      "maxDuration": 10
+    },
+    "api/sync/[...path].js": {
+      "memory": 128,
+      "maxDuration": 10
+    },
+    "api/license/[...route].js": {
       "memory": 128,
       "maxDuration": 10
     }

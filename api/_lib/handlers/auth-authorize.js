@@ -1,6 +1,6 @@
 // POST /api/auth/authorize — complete device flow with Teams license key + user code.
 
-const { authorizeDevice } = require('../_lib/sync-auth');
+const { authorizeDevice } = require('../sync-auth');
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {

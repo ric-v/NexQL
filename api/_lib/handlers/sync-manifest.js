@@ -1,8 +1,8 @@
 // GET  /api/sync/manifest — list encrypted sync item metadata for the signed-in account.
 // PUT  /api/sync/manifest — upsert manifest metadata (blobs uploaded via /sync/items/:id).
 
-const { authenticateBearer } = require('../_lib/sync-auth');
-const { listManifest, upsertManifestMeta } = require('../_lib/sync-db');
+const { authenticateBearer } = require('../sync-auth');
+const { listManifest, upsertManifestMeta } = require('../sync-db');
 
 function rowToEntry(row) {
   return {

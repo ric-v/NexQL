@@ -6,7 +6,7 @@
 // re-validation. Binds the VS Code machine id (instanceId) to the entitlement
 // up to a device cap.
 
-const store = require('../_lib/store');
+const store = require('../store');
 
 // Sponsor is a personal license; Singularity is a flat org license shared by a team.
 const DEVICE_LIMITS = { sponsor: 3, singularity: 25 };

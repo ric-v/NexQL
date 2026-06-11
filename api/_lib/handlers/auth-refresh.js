@@ -1,6 +1,6 @@
 // POST /api/auth/refresh — rotate access token using a refresh token.
 
-const { refreshAccessToken } = require('../_lib/sync-auth');
+const { refreshAccessToken } = require('../sync-auth');
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
