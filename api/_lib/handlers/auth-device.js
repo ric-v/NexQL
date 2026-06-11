@@ -1,6 +1,6 @@
 // POST /api/auth/device — start OAuth2 device authorization for NexQL Cloud sync.
 
-const { startDeviceAuth } = require('../_lib/sync-auth');
+const { startDeviceAuth } = require('../sync-auth');
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {

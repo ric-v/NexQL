@@ -1,8 +1,8 @@
 // GET  /api/sync/keys?email= — fetch a team member's public key for sharing.
 // POST /api/sync/keys { public_key } — register this account's public key.
 
-const { authenticateBearer } = require('../_lib/sync-auth');
-const { upsertIdentity, getPublicKey } = require('../_lib/sync-db');
+const { authenticateBearer } = require('../sync-auth');
+const { upsertIdentity, getPublicKey } = require('../sync-db');
 
 module.exports = async (req, res) => {
   let auth;

@@ -1,8 +1,8 @@
 // GET /api/sync/items/:itemId — fetch encrypted blob.
 // PUT /api/sync/items/:itemId — upsert encrypted blob + metadata.
 
-const { authenticateBearer } = require('../../_lib/sync-auth');
-const { getItemBlob, upsertItem } = require('../../_lib/sync-db');
+const { authenticateBearer } = require('../sync-auth');
+const { getItemBlob, upsertItem } = require('../sync-db');
 
 module.exports = async (req, res) => {
   const itemId = req.query.itemId;

@@ -1,8 +1,8 @@
 // DELETE /api/sync/shares/:shareId — revoke a share you own.
 // GET    /api/sync/shares/:shareId — (owner) check a single share's status.
 
-const { authenticateBearer } = require('../../_lib/sync-auth');
-const { revokeShare } = require('../../_lib/sync-db');
+const { authenticateBearer } = require('../sync-auth');
+const { revokeShare } = require('../sync-db');
 
 module.exports = async (req, res) => {
   const shareId = req.query.shareId;

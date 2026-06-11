@@ -7,7 +7,7 @@
 // licenseKey + the email on file — both must match; on mismatch the response
 // is indistinguishable from an unknown key to prevent enumeration.
 
-const store = require('../_lib/store');
+const store = require('../store');
 
 // Keep in sync with validate.js.
 const DEVICE_LIMITS = { sponsor: 3, singularity: 25 };

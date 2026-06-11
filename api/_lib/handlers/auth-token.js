@@ -1,6 +1,6 @@
 // POST /api/auth/token — poll device authorization or exchange device_code for tokens.
 
-const { pollDeviceToken } = require('../_lib/sync-auth');
+const { pollDeviceToken } = require('../sync-auth');
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {

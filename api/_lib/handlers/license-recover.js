@@ -6,8 +6,8 @@
 // Security: never returns the key in the response and always replies 200 { ok: true }
 // regardless of whether the email matched — prevents email enumeration / key harvesting.
 
-const store = require('../_lib/store');
-const { sendLicenseEmail } = require('../_lib/email');
+const store = require('../store');
+const { sendLicenseEmail } = require('../email');
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
