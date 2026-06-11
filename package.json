@@ -41,7 +41,12 @@
     "postgresql vs code extension",
     "postgres database explorer",
     "sql notebook vs code",
-    "ai sql assistant"
+    "ai sql assistant",
+    "neon",
+    "supabase",
+    "timescaledb",
+    "yugabytedb",
+    "serverless postgres"
   ],
   "contributes": {
     "languages": [
@@ -72,6 +77,61 @@
         "command": "postgres-explorer.license.openUpgrade",
         "title": "View Plans / Upgrade",
         "category": "NexQL"
+      },
+      {
+        "command": "postgres-explorer.license.showUsage",
+        "title": "Show Free Usage",
+        "category": "NexQL"
+      },
+      {
+        "command": "postgres-explorer.audit.openLog",
+        "title": "Open Production Audit Log",
+        "category": "NexQL"
+      },
+      {
+        "command": "postgres-explorer.sync.setup",
+        "title": "Set Up Sync",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.now",
+        "title": "Sync Now",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.status",
+        "title": "Show Sync Status",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.showSecretKey",
+        "title": "Show Sync Secret Key",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.pause",
+        "title": "Pause Sync",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.signOut",
+        "title": "Sign Out of Sync",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.share",
+        "title": "Share Items with a Team Member",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.importShares",
+        "title": "Import Shared Items",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.statusMenu",
+        "title": "Sync Menu",
+        "category": "NexQL Sync"
       },
       {
         "command": "postgres-explorer.addConnection",
@@ -111,6 +171,12 @@
       {
         "command": "postgres-explorer.manageConnections",
         "title": "Manage Connections",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "postgres-explorer.settingsHub",
+        "title": "Open Settings",
+        "category": "NexQL",
         "icon": "$(settings-gear)"
       },
       {
@@ -718,6 +784,12 @@
         "icon": "$(archive)"
       },
       {
+        "command": "postgres-explorer.migrationHub",
+        "title": "Migration Hub: Detect Framework & Show Runbook",
+        "category": "NexQL",
+        "icon": "$(git-commit)"
+      },
+      {
         "command": "postgres-explorer.generateCreateScript",
         "title": "CREATE Script",
         "icon": "$(file-code)"
@@ -1253,6 +1325,12 @@
         "category": "NexQL"
       },
       {
+        "command": "postgres-explorer.createPolicy",
+        "title": "RLS Policy Studio...",
+        "icon": "$(shield)",
+        "category": "NexQL"
+      },
+      {
         "command": "postgres-explorer.enableTrigger",
         "title": "Enable Trigger",
         "icon": "$(play)",
@@ -1675,6 +1753,46 @@
             ]
           }
         ]
+      },
+      {
+        "id": "pgstudioSyncSetup",
+        "title": "Set up PgStudio Sync",
+        "description": "E2E-encrypted sync for connections, notebooks, and saved queries across editors.",
+        "steps": [
+          {
+            "id": "pgstudioSyncSetup.openWizard",
+            "title": "Set up sync",
+            "description": "Run the guided wizard to create or unlock your encrypted vault.\n[Set Up Sync](command:postgres-explorer.sync.setup)",
+            "media": {
+              "markdown": "walkthroughs/step-sync-setup.md",
+              "altText": "Set up PgStudio Sync"
+            },
+            "completionEvents": [
+              "onCommand:postgres-explorer.sync.setup"
+            ]
+          },
+          {
+            "id": "pgstudioSyncSetup.chooseItems",
+            "title": "Choose what to sync",
+            "description": "Pick connections, saved queries, notebooks, and optionally passwords during setup.",
+            "media": {
+              "markdown": "walkthroughs/step-sync-items.md",
+              "altText": "Choose sync items"
+            }
+          },
+          {
+            "id": "pgstudioSyncSetup.firstSync",
+            "title": "Run your first sync",
+            "description": "Sync runs automatically after setup. Use the status bar to sync anytime.\n[Sync Now](command:postgres-explorer.sync.now)",
+            "media": {
+              "markdown": "walkthroughs/step-sync-first.md",
+              "altText": "First sync"
+            },
+            "completionEvents": [
+              "onCommand:postgres-explorer.sync.now"
+            ]
+          }
+        ]
       }
     ],
     "notebooks": [
@@ -1719,21 +1837,25 @@
     "configuration": {
       "title": "PostgreSQL Explorer",
       "properties": {
+        "postgresExplorer.debug": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "markdownDescription": "Write verbose diagnostic logging to the **NexQL Debug** output channel. Off by default to keep SQL, schema, and AI payloads out of logs."
+        },
         "postgresExplorer.license.enforcement": {
           "type": "string",
           "enum": [
             "off",
-            "soft",
-            "hard"
+            "freemium"
           ],
           "enumDescriptions": [
-            "No gating — all features available to everyone.",
-            "Show upgrade nudges on paid features but never block.",
-            "Require an active subscription to use paid features (default)."
+            "No metering — all features unlimited for everyone (development / dark-ship).",
+            "Freemium: free tier gets daily/weekly per-feature allowances; paid tiers are unlimited (default)."
           ],
-          "default": "hard",
+          "default": "freemium",
           "scope": "machine",
-          "markdownDescription": "Controls premium feature gating. Set to `hard` to require an active subscription for paid features by default."
+          "markdownDescription": "Controls premium feature access. `freemium` (default) gives the free tier metered daily/weekly use of premium features and unlimited use to paid subscribers. `off` disables all metering. Legacy values `soft`/`hard` are treated as `freemium`."
         },
         "postgresExplorer.license.endpoint": {
           "type": "string",
@@ -1799,7 +1921,53 @@
                 "description": "Force read-only transactions for this connection"
               }
             }
-          }
+        }
+      },
+        "postgresExplorer.sync.auto": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable automatic sync (pull on activation, debounced push, periodic pull)."
+        },
+        "postgresExplorer.sync.notebookFolder": {
+          "type": "string",
+          "default": "~/PgStudioNotebooks",
+          "description": "Folder for synced .pgsql notebooks (supports ~ for home directory)."
+        },
+        "postgresExplorer.sync.pullIntervalMinutes": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "description": "Interval in minutes for periodic sync pulls."
+        },
+        "postgresExplorer.sync.apiEndpoint": {
+          "type": "string",
+          "default": "https://nexql.astrx.dev/api",
+          "scope": "machine",
+          "description": "Base URL for NexQL account and cloud sync API."
+        },
+        "postgresExplorer.sync.githubClientId": {
+          "type": "string",
+          "default": "Ov23liPLACEHOLDER_GITHUB_CLIENT",
+          "scope": "machine",
+          "markdownDescription": "GitHub OAuth app client ID for device-flow fallback when built-in GitHub auth is unavailable. Register at https://github.com/settings/developers (enable device flow)."
+        },
+        "postgresExplorer.sync.onedriveClientId": {
+          "type": "string",
+          "default": "00000000-0000-0000-0000-PLACEHOLDER",
+          "scope": "machine",
+          "markdownDescription": "Entra (Azure AD) public client app ID for OneDrive appFolder sync. Register at https://portal.azure.com."
+        },
+        "postgresExplorer.sync.googleClientId": {
+          "type": "string",
+          "default": "000000000000-placeholder.apps.googleusercontent.com",
+          "scope": "machine",
+          "markdownDescription": "Google OAuth client ID for Drive appdata sync (loopback PKCE). Requires Google verification for production."
+        },
+        "postgresExplorer.sync.postgresConnectionId": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Connection ID for optional team Postgres sync backend (pgstudio_sync schema)."
         },
         "postgresExplorer.aiProvider": {
           "type": "string",
@@ -1831,6 +1999,7 @@
             "vscode-lm",
             "github",
             "cursor",
+            "opencode",
             "openai",
             "anthropic",
             "gemini",
@@ -1852,6 +2021,7 @@
             "vscode-lm",
             "github",
             "cursor",
+            "opencode",
             "openai",
             "anthropic",
             "gemini",
@@ -1872,21 +2042,58 @@
           "default": "",
           "description": "Custom API endpoint (optional)"
         },
+        "postgresExplorer.opencodeCliPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional path to the OpenCode CLI binary. Auto-detected from PATH and common install locations when empty."
+        },
+        "postgresExplorer.opencodeWorkingDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Working directory for OpenCode serve/run. Defaults to the VS Code workspace folder, or ~/.pgstudio/opencode-wd when the host folder is an IDE install path."
+        },
+        "postgresExplorer.opencodeServeUrl": {
+          "type": "string",
+          "default": "",
+          "description": "OpenCode server URL (opencode serve). Auto-populated when opencodeAutoServe starts a managed server."
+        },
+        "postgresExplorer.opencodeAutoServe": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start and reuse a local opencode serve instance for faster SQL Assistant requests."
+        },
+        "postgresExplorer.opencodeShowLog": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the OpenCode output channel while requests are running (View → Output → OpenCode)."
+        },
+        "postgresExplorer.opencodeServePort": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "Fixed port for auto-started opencode serve (0 = pick a free port)."
+        },
+        "postgresExplorer.opencodeSkipPermissions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto-allow OpenCode tool permissions for headless SQL Assistant runs (YOLO mode). Required when attaching to opencode serve."
+        },
+        "postgresExplorer.opencodeAutoApprovePermissions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Poll the OpenCode server and auto-approve any permission prompts during SQL Assistant requests."
+        },
+        "postgresExplorer.opencodePreferSdk": {
+          "type": "boolean",
+          "default": false,
+          "description": "When the OpenCode CLI is not found, fall back to @opencode-ai/sdk if installed."
+        },
         "postgresExplorer.ai.maxContextTokens": {
           "type": "number",
           "default": 8000,
           "minimum": 512,
           "description": "Approximate token budget for AI requests (system prompt + schema context + chat history). Oldest history is dropped first, then schema is trimmed, to keep requests within this budget."
-        },
-        "postgresExplorer.streaming.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable cursor-based streaming for large result sets"
-        },
-        "postgresExplorer.streaming.batchSize": {
-          "type": "number",
-          "default": 200,
-          "description": "Number of rows per batch when streaming results"
         },
         "postgresExplorer.telemetry.mode": {
           "type": "string",
@@ -2989,6 +3196,11 @@
           "group": "9_destructive"
         },
         {
+          "command": "postgres-explorer.createPolicy",
+          "when": "view == postgresExplorer && viewItem == table",
+          "group": "1_actions"
+        },
+        {
           "command": "postgres-explorer.createTrigger",
           "when": "view == postgresExplorer && viewItem == category-triggers",
           "group": "1_actions"
@@ -3430,12 +3642,13 @@
   "main": "./dist/extension.js",
   "scripts": {
     "dev:site": "node scripts/dev-server.js",
-    "build:site": "mkdir -p dist && cp -r docs/* dist/",
+    "prebuild:site": "node scripts/sync-theme-parser.mjs",
+    "build:site": "npm run prebuild:site && mkdir -p dist && cp -r docs/* dist/",
     "vscode:prepublish": "npm run esbuild-base -- --minify && npm run esbuild-renderer -- --minify && npm run esbuild-erd-webview -- --minify",
     "prepare:nightly:manifests": "node ./scripts/prepare-nightly-manifests.js",
     "package:prerelease": "npx @vscode/vsce package --pre-release",
     "package:openvsx:nightly": "npx @vscode/vsce package",
-    "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:ssh2 --external:pg --external:@cursor/sdk --external:@dbml/core --format=cjs --platform=node --main-fields=main",
+    "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:ssh2 --external:pg --external:@cursor/sdk --external:@opencode-ai/sdk --external:@dbml/core --format=cjs --platform=node --main-fields=main",
     "esbuild-renderer": "node scripts/clean-dist-chunks.js && esbuild ./src/ui/renderer/renderer_v2.ts --bundle --outdir=dist --format=esm --platform=browser --splitting",
     "esbuild-erd-webview": "esbuild ./src/schemaDesigner/erd/webview/main.ts --bundle --outfile=dist/erd-webview.js --format=iife --platform=browser",
     "copy-templates": "cp -r templates dist/",

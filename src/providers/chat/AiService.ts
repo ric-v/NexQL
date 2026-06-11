@@ -13,6 +13,12 @@ import { AiConfigScope } from '../../features/aiAssistant/types';
 import { DirectApiKeyProvider } from '../../features/aiAssistant/types';
 import { TelemetryService } from '../../services/TelemetryService';
 import { AiCapability, buildSystemPrompt as composeSystemPrompt } from './prompts';
+import { debugLog, debugWarn } from '../../common/logger';
+import {
+  listOpencodeModels,
+  resolveOpencodeWorkingDirectory,
+  runOpencodePrompt,
+} from '../../features/aiAssistant/opencode';
 
 // GitHub Models permission applies to fine-grained tokens/GitHub Apps.
 // For VS Code OAuth sessions, request no explicit scope.
@@ -21,6 +27,7 @@ const GITHUB_MODELS_API_BASE = 'https://models.github.ai';
 const GITHUB_MODELS_API_VERSION = '2026-03-10';
 const DEFAULT_GITHUB_MODEL = 'openai/gpt-4.1';
 const DEFAULT_CURSOR_MODEL = 'auto';
+const DEFAULT_OPENCODE_MODEL = 'auto';
 const DIRECT_API_PROVIDERS = new Set([
   'openai',
   'anthropic',
@@ -116,6 +123,10 @@ export class AiService {
       return await this.callCursorAgent(userMessage, config, customSystemPrompt, scope);
     }
 
+    if (provider === 'opencode') {
+      return await this.callOpenCodeAgent(userMessage, config, customSystemPrompt, scope);
+    }
+
     return await this.callDirectApi(provider, userMessage, config, customSystemPrompt, scope);
   }
 
@@ -169,7 +180,7 @@ export class AiService {
       throw new Error('No AI models available via VS Code API. Please ensure GitHub Copilot Chat is installed or switch provider.');
     }
 
-    console.log('[AiService] Selected model details:', JSON.stringify({
+    debugLog('[AiService] Selected model details:', JSON.stringify({
       id: model.id,
       name: model.name,
       family: (model as any).family,
@@ -234,7 +245,7 @@ export class AiService {
       mentionCount: msg.mentions?.length || 0
     }));
 
-    console.log('[AiService] Prepared request payload summary:', JSON.stringify({
+    debugLog('[AiService] Prepared request payload summary:', JSON.stringify({
       totalMessages: messages.length,
       historyMessages: history.length,
       userMessageLength: userMessage.length,
@@ -243,18 +254,18 @@ export class AiService {
     }));
 
     // Debug: Log all messages being sent to model
-    console.log('[AiService] ========== MESSAGES SENT TO MODEL ==========');
-    console.log('[AiService] System prompt length:', systemPrompt.length);
-    console.log('[AiService] Conversation history messages:', this._messages.length);
+    debugLog('[AiService] ========== MESSAGES SENT TO MODEL ==========');
+    debugLog('[AiService] System prompt length:', systemPrompt.length);
+    debugLog('[AiService] Conversation history messages:', this._messages.length);
 
     // Create and store cancellation token source for this request
     this._cancellationTokenSource = new vscode.CancellationTokenSource();
 
     try {
-      console.log('[AiService] sendRequest initial attempt started');
+      debugLog('[AiService] sendRequest initial attempt started');
       const chatRequest = await model.sendRequest(messages, {}, this._cancellationTokenSource.token);
       const rawChatRequest = chatRequest as any;
-      console.log('[AiService] sendRequest initial attempt resolved:', JSON.stringify({
+      debugLog('[AiService] sendRequest initial attempt resolved:', JSON.stringify({
         hasStream: !!rawChatRequest?.stream,
         hasText: !!rawChatRequest?.text,
         hasResult: !!rawChatRequest?.result,
@@ -263,13 +274,13 @@ export class AiService {
 
       let effectiveRequest: any = chatRequest;
       let responseText = await this._extractVsCodeLmResponseText(chatRequest as any);
-      console.log('[AiService] Initial extraction result length:', responseText.length);
+      debugLog('[AiService] Initial extraction result length:', responseText.length);
 
       // Some models may return an empty text stream on the first attempt for verbose histories.
       // Retry once with a minimal context to avoid persisting blank assistant replies.
       let effectiveMessagesForFallback = messages;
       if (!responseText.trim()) {
-        console.warn('[AiService] Empty response from VS Code LM; retrying with minimal prompt context.');
+        debugWarn('[AiService] Empty response from VS Code LM; retrying with minimal prompt context.');
         const retryMessages: any[] = [];
         if (systemPrompt) {
           const lmMessageCtor = vscode.LanguageModelChatMessage as any;
@@ -281,17 +292,17 @@ export class AiService {
         }
         retryMessages.push(vscode.LanguageModelChatMessage.User(userMessage));
 
-        console.log('[AiService] Retry payload summary:', JSON.stringify({
+        debugLog('[AiService] Retry payload summary:', JSON.stringify({
           totalMessages: retryMessages.length,
           userMessageLength: userMessage.length,
           systemPromptLength: systemPrompt.length
         }));
 
-        console.log('[AiService] sendRequest retry attempt started');
+        debugLog('[AiService] sendRequest retry attempt started');
         const retryRequest = await model.sendRequest(retryMessages, {}, this._cancellationTokenSource.token);
         effectiveRequest = retryRequest;
         const rawRetryRequest = retryRequest as any;
-        console.log('[AiService] sendRequest retry attempt resolved:', JSON.stringify({
+        debugLog('[AiService] sendRequest retry attempt resolved:', JSON.stringify({
           hasStream: !!rawRetryRequest?.stream,
           hasText: !!rawRetryRequest?.text,
           hasResult: !!rawRetryRequest?.result,
@@ -299,7 +310,7 @@ export class AiService {
         }));
 
         responseText = await this._extractVsCodeLmResponseText(retryRequest as any);
-        console.log('[AiService] Retry extraction result length:', responseText.length);
+        debugLog('[AiService] Retry extraction result length:', responseText.length);
         effectiveMessagesForFallback = retryMessages;
       }
 
@@ -307,11 +318,11 @@ export class AiService {
       if (!responseText.trim()) {
         const fallbackModel = await this._findAlternateModel(model.id);
         if (fallbackModel) {
-          console.warn('[AiService] Selected model produced empty output. Trying alternate model:', fallbackModel.name || fallbackModel.id);
+          debugWarn('[AiService] Selected model produced empty output. Trying alternate model:', fallbackModel.name || fallbackModel.id);
           const fallbackRequest = await fallbackModel.sendRequest(effectiveMessagesForFallback, {}, this._cancellationTokenSource.token);
           effectiveRequest = fallbackRequest;
           responseText = await this._extractVsCodeLmResponseText(fallbackRequest as any);
-          console.log('[AiService] Alternate model extraction result length:', responseText.length);
+          debugLog('[AiService] Alternate model extraction result length:', responseText.length);
         }
       }
 
@@ -403,6 +414,68 @@ export class AiService {
     ].filter(Boolean);
 
     return sections.join('\n\n');
+  }
+
+  private async _resolveOpencodeModel(
+    config: vscode.WorkspaceConfiguration,
+    scope: AiConfigScope = 'notebook',
+  ): Promise<string | undefined> {
+    const configuredModel = this._resolveConfiguredModel(config, scope);
+    if (configuredModel && configuredModel !== 'auto') {
+      return configuredModel;
+    }
+
+    try {
+      const models = await listOpencodeModels(config);
+      return models[0];
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async callOpenCodeAgent(
+    userMessage: string,
+    config: vscode.WorkspaceConfiguration,
+    customSystemPrompt?: string,
+    scope: AiConfigScope = 'notebook',
+  ): Promise<{ text: string; usage?: string }> {
+    const telemetry = TelemetryService.getInstance();
+    if (!userMessage || !userMessage.trim()) {
+      throw new Error('User message is required for AI requests.');
+    }
+
+    const model = await this._resolveOpencodeModel(config, scope);
+    const systemPrompt = customSystemPrompt !== undefined ? customSystemPrompt : this.buildSystemPrompt();
+    const prompt = this._buildCursorPrompt(userMessage, systemPrompt, config);
+    const workDir = resolveOpencodeWorkingDirectory(config);
+
+    this._cancellationTokenSource = new vscode.CancellationTokenSource();
+
+    try {
+      const result = await runOpencodePrompt(config, {
+        prompt,
+        model,
+        cwd: workDir,
+        serveUrl: config.get<string>('opencodeServeUrl')?.trim() || undefined,
+        cancellationToken: this._cancellationTokenSource.token,
+      });
+
+      const responseText = result.text;
+      if (!responseText.trim()) {
+        throw new Error('AI model returned an empty response. Please retry or select a different model.');
+      }
+
+      telemetry.trackEvent('ai_request', { provider: 'opencode', success: true });
+      return { text: responseText, usage: result.usage };
+    } catch (error) {
+      telemetry.trackEvent('ai_request', { provider: 'opencode', success: false });
+      throw error;
+    } finally {
+      if (this._cancellationTokenSource) {
+        this._cancellationTokenSource.dispose();
+        this._cancellationTokenSource = null;
+      }
+    }
   }
 
   private async callCursorAgent(
@@ -722,7 +795,7 @@ export class AiService {
       }
     }
 
-    console.log('[AiService] Stream extraction stats:', JSON.stringify({
+    debugLog('[AiService] Stream extraction stats:', JSON.stringify({
       streamChunkCount,
       streamChunkTypes: streamPartDebug,
       extractedLength: responseText.length
@@ -740,7 +813,7 @@ export class AiService {
       }
     }
 
-    console.log('[AiService] Text extraction stats:', JSON.stringify({
+    debugLog('[AiService] Text extraction stats:', JSON.stringify({
       textChunkCount,
       extractedLength: responseText.length
     }));
@@ -752,11 +825,11 @@ export class AiService {
     // Last-resort compatibility fallback.
     const resultContent = chatRequest?.result?.content;
     if (typeof resultContent === 'string') {
-      console.log('[AiService] Using result.content string fallback with length:', resultContent.length);
+      debugLog('[AiService] Using result.content string fallback with length:', resultContent.length);
       return resultContent;
     }
     if (Array.isArray(resultContent)) {
-      console.log('[AiService] Using result.content array fallback with parts:', resultContent.length);
+      debugLog('[AiService] Using result.content array fallback with parts:', resultContent.length);
       return resultContent
         .map((item: any) => {
           if (typeof item === 'string') return item;
@@ -768,7 +841,7 @@ export class AiService {
     }
 
     if (!responseText.trim() && streamPartDebug.length > 0) {
-      console.warn('[AiService] LM stream yielded non-text parts only:', streamPartDebug.join(' | '));
+      debugWarn('[AiService] LM stream yielded non-text parts only:', streamPartDebug.join(' | '));
     }
 
     return responseText;
@@ -1429,6 +1502,16 @@ export class AiService {
         } catch {
           return 'Cursor';
         }
+      } else if (provider === 'opencode') {
+        if (configuredModel && configuredModel !== 'auto') {
+          return configuredModel;
+        }
+        try {
+          const models = await listOpencodeModels(config);
+          return models[0] || 'OpenCode (No Models)';
+        } catch {
+          return 'OpenCode';
+        }
       } else {
         return configuredModel || this._getDefaultModel(provider);
       }
@@ -1441,6 +1524,7 @@ export class AiService {
     switch (provider) {
       case 'github': return DEFAULT_GITHUB_MODEL;
       case 'cursor': return DEFAULT_CURSOR_MODEL;
+      case 'opencode': return DEFAULT_OPENCODE_MODEL;
       case 'openai': return DEFAULT_OPENAI_MODEL;
       case 'anthropic': return DEFAULT_ANTHROPIC_MODEL;
       case 'gemini': return DEFAULT_GEMINI_MODEL;
@@ -1454,7 +1538,7 @@ export class AiService {
   private async _selectChatModelsWithTimeout(selector: vscode.LanguageModelChatSelector): Promise<vscode.LanguageModelChat[]> {
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
-        console.warn('[AiService] vscode.lm.selectChatModels timed out after 2000ms');
+        debugWarn('[AiService] vscode.lm.selectChatModels timed out after 2000ms');
         resolve([]);
       }, 2000);
 

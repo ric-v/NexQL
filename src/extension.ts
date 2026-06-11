@@ -12,6 +12,7 @@ import type { ChatViewProvider } from './providers/ChatViewProvider';
 import { QueryHistoryService } from './services/QueryHistoryService';
 import { QueryPerformanceService } from './services/QueryPerformanceService';
 import { WorkspaceStateService } from './services/WorkspaceStateService';
+import { QuotaService } from './services/QuotaService';
 import { MessageHandlerRegistry } from './services/MessageHandler';
 import { TelemetryService } from './services/TelemetryService';
 import { WEBVIEW_MESSAGE_TYPES } from './common/messageTypes';
@@ -139,6 +140,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
   outputChannel = vscode.window.createOutputChannel('NexQL');
   outputChannel.appendLine('Activating NexQL extension');
+
+  const { OpencodeServeManager } = await import('./features/aiAssistant/opencode');
+  OpencodeServeManager.getInstance().init(context);
   const telemetry = TelemetryService.getInstance();
   telemetry.initialize(context);
   const version = context.extension.packageJSON.version;
@@ -157,6 +161,12 @@ export async function activate(context: vscode.ExtensionContext) {
 
   WorkspaceStateService.getInstance().initialize(context);
   context.subscriptions.push({ dispose: () => WorkspaceStateService.getInstance().dispose() });
+
+  // Freemium usage metering (per-feature daily/weekly free quotas).
+  QuotaService.getInstance().initialize(context);
+  // PROD DDL audit trail (Singularity feature).
+  const { AuditLogService } = await import('./features/audit/AuditLogService');
+  AuditLogService.getInstance().initialize(context);
   const planStore = new PlanStoreWorkspace(context);
 
   context.subscriptions.push(
@@ -506,6 +516,13 @@ export async function activate(context: vscode.ExtensionContext) {
   statusBar = new statusBarModule.NotebookStatusBar();
   context.subscriptions.push(statusBar);
 
+  const { SyncController } = await import('./features/sync/SyncController');
+  const syncController = SyncController.getInstance(context, outputChannel);
+  const syncStatusBar = new statusBarModule.SyncStatusBar();
+  context.subscriptions.push(syncStatusBar);
+  syncController.initialize(syncStatusBar);
+  context.subscriptions.push(syncController);
+
   // License tier indicator + deep-link activation (vscode://ric-v.postgres-explorer/activate?key=...)
   const license = LicenseService.getInstance();
   const reflectTier = () => {
@@ -588,6 +605,13 @@ export async function deactivate() {
 
   // Flush after connection shutdown so close events are not dropped.
   await telemetry.flush();
+
+  try {
+    const { OpencodeServeManager } = await import('./features/aiAssistant/opencode');
+    OpencodeServeManager.getInstance().dispose();
+  } catch {
+    // ignore if module unavailable
+  }
 
   outputChannel?.appendLine('NexQL extension deactivated');
 }
