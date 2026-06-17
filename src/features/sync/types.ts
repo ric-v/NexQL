@@ -1,8 +1,14 @@
-/** Sync item kinds — connection metadata, saved queries, notebooks, optional credential bundle. */
-export type SyncKind = 'connection' | 'query' | 'notebook' | 'secrets';
+/** Sync item kinds — connection metadata, saved queries, notebooks. */
+export type SyncKind = 'connection' | 'query' | 'notebook';
 
-export type SyncProviderId = 'gist' | 'onedrive' | 'gdrive' | 'cloud' | 'postgres';
+export type SyncProviderId = 'cloud' | 'postgres';
 
+/**
+ * Local view of an item produced by a *SyncService. `revision` is vestigial
+ * (the git-like engine orders by server `version` + content hash) but kept so
+ * the disk-mapping services stay untouched. `updatedAt` is the local edit time,
+ * used for last-writer-wins resolution against remote.
+ */
 export interface SyncItemMeta {
   id: string;
   kind: SyncKind;
@@ -13,30 +19,59 @@ export interface SyncItemMeta {
   deleted: boolean;
 }
 
-export interface SyncSnapshot {
-  manifest: SyncItemMeta[];
-  getBlob(id: string): Promise<Buffer | undefined>;
+// ── v2 git-like sync protocol ─────────────────────────────────────────────────
+
+/** Metadata for an item as it lives on the server. */
+export interface RemoteItemMeta {
+  id: string;
+  kind: SyncKind;
+  contentHash: string;
+  /** Monotonic server version (sync cursor value at write time). */
+  version: number;
+  deviceId: string;
+  /** Server write time, epoch ms. */
+  updatedAt: number;
 }
 
-export interface SyncPushItem {
-  meta: SyncItemMeta;
-  blob: Buffer;
+/** Delta returned by a pull: everything past the client cursor. */
+export interface SyncDelta {
+  cursor: number;
+  upserts: Array<{ meta: RemoteItemMeta; blob: Buffer }>;
+  deletes: string[];
 }
 
-/** Optional push context — authoritative post-merge manifest for remote cleanup. */
-export interface SyncPushOptions {
-  manifest?: SyncItemMeta[];
+/** A single push operation with optimistic-concurrency base version. */
+export interface SyncOp {
+  op: 'upsert' | 'delete';
+  itemId: string;
+  kind: SyncKind;
+  /** Server version the client last saw (0 = never synced). */
+  baseVersion: number;
+  contentHash?: string;
+  blob?: Buffer;
 }
 
-export interface SyncProvider {
+/** Server response to a push batch. */
+export interface PushResult {
+  cursor: number;
+  accepted: Array<{ itemId: string; version: number }>;
+  rejected: Array<{ itemId: string; remoteVersion: number | null; remoteHash: string | null }>;
+}
+
+/**
+ * v2 provider — cursor-based delta sync with atomic batch push and a permanent
+ * server-side delete log. Implemented by Cloud (HTTP) and self-hosted Postgres.
+ */
+export interface SyncProviderV2 {
   readonly id: SyncProviderId;
-  pull(sinceRevision?: number): Promise<SyncSnapshot>;
-  push(items: SyncPushItem[], options?: SyncPushOptions): Promise<void>;
+  pullDelta(since: number): Promise<SyncDelta>;
+  pushBatch(ops: SyncOp[]): Promise<PushResult>;
+  /** Wipe the remote space (powers "clear cloud & push"). */
+  resetSpace(): Promise<void>;
   testConnection(): Promise<{ ok: boolean; account?: string; error?: string }>;
-  /** Device binding for free-tier single-device backup. Optional per backend. */
-  getBoundDeviceId?(): Promise<string | undefined>;
-  setBoundDeviceId?(deviceId: string): Promise<void>;
 }
+
+// ── Run results / options ─────────────────────────────────────────────────────
 
 export interface SyncKindChangeCounts {
   created: number;
@@ -99,15 +134,6 @@ export interface InboundEntry {
   appliedAt: number;
 }
 
-export interface OutgoingShareView {
-  shareId: string;
-  granteeEmail: string;
-  kind: SyncKind;
-  name?: string;
-  createdAt: string;
-  revoked: boolean;
-}
-
 export interface CloudQuotaView {
   bytesUsed: number;
   bytesLimit: number;
@@ -130,20 +156,18 @@ export type SyncStatus =
   | 'conflict'
   | 'error'
   | 'paused'
-  | 'locked'
   | 'not_configured';
 
 export interface SyncConfig {
   providerId?: SyncProviderId;
-  /** GitHub Gist backend — remote vault id (also in SecretStorage per editor). */
-  gistId?: string;
   syncConnections: boolean;
   syncQueries: boolean;
   syncNotebooks: boolean;
-  syncPasswords: boolean;
   paused: boolean;
   accountEmail?: string;
-  vaultGeneration?: string;
+  /** Active workspace (shared space id). Undefined = personal space. */
+  spaceId?: string;
+  spaceName?: string;
   /** Per-item opt-outs: ids that are neither pushed nor applied on this device. */
   excludedIds?: string[];
 }
@@ -152,13 +176,12 @@ export interface SyncConfig {
 export interface SyncedItemView {
   id: string;
   kind: SyncKind;
-  /** Local display name; remote-only items have none until first pull. */
   name?: string;
   updatedAt?: number;
   deviceId?: string;
-  revision?: number;
   excluded: boolean;
-  deleted: boolean;
+  /** Per-item inclusion state for the settings table. */
+  itemStatus: 'excluded' | 'pending' | 'synced' | 'local';
 }
 
 export type SyncActivityAction = 'create' | 'update' | 'rename' | 'delete';
@@ -196,23 +219,6 @@ export interface PathOverrides {
   };
 }
 
-export interface MergeConflict {
-  id: string;
-  kind: SyncKind;
-  localName: string;
-  remoteDeviceId: string;
-  winner: 'local' | 'remote';
-  loserCopyName: string;
-}
-
-export interface MergeResult {
-  toPush: SyncPushItem[];
-  toApply: Array<{ meta: SyncItemMeta; plaintext: Buffer }>;
-  conflicts: MergeConflict[];
-  skipped: Array<{ id: string; reason: string }>;
-  newBaseManifest: SyncItemMeta[];
-}
-
 export interface ConnectionSyncPayload {
   id: string;
   name?: string;
@@ -231,10 +237,6 @@ export interface ConnectionSyncPayload {
   };
 }
 
-export interface SecretsSyncPayload {
-  passwords: Record<string, string>;
-}
-
 export interface NotebookSyncPayload {
   syncId: string;
   name: string;
@@ -245,18 +247,25 @@ export interface NotebookSyncPayload {
   cells: Array<{ value: string; kind?: string; language?: string }>;
 }
 
-export interface VaultManifest {
-  /** v2 uses random salt; v1 (legacy) uses email as scrypt salt. */
-  version?: 1 | 2;
-  generation: string;
-  wrappedVaultKey: string;
-  salt: string;
-  kdf?: 'scrypt';
-  /** Present on v1 vaults only. */
-  email?: string;
+// ── Team workspaces (server-ACL sharing) ──────────────────────────────────────
+
+export type WorkspaceRole = 'owner' | 'editor' | 'viewer';
+
+export interface WorkspaceView {
+  spaceId: string;
+  name: string;
+  ownerEmail: string;
+  role: WorkspaceRole;
 }
 
-/** Device authorization flow responses (nexql.astrx.dev). */
+export interface WorkspaceMemberView {
+  email: string;
+  role: WorkspaceRole;
+  addedAt?: string;
+}
+
+// ── Device authorization flow (nexql.astrx.dev) ───────────────────────────────
+
 export interface DeviceAuthStartResponse {
   device_code: string;
   user_code: string;
@@ -274,14 +283,4 @@ export interface DeviceAuthTokenResponse {
   email?: string | null;
   error?: string;
   error_description?: string;
-}
-
-export interface CloudSyncManifestEntry {
-  item_id: string;
-  kind: SyncKind;
-  content_hash: string;
-  revision: number;
-  device_id: string;
-  deleted: boolean;
-  updated_at: string;
 }

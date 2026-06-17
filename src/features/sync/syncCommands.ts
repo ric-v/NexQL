@@ -1,13 +1,13 @@
 import * as vscode from 'vscode';
 import { SyncController } from './SyncController';
-import { VaultService } from './VaultService';
+import { WorkspaceSharingService } from './WorkspaceSharingService';
 import {
   allowedSyncProviders,
   ProFeature,
   requirePro,
 } from '../../services/featureGates';
-import { GistSyncProvider } from './providers/GistSyncProvider';
 import { readNotebookSyncId } from './notebookSyncId';
+import type { WorkspaceView } from './types';
 
 /** Tree context-menu item shape (saved query or notebook). */
 type SyncContextTreeItem = {
@@ -47,174 +47,122 @@ export async function cmdSyncSetup(_context: vscode.ExtensionContext): Promise<v
   });
 }
 
-/** Share selected notebooks / saved queries with another team member. */
+/** Pick an existing workspace or create a new one. */
+async function pickOrCreateWorkspace(service: WorkspaceSharingService): Promise<WorkspaceView | undefined> {
+  const workspaces = await service.listWorkspaces();
+  const owned = workspaces.filter((w) => w.role === 'owner');
+  const pick = await vscode.window.showQuickPick(
+    [
+      { label: '$(add) New workspace…', id: '__new__' },
+      ...owned.map((w) => ({ label: `$(organization) ${w.name}`, description: w.ownerEmail, id: w.spaceId })),
+    ],
+    { title: 'Share to workspace', placeHolder: 'Choose a team workspace' },
+  );
+  if (!pick) {
+    return undefined;
+  }
+  if (pick.id === '__new__') {
+    const name = await vscode.window.showInputBox({
+      title: 'New workspace',
+      prompt: 'Name for the shared team workspace',
+      ignoreFocusOut: true,
+    });
+    if (!name?.trim()) {
+      return undefined;
+    }
+    return service.createWorkspace(name.trim());
+  }
+  return owned.find((w) => w.spaceId === pick.id);
+}
+
+/** Create/select a team workspace and invite a member. */
 export async function cmdSyncShare(
   context: vscode.ExtensionContext,
-  treeItem?: SyncContextTreeItem,
+  _treeItem?: SyncContextTreeItem,
 ): Promise<void> {
   if (!(await requirePro(ProFeature.SyncSharing))) {
     return;
   }
-  const controller = SyncController.getInstance();
-  if (controller.getConfig().providerId !== 'cloud') {
+  if (SyncController.getInstance().getConfig().providerId !== 'cloud') {
     await vscode.window.showWarningMessage(
-      'Team sharing requires the NexQL Cloud sync backend. Set it up under NexQL Sync: Set Up Sync.',
+      'Team workspaces require the NexQL Cloud sync backend. Set it up under NexQL Sync: Set Up Sync.',
     );
     return;
   }
 
-  const shareable = controller.listSyncedItems().filter((i) => i.kind === 'query' || i.kind === 'notebook');
-  if (shareable.length === 0) {
-    await vscode.window.showInformationMessage('No notebooks or saved queries are available to share yet.');
-    return;
-  }
-
-  const fromMenu = await resolveSyncItemIdFromTreeItem(treeItem);
-  let itemIds: string[];
-  if (fromMenu) {
-    if (!shareable.some((i) => i.id === fromMenu)) {
-      await vscode.window.showWarningMessage(
-        'This item is not in the sync index yet. Run sync first, then share again.',
-      );
-      return;
-    }
-    itemIds = [fromMenu];
-  } else {
-    const picks = await vscode.window.showQuickPick(
-      shareable.map((i) => ({
-        label: i.name || i.id,
-        description: i.kind === 'notebook' ? 'Notebook' : 'Saved query',
-        id: i.id,
-      })),
-      { title: 'Share items', placeHolder: 'Select items to share', canPickMany: true },
-    );
-    if (!picks?.length) {
-      return;
-    }
-    itemIds = picks.map((p) => p.id);
-  }
-
-  const granteeEmail = await vscode.window.showInputBox({
-    title: 'Share with',
-    prompt: "Team member's account email (they must have NexQL sync enabled)",
-    placeHolder: 'teammate@example.com',
-    ignoreFocusOut: true,
-    validateInput: (v) => (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.trim()) ? undefined : 'Enter a valid email'),
-  });
-  if (!granteeEmail) {
-    return;
-  }
-
+  const service = new WorkspaceSharingService(context);
   try {
-    const { SharingService } = await import('./SharingService');
-    const count = await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: 'Sharing items…' },
-      () => new SharingService(context).shareItems(granteeEmail.trim(), itemIds),
+    const workspace = await pickOrCreateWorkspace(service);
+    if (!workspace) {
+      return;
+    }
+    const email = await vscode.window.showInputBox({
+      title: `Invite to "${workspace.name}"`,
+      prompt: "Team member's account email (they must have NexQL sync enabled)",
+      placeHolder: 'teammate@example.com',
+      ignoreFocusOut: true,
+      validateInput: (v) => (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.trim()) ? undefined : 'Enter a valid email'),
+    });
+    if (!email) {
+      return;
+    }
+    const role = await vscode.window.showQuickPick(
+      [
+        { label: 'Editor', detail: 'Can read and write shared items', id: 'editor' as const },
+        { label: 'Viewer', detail: 'Read-only access', id: 'viewer' as const },
+      ],
+      { title: 'Member role' },
     );
-    await vscode.window.showInformationMessage(
-      count > 0
-        ? `Shared ${count} item${count === 1 ? '' : 's'} with ${granteeEmail.trim()}.`
-        : 'Nothing was shared — selected items could not be read.',
-    );
+    if (!role) {
+      return;
+    }
+    await service.addMember(workspace.spaceId, email.trim(), role.id);
+    await vscode.window.showInformationMessage(`Invited ${email.trim()} to "${workspace.name}" as ${role.id}.`);
   } catch (e) {
     await vscode.window.showErrorMessage(`Share failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
-/** Review and import items other team members have shared with you. */
+/** View team workspaces you belong to and manage members of ones you own. */
 export async function cmdSyncImportShares(context: vscode.ExtensionContext): Promise<void> {
   if (!(await requirePro(ProFeature.SyncSharing))) {
     return;
   }
-  const { SharingService } = await import('./SharingService');
-  const service = new SharingService(context);
-
-  let shares;
+  const service = new WorkspaceSharingService(context);
+  let workspaces: WorkspaceView[];
   try {
-    shares = await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: 'Loading shared items…' },
-      () => service.listIncomingShares(),
-    );
+    workspaces = await service.listWorkspaces();
   } catch (e) {
-    await vscode.window.showErrorMessage(`Could not load shares: ${e instanceof Error ? e.message : String(e)}`);
+    await vscode.window.showErrorMessage(`Could not load workspaces: ${e instanceof Error ? e.message : String(e)}`);
     return;
   }
-  if (!shares.length) {
-    await vscode.window.showInformationMessage('No one has shared items with you yet.');
+  if (!workspaces.length) {
+    await vscode.window.showInformationMessage('You are not in any team workspaces yet.');
     return;
   }
 
-  const picks = await vscode.window.showQuickPick(
-    shares.map((s) => ({
-      label: s.name || s.shareId,
-      description: `${s.kind === 'notebook' ? 'Notebook' : 'Saved query'} · from ${s.ownerEmail}`,
-      share: s,
-    })),
-    { title: 'Import shared items', placeHolder: 'Select items to import', canPickMany: true },
+  const pick = await vscode.window.showQuickPick(
+    workspaces.map((w) => ({ label: `$(organization) ${w.name}`, description: `${w.role} · ${w.ownerEmail}`, ws: w })),
+    { title: 'Team workspaces', placeHolder: 'Select a workspace to view members' },
   );
-  if (!picks?.length) {
+  if (!pick) {
     return;
   }
-
-  const mode = await vscode.window.showQuickPick(
-    [
-      { label: 'Merge into my library', detail: 'Re-importing later updates these items in place', id: 'merge' as const },
-      { label: 'Import as new copies', detail: 'Detached duplicates with fresh ids', id: 'copy' as const },
-    ],
-    { title: 'How should shared items be imported?' },
+  const members = await service.listMembers(pick.ws.spaceId);
+  const memberPick = await vscode.window.showQuickPick(
+    members.map((m) => ({ label: m.email, description: m.role, member: m })),
+    { title: `Members of "${pick.ws.name}"`, placeHolder: pick.ws.role === 'owner' ? 'Select a member to remove' : 'Members (read-only)' },
   );
-  if (!mode) {
-    return;
-  }
-
-  // Optionally attach one of the grantee's own connections (never the owner's).
-  const connections = vscode.workspace.getConfiguration().get<any[]>('postgresExplorer.connections') || [];
-  let connectionId: string | undefined;
-  if (connections.length > 0) {
-    const connPick = await vscode.window.showQuickPick(
-      [
-        { label: 'No connection (attach later)', id: undefined as string | undefined },
-        ...connections.map((c) => ({ label: c.name ?? `${c.host}:${c.port}`, id: String(c.id) })),
-      ],
-      { title: 'Attach a connection to imported items?' },
+  if (memberPick && pick.ws.role === 'owner' && memberPick.member.role !== 'owner') {
+    const confirm = await vscode.window.showWarningMessage(
+      `Remove ${memberPick.member.email} from "${pick.ws.name}"?`,
+      'Remove',
     );
-    if (!connPick) {
-      return;
+    if (confirm === 'Remove') {
+      await service.removeMember(pick.ws.spaceId, memberPick.member.email);
+      await vscode.window.showInformationMessage(`Removed ${memberPick.member.email}.`);
     }
-    connectionId = connPick.id;
   }
-
-  try {
-    const count = await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: 'Importing…' },
-      () => service.importShares(picks.map((p) => p.share), mode.id, connectionId),
-    );
-    await vscode.window.showInformationMessage(`Imported ${count} shared item${count === 1 ? '' : 's'}.`);
-  } catch (e) {
-    await vscode.window.showErrorMessage(`Import failed: ${e instanceof Error ? e.message : String(e)}`);
-  }
-}
-
-export async function cmdSyncLinkGist(context: vscode.ExtensionContext): Promise<void> {
-  if (!(await requirePro(ProFeature.CloudBackup))) {
-    return;
-  }
-  const config = SyncController.getInstance().getConfig();
-  if (config.providerId !== 'gist') {
-    await vscode.window.showWarningMessage('Link Gist is only for the GitHub Gist sync backend.');
-    return;
-  }
-  const provider = new GistSyncProvider(context);
-  const linked = await provider.linkExistingGistInteractive();
-  if (!linked) {
-    return;
-  }
-  const gistId = await context.secrets.get('postgresExplorer.sync.gistId');
-  await SyncController.getInstance().saveConfig({ ...config, gistId });
-  await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: 'Pulling from linked gist…' },
-    () => SyncController.getInstance().runSync() ?? Promise.resolve(),
-  );
 }
 
 export async function cmdSyncNow(): Promise<void> {
@@ -246,7 +194,7 @@ export async function cmdSyncPreview(): Promise<void> {
 }
 
 export async function cmdSyncConflicts(): Promise<void> {
-  await vscode.commands.executeCommand('postgres-explorer.settingsHub', { section: 'sync', tab: 'conflicts' });
+  await vscode.commands.executeCommand('postgres-explorer.settingsHub', { section: 'sync', tab: 'items' });
 }
 
 export async function cmdSyncReplaceLocal(): Promise<void> {
@@ -254,14 +202,15 @@ export async function cmdSyncReplaceLocal(): Promise<void> {
     return;
   }
   const typed = await vscode.window.showInputBox({
-    title: 'Replace local with cloud',
-    prompt: 'Type REPLACE to confirm',
+    title: 'Clear local & pull from cloud',
+    prompt: 'Type REPLACE to wipe local synced state and pull everything fresh from the cloud',
     ignoreFocusOut: true,
   });
   if (typed !== 'REPLACE') {
     return;
   }
-  await SyncController.getInstance().replaceLocalWithCloud();
+  const ok = await SyncController.getInstance().replaceLocalWithCloud();
+  void vscode.window.showInformationMessage(ok ? 'Local data replaced from cloud.' : 'Replace failed.');
 }
 
 export async function cmdSyncReplaceRemote(): Promise<void> {
@@ -269,14 +218,15 @@ export async function cmdSyncReplaceRemote(): Promise<void> {
     return;
   }
   const typed = await vscode.window.showInputBox({
-    title: 'Replace cloud with local',
-    prompt: 'Type REPLACE to confirm',
+    title: 'Clear cloud & push from this device',
+    prompt: "Type REPLACE to wipe the cloud copy and push this device's data",
     ignoreFocusOut: true,
   });
   if (typed !== 'REPLACE') {
     return;
   }
-  await SyncController.getInstance().replaceCloudWithLocal();
+  const ok = await SyncController.getInstance().replaceCloudWithLocal();
+  void vscode.window.showInformationMessage(ok ? 'Cloud replaced from local.' : 'Replace failed.');
 }
 
 export async function cmdSyncRebuildIndex(): Promise<void> {
@@ -285,7 +235,7 @@ export async function cmdSyncRebuildIndex(): Promise<void> {
   }
   const typed = await vscode.window.showInputBox({
     title: 'Rebuild sync index',
-    prompt: 'Type REPLACE to confirm',
+    prompt: 'Type REPLACE to rebuild the local sync index from disk',
     ignoreFocusOut: true,
   });
   if (typed !== 'REPLACE') {
@@ -313,44 +263,17 @@ export async function cmdSyncExcludeItem(itemId?: string): Promise<void> {
 export async function cmdSyncStatus(): Promise<void> {
   const controller = SyncController.getInstance();
   const config = controller.getConfig();
-  const status = controller.getStatus();
-  const conflicts = controller.getConflictCount();
-
   await vscode.window.showInformationMessage(
-    `Sync: ${status} | provider: ${config.providerId ?? 'none'} | conflicts: ${conflicts}`,
+    `Sync: ${controller.getStatus()} | provider: ${config.providerId ?? 'none'} | conflicts: ${controller.getConflictCount()}`,
   );
 }
 
-export async function cmdSyncShowSecretKey(context: vscode.ExtensionContext): Promise<void> {
-  if (!(await requirePro(ProFeature.CloudBackup))) {
-    return;
-  }
-  const vault = VaultService.getInstance(context);
-  if (!vault.isUnlocked()) {
-    await vscode.window.showWarningMessage(
-      'Unlock your vault first (Settings → Cloud Sync → wizard, or re-run setup).',
-    );
-    return;
-  }
-  const generation = vault.getGeneration() ?? '';
-  const legacyEmail = vault.getAccountEmail() ?? SyncController.getInstance().getConfig().accountEmail ?? '';
-  const secretKey = await vscode.window.showInputBox({
-    title: 'Export recovery kit',
-    prompt: 'Enter your secret key to re-export the recovery kit (not stored by PgStudio)',
-    password: true,
-    ignoreFocusOut: true,
-  });
-  if (!secretKey) {
-    return;
-  }
-  try {
-    await vault.unlock(secretKey, legacyEmail || undefined);
-  } catch {
-    await vscode.window.showErrorMessage('Secret key did not unlock the vault.');
-    return;
-  }
-  const { SyncSetupWizard } = await import('./SyncSetupWizard');
-  await new SyncSetupWizard(context).exportRecoveryKit(generation, secretKey);
+/** Security/privacy info — pass 1 stores items in plaintext (TLS in transit). */
+export async function cmdSyncShowSecretKey(_context: vscode.ExtensionContext): Promise<void> {
+  await vscode.window.showInformationMessage(
+    'PgStudio Sync stores your connections (without passwords), saved queries and notebooks on the sync backend in plain text, protected by TLS in transit and your account credentials. Passwords and SSH/SSL key paths never leave this device. End-to-end encryption is planned for a future release.',
+    { modal: true },
+  );
 }
 
 export async function cmdSyncPause(): Promise<void> {
@@ -360,12 +283,12 @@ export async function cmdSyncPause(): Promise<void> {
   const controller = SyncController.getInstance();
   const config = controller.getConfig();
   await controller.saveConfig({ ...config, paused: !config.paused });
-  vscode.window.showInformationMessage(config.paused ? 'Sync resumed' : 'Sync paused');
+  void vscode.window.showInformationMessage(config.paused ? 'Sync resumed' : 'Sync paused');
 }
 
 export async function cmdSyncSignOut(): Promise<void> {
   const confirm = await vscode.window.showWarningMessage(
-    'Sign out of sync? Local data is kept; remote vault remains.',
+    'Sign out of sync? Local data is kept; the cloud copy remains.',
     'Sign Out',
   );
   if (confirm === 'Sign Out') {
@@ -382,14 +305,10 @@ export async function cmdSyncStatusMenu(context?: vscode.ExtensionContext): Prom
   }
 
   const configured = !!config.providerId;
-  const gistItems = config.providerId === 'gist'
-    ? [{ label: '$(link) Link GitHub Gist…', id: 'linkGist' }]
-    : [];
-  // Team sharing rides the NexQL Cloud backend only.
   const shareItems = config.providerId === 'cloud'
     ? [
-        { label: '$(person-add) Share Items…', id: 'share' },
-        { label: '$(cloud-download) Import Shared Items…', id: 'importShares' },
+        { label: '$(person-add) Share to Workspace…', id: 'share' },
+        { label: '$(organization) Manage Workspaces…', id: 'importShares' },
       ]
     : [];
   const items = configured
@@ -398,15 +317,10 @@ export async function cmdSyncStatusMenu(context?: vscode.ExtensionContext): Prom
         { label: '$(cloud-download) Pull Only', id: 'pull' },
         { label: '$(cloud-upload) Push Only', id: 'push' },
         { label: '$(eye) Preview Sync…', id: 'preview' },
-        { label: '$(warning) Resolve Conflicts…', id: 'conflicts' },
-        ...gistItems,
         ...shareItems,
         { label: '$(info) Show Status', id: 'status' },
-        { label: '$(key) Export Recovery Kit…', id: 'secret' },
-        {
-          label: config.paused ? '$(play) Resume Sync' : '$(debug-pause) Pause Sync',
-          id: 'pause',
-        },
+        { label: '$(shield) Privacy & Security', id: 'secret' },
+        { label: config.paused ? '$(play) Resume Sync' : '$(debug-pause) Pause Sync', id: 'pause' },
         { label: '$(sign-out) Sign Out', id: 'signout' },
         { label: '$(settings-gear) Open Settings', id: 'settings' },
       ]
@@ -425,16 +339,11 @@ export async function cmdSyncStatusMenu(context?: vscode.ExtensionContext): Prom
 
   switch (pick.id) {
     case 'setup':
-      if (!context) {
-        await vscode.window.showErrorMessage('Sync setup requires extension context.');
-        return;
+      if (context) {
+        await cmdSyncSetup(context);
       }
-      await cmdSyncSetup(context);
       break;
     case 'now':
-      if (!(await requirePro(ProFeature.CloudBackup))) {
-        return;
-      }
       await cmdSyncNow();
       break;
     case 'pull':
@@ -445,15 +354,6 @@ export async function cmdSyncStatusMenu(context?: vscode.ExtensionContext): Prom
       break;
     case 'preview':
       await cmdSyncPreview();
-      break;
-    case 'conflicts':
-      await cmdSyncConflicts();
-      break;
-    case 'linkGist':
-      if (!context) {
-        return;
-      }
-      await cmdSyncLinkGist(context);
       break;
     case 'share':
       if (context) {

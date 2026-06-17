@@ -960,6 +960,9 @@ function handleConnectionsMessage(message) {
   switch (message.type) {
     case 'connections/list':
       renderConnectionRows(message.connections || []);
+      if (!($('syncWizardBackdrop').hidden) && syncWizardState.step === 0 && syncWizardState.providerId === 'postgres') {
+        renderSyncWizardStep();
+      }
       break;
 
     case 'connections/connection':
@@ -1636,13 +1639,14 @@ const SYNC_STATUS_LABELS = {
 };
 
 let syncFlagsDirtyGuard = false;
+let latestSyncState = null;
 
 $('syncSetupBtn').addEventListener('click', () => {
-  vscode.postMessage({ command: 'sync/setup', mode: 'cloud' });
+  const mode = (latestSyncState && latestSyncState.cloudDefault) ? 'cloud' : 'advanced';
+  vscode.postMessage({ command: 'sync/setup', mode });
 });
 $('syncPullBtn')?.addEventListener('click', () => vscode.postMessage({ command: 'sync/pull' }));
 $('syncPushBtn')?.addEventListener('click', () => vscode.postMessage({ command: 'sync/push' }));
-$('syncPreviewBtn')?.addEventListener('click', () => vscode.postMessage({ command: 'sync/preview' }));
 $('syncPreviewRefreshBtn')?.addEventListener('click', () => vscode.postMessage({ command: 'sync/preview' }));
 $('syncApplyPreviewBtn')?.addEventListener('click', () => vscode.postMessage({ command: 'sync/applyPreview' }));
 $('syncReplaceLocalBtn')?.addEventListener('click', () => vscode.postMessage({ command: 'sync/replaceLocal' }));
@@ -1651,9 +1655,12 @@ $('syncRebuildIndexBtn')?.addEventListener('click', () => vscode.postMessage({ c
 $('syncDiagnosticsBtn')?.addEventListener('click', () => vscode.postMessage({ command: 'sync/diagnostics' }));
 $('syncAdvancedSetupBtn')?.addEventListener('click', () => vscode.postMessage({ command: 'sync/setup', mode: 'advanced' }));
 $('syncWizardCloseBtn')?.addEventListener('click', () => { $('syncWizardBackdrop').hidden = true; });
-document.querySelectorAll('.sync-tab').forEach((btn) => {
+document.querySelectorAll('.subnav-tab').forEach((btn) => {
   btn.addEventListener('click', () => showSyncTab(btn.getAttribute('data-sync-tab')));
 });
+$('syncConflictsLink')?.addEventListener('click', () => showSyncTab('conflicts'));
+$('syncQuickPending')?.addEventListener('click', () => showSyncTab('items'));
+$('syncQuickConflicts')?.addEventListener('click', () => showSyncTab('conflicts'));
 
 const syncWizardState = {
   step: 0,
@@ -1668,7 +1675,7 @@ const syncWizardState = {
   legacyVault: false,
 };
 
-const SYNC_WIZARD_STEP_TITLES = ['Connect', 'Protect', 'Done'];
+const SYNC_WIZARD_STEP_TITLES = ['Connect', 'Sync', 'Done'];
 
 function updateSyncWizardNextBtn() {
   const s = syncWizardState.step;
@@ -1676,14 +1683,17 @@ function updateSyncWizardNextBtn() {
   if (!btn) { return; }
   if (s === 0) {
     btn.textContent = 'Next';
-    btn.disabled = syncWizardState.providerId === 'cloud' && !syncWizardState.signedIn;
+    if (syncWizardState.providerId === 'cloud') {
+      btn.disabled = !syncWizardState.signedIn;
+    } else if (syncWizardState.providerId === 'postgres') {
+      btn.disabled = !syncWizardState.postgresConnectionId;
+    } else {
+      btn.disabled = false;
+    }
   } else if (s === 1) {
-    btn.textContent = 'Next';
-    btn.disabled = !syncWizardState.vaultReady;
-  } else if (s === 2) {
     btn.textContent = 'Finish';
     btn.disabled = false;
-  } else if (s === 3) {
+  } else if (s === 2) {
     btn.textContent = 'Done';
     btn.disabled = false;
   }
@@ -1700,7 +1710,9 @@ function openSyncWizard(mode) {
   syncWizardState.vaultMode = 'create';
   syncWizardState.customPassphrase = false;
   syncWizardState.legacyVault = false;
+  syncWizardState.postgresConnectionId = latestSyncState ? (latestSyncState.postgresConnectionId || '') : '';
   $('syncWizardBackdrop').hidden = false;
+  vscode.postMessage({ command: 'connections/load' });
   vscode.postMessage({ command: 'sync/wizardWelcome' });
   renderSyncWizardStep();
 }
@@ -1715,7 +1727,7 @@ function renderSyncWizardStep() {
   if (s === 0) {
     if (syncWizardState.providerId === 'cloud') {
       body.innerHTML = [
-        '<p>Enable encrypted sync to NexQL Cloud. Your data is encrypted on this device before upload.</p>',
+        '<p>Enable sync to NexQL Cloud. Connections (without passwords), saved queries and notebooks sync across your devices, protected by TLS in transit and your account.</p>',
         '<p id="syncWizardTier" class="label-hint"></p>',
         '<button type="button" id="syncWizardEnableBtn" class="btn-primary">Enable Cloud Sync</button>',
         '<p id="syncWizardSignInStatus" class="status-line"></p>',
@@ -1731,60 +1743,153 @@ function renderSyncWizardStep() {
         $('syncWizardSignInStatus').textContent = 'Opening browser…';
         vscode.postMessage({ command: 'sync/wizardSignIn', mode: 'browser' });
       });
+    } else if (syncWizardState.providerId === 'postgres') {
+      const connections = connState.rows || [];
+      const pgConnections = connections.filter(c => c.host);
+      
+      let selectHtml = '';
+      if (pgConnections.length === 0) {
+        selectHtml = '<p class="status-line error">No database connections found. Please add a connection in the Connections tab first.</p>';
+      } else {
+        selectHtml = [
+          '<div class="form-group">',
+          '  <label for="syncWizardPostgresConn">Select sync database connection</label>',
+          '  <select id="syncWizardPostgresConn" style="width: 100%; margin-top: 8px;">',
+          pgConnections.map(c => {
+            const details = `${c.host}:${c.port}${c.database ? '/' + c.database : ''}`;
+            const label = c.name ? `${c.name} (${details})` : details;
+            return `<option value="${c.id}">${escapeText(label)}</option>`;
+          }).join('\n'),
+          '  </select>',
+          '  <p class="label-hint" style="margin-top: 8px;">Connection that stores your synced data (pgstudio_sync schema).</p>',
+          '</div>'
+        ].join('\n');
+      }
+
+      const sqlCode = [
+        'CREATE SCHEMA IF NOT EXISTS pgstudio_sync;',
+        'CREATE SEQUENCE IF NOT EXISTS pgstudio_sync.cursor_seq;',
+        '',
+        'CREATE TABLE IF NOT EXISTS pgstudio_sync.items_v2 (',
+        '    space_id     TEXT NOT NULL,',
+        '    item_id      TEXT NOT NULL,',
+        '    kind         TEXT NOT NULL,',
+        '    blob         BYTEA NOT NULL,',
+        '    content_hash TEXT NOT NULL,',
+        '    version      BIGINT NOT NULL,',
+        '    device_id    TEXT NOT NULL,',
+        '    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),',
+        '    PRIMARY KEY (space_id, item_id)',
+        ');',
+        '',
+        'CREATE TABLE IF NOT EXISTS pgstudio_sync.deletes_v2 (',
+        '    space_id   TEXT NOT NULL,',
+        '    item_id    TEXT NOT NULL,',
+        '    version    BIGINT NOT NULL,',
+        '    deleted_by TEXT NOT NULL,',
+        '    deleted_at TIMESTAMPTZ NOT NULL DEFAULT now(),',
+        '    PRIMARY KEY (space_id, item_id)',
+        ');'
+      ].join('\n');
+
+      const highlightedSqlHtml = [
+        '<span class="sql-keyword">CREATE SCHEMA IF NOT EXISTS</span> pgstudio_sync;',
+        '<span class="sql-keyword">CREATE SEQUENCE IF NOT EXISTS</span> pgstudio_sync.cursor_seq;',
+        '',
+        '<span class="sql-keyword">CREATE TABLE IF NOT EXISTS</span> pgstudio_sync.items_v2 (',
+        '    space_id     <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,',
+        '    item_id      <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,',
+        '    kind         <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,',
+        '    blob         <span class="sql-type">BYTEA</span> <span class="sql-keyword">NOT NULL</span>,',
+        '    content_hash <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,',
+        '    version      <span class="sql-type">BIGINT</span> <span class="sql-keyword">NOT NULL</span>,',
+        '    device_id    <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,',
+        '    updated_at   <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">now</span>(),',
+        '    <span class="sql-keyword">PRIMARY KEY</span> (space_id, item_id)',
+        ');',
+        '',
+        '<span class="sql-keyword">CREATE TABLE IF NOT EXISTS</span> pgstudio_sync.deletes_v2 (',
+        '    space_id   <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,',
+        '    item_id    <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,',
+        '    version    <span class="sql-type">BIGINT</span> <span class="sql-keyword">NOT NULL</span>,',
+        '    deleted_by <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,',
+        '    deleted_at <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">now</span>(),',
+        '    <span class="sql-keyword">PRIMARY KEY</span> (space_id, item_id)',
+        ');'
+      ].join('\n');
+
+      const setupScriptHtml = [
+        '<div class="sync-postgres-setup-box" style="margin-top: 16px; padding: 12px; border: 1px solid var(--vscode-dropdown-border); border-radius: 4px; background: rgba(255, 255, 255, 0.03);">',
+        '  <p style="color: var(--vscode-inputValidation-warningForeground); font-weight: bold; margin-bottom: 8px; font-size: 12px;">',
+        '    ⚠️ WARNING: Do not run this script on critical or production databases.',
+        '  </p>',
+        '  <p class="label-hint" style="margin-bottom: 8px; font-size: 12px;">',
+        '    Note: This sync backend requires to be run on postgres DB. Other databases are not supported.',
+        '  </p>',
+        '  <p class="label-hint" style="margin-bottom: 8px; font-size: 12px;">',
+        '    Run this SQL script on the selected database using your query tool to set up the sync schema:',
+        '  </p>',
+        '  <pre class="mono" style="margin: 8px 0; padding: 8px; background: rgba(0, 0, 0, 0.25); border-radius: 4px; overflow-x: auto; font-size: 11px; max-height: 120px; text-align: left;"><code id="syncWizardPostgresSqlCode">' + highlightedSqlHtml + '</code></pre>',
+        '  <button type="button" id="syncWizardCopyPostgresSqlBtn" class="btn-secondary btn-sm" style="margin-top: 4px;">Copy SQL Script</button>',
+        '  <button type="button" id="syncWizardOpenNotebookPostgresBtn" class="btn-secondary btn-sm" style="margin-top: 4px; margin-left: 6px;">Open in Notebook</button>',
+        '</div>'
+      ].join('\n');
+
+      body.innerHTML = [
+        '<p>Connect to your chosen backend for manual backup and sync.</p>',
+        selectHtml,
+        setupScriptHtml
+      ].join('\n');
+      
+      const selectEl = $('syncWizardPostgresConn');
+      if (selectEl) {
+        enhanceSelect(selectEl);
+        if (syncWizardState.postgresConnectionId) {
+          setSelectValue(selectEl, syncWizardState.postgresConnectionId);
+        } else {
+          syncWizardState.postgresConnectionId = selectEl.value;
+        }
+        selectEl.addEventListener('change', () => {
+          syncWizardState.postgresConnectionId = selectEl.value;
+          updateSyncWizardNextBtn();
+        });
+      }
+
+      $('syncWizardCopyPostgresSqlBtn')?.addEventListener('click', () => {
+        navigator.clipboard?.writeText(sqlCode);
+        const btn = $('syncWizardCopyPostgresSqlBtn');
+        if (btn) {
+          const prev = btn.textContent;
+          btn.textContent = 'Copied!';
+          setTimeout(() => { btn.textContent = prev; }, 1500);
+        }
+      });
+
+      $('syncWizardOpenNotebookPostgresBtn')?.addEventListener('click', () => {
+        const connId = syncWizardState.postgresConnectionId;
+        if (connId) {
+          vscode.postMessage({
+            command: 'sync/openNotebook',
+            postgresConnectionId: connId
+          });
+        }
+      });
+      
+      syncWizardState.signedIn = pgConnections.length > 0;
     } else {
       body.innerHTML = '<p>Connect to your chosen backend.</p><p class="label-hint">Advanced backends use the same auth flows as before.</p>';
       syncWizardState.signedIn = true;
     }
   } else if (s === 1) {
     body.innerHTML = [
-      '<p>Your sync vault encrypts connections and queries. Save the secret key — it is shown only once.</p>',
-      '<label><input type="radio" name="vaultMode" value="create" checked> Create new vault</label>',
-      '<label><input type="radio" name="vaultMode" value="unlock"> Unlock existing vault</label>',
-      '<div id="syncWizardCreateBlock">',
-      '  <label><input type="checkbox" id="syncWizardCustomPass"> Use custom passphrase</label>',
-      '  <input type="password" id="syncWizardPassphrase" placeholder="Custom passphrase (optional)" class="mono" hidden>',
-      '</div>',
-      '<div id="syncWizardUnlockBlock" hidden>',
-      '  <input type="password" id="syncWizardSecret" placeholder="Secret key" class="mono">',
-      '  <label id="syncWizardLegacyEmailLabel" hidden>Account email (legacy vault)<input type="email" id="syncWizardLegacyEmail" class="mono"></label>',
-      '</div>',
-      '<p id="syncWizardVaultStatus" class="status-line"></p>',
-      '<div id="syncWizardSecretReveal" class="sync-secret-reveal" hidden>',
-      '  <p class="label-hint">Save this secret key — you will need it on other devices.</p>',
-      '  <code id="syncWizardSecretValue" class="mono"></code>',
-      '  <button type="button" id="syncWizardCopySecret" class="btn-secondary btn-sm">Copy</button>',
-      '</div>',
-    ].join('');
-    document.querySelectorAll('input[name="vaultMode"]').forEach((el) => {
-      el.addEventListener('change', () => {
-        const unlock = document.querySelector('input[name="vaultMode"]:checked')?.value === 'unlock';
-        $('syncWizardCreateBlock').hidden = unlock;
-        $('syncWizardUnlockBlock').hidden = !unlock;
-        $('syncWizardLegacyEmailLabel').hidden = !unlock;
-      });
-    });
-    $('syncWizardCustomPass')?.addEventListener('change', (e) => {
-      const on = e.target.checked;
-      syncWizardState.customPassphrase = on;
-      $('syncWizardPassphrase').hidden = !on;
-    });
-    if (syncWizardState.vaultReady && syncWizardState.secretKey) {
-      $('syncWizardSecretReveal').hidden = false;
-      $('syncWizardSecretValue').textContent = syncWizardState.secretKey;
-      $('syncWizardCopySecret')?.addEventListener('click', () => {
-        navigator.clipboard?.writeText(syncWizardState.secretKey);
-      });
-    }
-  } else if (s === 2) {
-    body.innerHTML = [
       '<p>Choose what to sync, then click Finish.</p>',
       '<label><input type="checkbox" id="wizConn" checked> Connections</label>',
       '<label><input type="checkbox" id="wizQueries" checked> Saved queries</label>',
       '<label><input type="checkbox" id="wizNotebooks" checked> Notebooks</label>',
-      '<label><input type="checkbox" id="wizPasswords"> Passwords</label>',
+      '<p class="label-hint">Connection passwords and SSH/SSL key paths stay on this device and are never uploaded. Synced data is protected by TLS in transit and your account credentials.</p>',
       '<p id="syncWizardCompleteStatus" class="status-line"></p>',
     ].join('');
-  } else if (s === 3) {
+  } else if (s === 2) {
     body.innerHTML = '<p class="success">Cloud sync is ready.</p><button type="button" id="syncWizardDoneBtn" class="btn-primary">Open Sync Settings</button>';
     $('syncWizardDoneBtn')?.addEventListener('click', () => { $('syncWizardBackdrop').hidden = true; showSyncTab('overview'); });
   }
@@ -1795,37 +1900,23 @@ function renderSyncWizardStep() {
 
 $('syncWizardNextBtn')?.addEventListener('click', () => {
   const s = syncWizardState.step;
-  if (s === 1 && !syncWizardState.vaultReady) {
-    syncWizardState.vaultMode = document.querySelector('input[name="vaultMode"]:checked')?.value || 'create';
-    const unlock = syncWizardState.vaultMode === 'unlock';
-    vscode.postMessage({
-      command: 'sync/wizardVault',
-      mode: syncWizardState.vaultMode,
-      secretKey: unlock ? ($('syncWizardSecret')?.value || '') : undefined,
-      passphrase: !unlock && syncWizardState.customPassphrase ? ($('syncWizardPassphrase')?.value || '') : undefined,
-      legacyEmail: unlock ? ($('syncWizardLegacyEmail')?.value || '') : undefined,
-    });
-    return;
-  }
-  if (s === 2) {
+  if (s === 1) {
     $('syncWizardCompleteStatus').textContent = 'Running first sync…';
-    updateSyncWizardNextBtn();
     const btn = $('syncWizardNextBtn');
     if (btn) { btn.disabled = true; }
     vscode.postMessage({
       command: 'sync/wizardComplete',
       providerId: syncWizardState.providerId,
-      vaultMode: syncWizardState.vaultMode,
+      postgresConnectionId: syncWizardState.postgresConnectionId,
       flags: {
         syncConnections: $('wizConn')?.checked !== false,
         syncQueries: $('wizQueries')?.checked !== false,
         syncNotebooks: $('wizNotebooks')?.checked !== false,
-        syncPasswords: !!$('wizPasswords')?.checked,
       },
     });
     return;
   }
-  if (s >= 3) {
+  if (s >= 2) {
     $('syncWizardBackdrop').hidden = true;
     return;
   }
@@ -1836,6 +1927,8 @@ $('syncWizardNextBtn')?.addEventListener('click', () => {
 function showSyncTab(tab) {
   const tabIdMap = {
     overview: 'syncTabOverview',
+    settings: 'syncTabSettings',
+    items: 'syncTabItems',
     preview: 'syncTabPreview',
     conflicts: 'syncTabConflicts',
     history: 'syncTabHistory',
@@ -1843,7 +1936,7 @@ function showSyncTab(tab) {
     devices: 'syncTabDevices',
     advanced: 'syncTabAdvanced',
   };
-  document.querySelectorAll('.sync-tab').forEach((b) => b.classList.toggle('active', b.getAttribute('data-sync-tab') === tab));
+  document.querySelectorAll('.subnav-tab').forEach((b) => b.classList.toggle('active', b.getAttribute('data-sync-tab') === tab));
   Object.entries(tabIdMap).forEach(([key, id]) => {
     const el = $(id);
     if (el) { el.hidden = key !== tab; }
@@ -1853,14 +1946,16 @@ function showSyncTab(tab) {
   if (tab === 'shares') { vscode.postMessage({ command: 'sync/shares' }); }
   if (tab === 'devices') { vscode.postMessage({ command: 'sync/devices' }); }
   if (tab === 'preview') { vscode.postMessage({ command: 'sync/preview' }); }
+  if (tab === 'settings') { vscode.postMessage({ command: 'connections/load' }); }
+  if (tab === 'items') {
+    vscode.postMessage({ command: 'sync/items' });
+    vscode.postMessage({ command: 'sync/pending' });
+  }
 }
 
 $('syncWizardBackBtn')?.addEventListener('click', () => {
   if (syncWizardState.step > 0) {
     syncWizardState.step -= 1;
-    if (syncWizardState.step === 1) {
-      syncWizardState.vaultReady = false;
-    }
     renderSyncWizardStep();
   }
 });
@@ -1879,6 +1974,7 @@ function renderPreviewList(el, items) {
 function renderConflicts(conflicts) {
   const el = $('syncConflictsList');
   el.textContent = '';
+  updateSyncConflictBadges(conflicts?.length || 0);
   if (!conflicts?.length) { el.textContent = 'No conflicts.'; return; }
   conflicts.forEach((c) => {
     const row = document.createElement('div');
@@ -1902,7 +1998,9 @@ function formatBytes(n) {
   return Math.round(n / 1024) + ' KB';
 }
 $('syncNowBtn').addEventListener('click', () => {
-  $('syncNowBtn').disabled = true;
+  const btn = $('syncNowBtn');
+  btn.disabled = true;
+  btn.textContent = 'Syncing…';
   $('syncRunMessage').textContent = 'Syncing…';
   $('syncRunMessage').className = 'status-line';
   vscode.postMessage({ command: 'sync/now' });
@@ -2001,13 +2099,72 @@ function formatPendingLabel(activity) {
   return activity.name || activity.itemId;
 }
 
+const SYNC_STATUS_PILL_CLASS = {
+  synced: 'sync-status-synced',
+  idle: 'sync-status-synced',
+  syncing: 'sync-status-syncing',
+  offline: 'sync-status-paused',
+  conflict: 'sync-status-conflict',
+  error: 'sync-status-error',
+  paused: 'sync-status-paused',
+  locked: 'sync-status-paused',
+};
+
+function updateSyncStatusPill(status, label) {
+  const pill = $('syncStatusPill');
+  if (!pill) { return; }
+  pill.textContent = label;
+  pill.className = 'sync-status-pill';
+  const cls = SYNC_STATUS_PILL_CLASS[status];
+  if (cls) { pill.classList.add(cls); }
+}
+
+function updateSyncConflictBadges(count) {
+  const n = Number(count) || 0;
+  const conflictsValue = $('syncConflictsValue');
+  if (conflictsValue) { conflictsValue.textContent = String(n); }
+
+  const tabBadge = $('syncConflictsTabBadge');
+  if (tabBadge) {
+    tabBadge.hidden = n <= 0;
+    tabBadge.textContent = String(n);
+  }
+
+  const quickBtn = $('syncQuickConflicts');
+  const quickCount = $('syncQuickConflictsCount');
+  if (quickBtn && quickCount) {
+    quickBtn.hidden = n <= 0;
+    quickCount.textContent = String(n);
+  }
+}
+
+function updateSyncPendingBadges(count) {
+  const tabBadge = $('syncItemsTabBadge');
+  if (tabBadge) {
+    tabBadge.hidden = count <= 0;
+    tabBadge.textContent = String(count);
+  }
+
+  const quickBtn = $('syncQuickPending');
+  const quickCount = $('syncQuickPendingCount');
+  if (quickBtn && quickCount) {
+    quickBtn.hidden = count <= 0;
+    quickCount.textContent = String(count);
+  }
+}
+
+let syncItemsCache = [];
+let syncPendingItemIds = new Set();
+
 function renderSyncPending(activities) {
   const body = $('syncPendingBody');
   const badge = $('syncPendingBadge');
+  syncPendingItemIds = new Set((activities || []).map((a) => a.itemId));
   while (body.firstChild) { body.removeChild(body.firstChild); }
 
   if (!activities.length) {
     badge.hidden = true;
+    updateSyncPendingBadges(0);
     const tr = document.createElement('tr');
     const td = document.createElement('td');
     td.colSpan = 4;
@@ -2015,11 +2172,15 @@ function renderSyncPending(activities) {
     td.textContent = 'No pending changes.';
     tr.appendChild(td);
     body.appendChild(tr);
+    if (syncItemsCache.length) {
+      renderSyncItems(syncItemsCache);
+    }
     return;
   }
 
   badge.hidden = false;
   badge.textContent = String(activities.length);
+  updateSyncPendingBadges(activities.length);
 
   for (const activity of activities) {
     const tr = document.createElement('tr');
@@ -2045,24 +2206,56 @@ function renderSyncPending(activities) {
 
     body.appendChild(tr);
   }
+  if (syncItemsCache.length) {
+    renderSyncItems(syncItemsCache);
+  }
+}
+
+const SYNC_ITEM_STATUS_LABELS = {
+  excluded: 'Excluded',
+  pending: 'Pending',
+  synced: 'Synced',
+  local: 'Local only',
+};
+
+function formatSyncItemStatus(item) {
+  if (item.excluded || item.itemStatus === 'excluded') {
+    return 'Excluded';
+  }
+  if (syncPendingItemIds.has(item.id) || item.itemStatus === 'pending') {
+    return 'Pending';
+  }
+  return SYNC_ITEM_STATUS_LABELS[item.itemStatus] || 'Synced';
+}
+
+function getSyncItemsKindFilter() {
+  return $('syncItemsKindFilter')?.value || 'all';
 }
 
 function renderSyncItems(items) {
+  syncItemsCache = items || [];
+  const filter = getSyncItemsKindFilter();
+  const filtered = filter === 'all'
+    ? syncItemsCache
+    : syncItemsCache.filter((item) => item.kind === filter);
+
   const body = $('syncItemsBody');
   while (body.firstChild) { body.removeChild(body.firstChild); }
 
-  if (!items.length) {
+  if (!filtered.length) {
     const tr = document.createElement('tr');
     const td = document.createElement('td');
     td.colSpan = 5;
     td.className = 'empty-state';
-    td.textContent = 'No items are being synced yet.';
+    td.textContent = syncItemsCache.length
+      ? 'No items match this filter.'
+      : 'No items are being synced yet.';
     tr.appendChild(td);
     body.appendChild(tr);
     return;
   }
 
-  for (const item of items) {
+  for (const item of filtered) {
     const tr = document.createElement('tr');
 
     const nameTd = document.createElement('td');
@@ -2079,8 +2272,14 @@ function renderSyncItems(items) {
     tr.appendChild(updatedTd);
 
     const statusTd = document.createElement('td');
-    statusTd.textContent = item.excluded ? 'Not syncing' : 'Syncing';
-    if (item.excluded) { statusTd.classList.add('label-hint'); }
+    const statusLabel = formatSyncItemStatus(item);
+    statusTd.textContent = statusLabel;
+    if (statusLabel === 'Excluded' || statusLabel === 'Local only') {
+      statusTd.classList.add('label-hint');
+    }
+    if (statusLabel === 'Pending') {
+      statusTd.classList.add('sync-item-status-pending');
+    }
     tr.appendChild(statusTd);
 
     const actionTd = document.createElement('td');
@@ -2105,6 +2304,7 @@ function renderSyncItems(items) {
     body.appendChild(tr);
   }
 }
+$('syncItemsKindFilter')?.addEventListener('change', () => renderSyncItems(syncItemsCache));
 $('syncUpgradeBtn').addEventListener('click', () => {
   vscode.postMessage({ command: 'license/openUpgrade' });
 });
@@ -2112,8 +2312,8 @@ $('syncActivateLink').addEventListener('click', () => {
   showSection('license');
 });
 
-['syncFlagConnections', 'syncFlagQueries', 'syncFlagNotebooks', 'syncFlagPasswords'].forEach((id) => {
-  $(id).addEventListener('change', () => {
+['syncFlagConnections', 'syncFlagQueries', 'syncFlagNotebooks'].forEach((id) => {
+  $(id)?.addEventListener('change', () => {
     if (syncFlagsDirtyGuard) { return; }
     vscode.postMessage({
       command: 'sync/saveFlags',
@@ -2121,7 +2321,6 @@ $('syncActivateLink').addEventListener('click', () => {
         syncConnections: $('syncFlagConnections').checked,
         syncQueries: $('syncFlagQueries').checked,
         syncNotebooks: $('syncFlagNotebooks').checked,
-        syncPasswords: $('syncFlagPasswords').checked,
       },
     });
   });
@@ -2137,43 +2336,93 @@ function pushAutoSync() {
 }
 $('syncAutoEnabled').addEventListener('change', pushAutoSync);
 $('syncPullInterval').addEventListener('change', pushAutoSync);
+$('syncPostgresConnectionSelect')?.addEventListener('change', () => {
+  vscode.postMessage({
+    command: 'sync/savePostgresConnection',
+    postgresConnectionId: $('syncPostgresConnectionSelect').value,
+  });
+});
+$('syncCopyPostgresErrorSqlBtn')?.addEventListener('click', () => {
+  const code = $('syncPostgresErrorSqlCode')?.textContent || '';
+  navigator.clipboard?.writeText(code);
+  const btn = $('syncCopyPostgresErrorSqlBtn');
+  if (btn) {
+    const prev = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = prev; }, 1500);
+  }
+});
+$('syncOpenNotebookPostgresErrorBtn')?.addEventListener('click', () => {
+  const connId = latestSyncState?.postgresConnectionId;
+  if (connId) {
+    vscode.postMessage({
+      command: 'sync/openNotebook',
+      postgresConnectionId: connId
+    });
+  }
+});
+$('syncSettingsCopyPostgresSqlBtn')?.addEventListener('click', () => {
+  const code = $('syncSettingsPostgresSqlCode')?.textContent || '';
+  navigator.clipboard?.writeText(code);
+  const btn = $('syncSettingsCopyPostgresSqlBtn');
+  if (btn) {
+    const prev = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = prev; }, 1500);
+  }
+});
+$('syncSettingsOpenNotebookPostgresBtn')?.addEventListener('click', () => {
+  const connId = $('syncPostgresConnectionSelect')?.value || latestSyncState?.postgresConnectionId;
+  if (connId) {
+    vscode.postMessage({
+      command: 'sync/openNotebook',
+      postgresConnectionId: connId
+    });
+  }
+});
 
 function handleSyncMessage(message) {
   switch (message.type) {
     case 'sync/state': {
       const sync = message.sync;
+      latestSyncState = sync;
       $('syncState').hidden = true;
       $('syncLocked').hidden = sync.featureEnabled;
       $('syncNotConfigured').hidden = !(sync.featureEnabled && !sync.configured);
       $('syncConfigured').hidden = !(sync.featureEnabled && sync.configured);
+      $('syncSectionActions').hidden = !(sync.featureEnabled && sync.configured);
 
       if (sync.featureEnabled && sync.configured) {
         vscode.postMessage({ command: 'sync/items' });
         vscode.postMessage({ command: 'sync/pending' });
         $('syncHealthHeader').hidden = false;
+        const statusLabel = SYNC_STATUS_LABELS[sync.status] || sync.status;
         $('syncHealthLast').textContent = sync.lastSyncAt
           ? 'Last sync: ' + new Date(sync.lastSyncAt).toLocaleString()
           : 'Last sync: never';
-        $('syncHealthProvider').textContent = sync.providerLabel || '';
         if (sync.lastError) {
           $('syncHealthError').hidden = false;
           $('syncHealthError').textContent = sync.lastError;
         } else {
           $('syncHealthError').hidden = true;
         }
-        $('syncStatusValue').textContent = SYNC_STATUS_LABELS[sync.status] || sync.status;
+        $('syncStatusValue').textContent = statusLabel;
+        updateSyncStatusPill(sync.status, statusLabel);
         $('syncProviderValue').textContent = sync.providerLabel || '—';
         $('syncAccountValue').textContent = sync.accountEmail || '—';
-        $('syncConflictsValue').textContent = String(sync.conflicts);
+        updateSyncConflictBadges(sync.conflicts);
         $('syncPauseBtn').textContent = sync.paused ? 'Resume' : 'Pause';
-        $('syncNowBtn').disabled = sync.paused;
+        const syncNowBtn = $('syncNowBtn');
+        syncNowBtn.disabled = sync.paused || sync.status === 'syncing';
+        if (sync.status !== 'syncing' && syncNowBtn.textContent === 'Syncing…') {
+          syncNowBtn.textContent = 'Sync Now';
+        }
         $('syncSharingRow').hidden = !sync.sharingAvailable;
 
         syncFlagsDirtyGuard = true;
         $('syncFlagConnections').checked = !!sync.flags.syncConnections;
         $('syncFlagQueries').checked = !!sync.flags.syncQueries;
         $('syncFlagNotebooks').checked = !!sync.flags.syncNotebooks;
-        $('syncFlagPasswords').checked = !!sync.flags.syncPasswords;
         $('syncAutoEnabled').checked = !!sync.auto && !!sync.autoAllowed;
         $('syncAutoEnabled').disabled = !sync.autoAllowed;
         $('syncPullInterval').disabled = !sync.autoAllowed;
@@ -2181,6 +2430,32 @@ function handleSyncMessage(message) {
           ? 'Push on changes; pull on the interval below'
           : 'Automatic sync requires NexQL Sponsor or Teams — free plan syncs manually with “Sync Now”';
         $('syncPullInterval').value = sync.pullIntervalMinutes;
+
+        if (sync.providerId === 'postgres') {
+          $('syncPostgresSettingsBlock').hidden = false;
+          const connSelect = $('syncPostgresConnectionSelect');
+          if (connSelect) {
+            connSelect.innerHTML = (connState.rows || [])
+              .filter(c => c.host)
+              .map(c => {
+                const details = `${c.host}:${c.port}${c.database ? '/' + c.database : ''}`;
+                const label = c.name ? `${c.name} (${details})` : details;
+                return `<option value="${c.id}">${escapeText(label)}</option>`;
+              })
+              .join('\n');
+            connSelect.value = sync.postgresConnectionId || '';
+            setSelectValue(connSelect, connSelect.value);
+          }
+          if (sync.lastError) {
+            $('syncPostgresErrorSetupBox').hidden = false;
+          } else {
+            $('syncPostgresErrorSetupBox').hidden = true;
+          }
+        } else {
+          $('syncPostgresSettingsBlock').hidden = true;
+          $('syncPostgresErrorSetupBox').hidden = true;
+        }
+
         syncFlagsDirtyGuard = false;
       }
       break;
@@ -2192,10 +2467,17 @@ function handleSyncMessage(message) {
       renderSyncPending(message.pending || []);
       break;
     case 'sync/running':
+      $('syncNowBtn').disabled = true;
+      $('syncNowBtn').textContent = 'Syncing…';
+      if ($('syncRunMessage')) {
+        $('syncRunMessage').className = 'status-line';
+        $('syncRunMessage').textContent = 'Syncing…';
+      }
       break;
     case 'sync/runComplete': {
       const el = $('syncRunMessage');
-      $('syncNowBtn').disabled = false;
+      const btn = $('syncNowBtn');
+      btn.textContent = 'Sync Now';
       if (message.result) {
         el.className = 'status-line success';
         el.textContent = formatSyncRunMessage(message.result);
@@ -2274,10 +2556,10 @@ function handleSyncMessage(message) {
     case 'sync/quota': {
       const q = message.quota;
       const el = $('syncHealthQuota');
-      if (q) {
+      if (q && el) {
         el.hidden = false;
-        el.textContent = `Cloud storage: ${formatBytes(q.bytesUsed)} / ${formatBytes(q.bytesLimit)} (${q.itemCount} items)`;
-      } else {
+        el.textContent = `${formatBytes(q.bytesUsed)} / ${formatBytes(q.bytesLimit)} (${q.itemCount} items)`;
+      } else if (el) {
         el.hidden = true;
       }
       break;
@@ -2313,29 +2595,6 @@ function handleSyncMessage(message) {
       }
       break;
     }
-    case 'sync/wizardVaultResult': {
-      const vaultStatus = $('syncWizardVaultStatus');
-      if (vaultStatus) {
-        vaultStatus.textContent = message.ok ? 'Vault ready' : (message.error || 'Vault failed');
-        vaultStatus.className = 'status-line' + (message.ok ? ' success' : ' error');
-      }
-      if (message.secretKey) { syncWizardState.secretKey = message.secretKey; }
-      if (message.generation) { syncWizardState.generation = message.generation; }
-      if (message.ok) {
-        syncWizardState.vaultReady = true;
-        if (syncWizardState.vaultMode === 'create' && message.secretKey) {
-          vscode.postMessage({
-            command: 'sync/wizardRecoveryKit',
-            generation: syncWizardState.generation,
-            secretKey: message.secretKey,
-            customPassphrase: syncWizardState.customPassphrase,
-          });
-          renderSyncWizardStep();
-        }
-        updateSyncWizardNextBtn();
-      }
-      break;
-    }
     case 'sync/wizardCompleteResult': {
       const completeStatus = $('syncWizardCompleteStatus');
       if (message.ok) {
@@ -2343,7 +2602,7 @@ function handleSyncMessage(message) {
           completeStatus.textContent = 'Sync complete.';
           completeStatus.className = 'status-line success';
         }
-        syncWizardState.step = 3;
+        syncWizardState.step = 2;
         renderSyncWizardStep();
       } else {
         if (completeStatus) {
@@ -2632,7 +2891,7 @@ window.addEventListener('message', (event) => {
       openSyncWizard(message.wizard);
     }
     if (message.tab && message.section === 'sync') {
-      showSyncTab(message.tab === 'preview' ? 'preview' : message.tab);
+      showSyncTab(message.tab);
     }
     return;
   }

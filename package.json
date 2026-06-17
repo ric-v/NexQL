@@ -105,7 +105,7 @@
       },
       {
         "command": "postgres-explorer.sync.showSecretKey",
-        "title": "Show Sync Secret Key",
+        "title": "Privacy & Security Info",
         "category": "NexQL Sync"
       },
       {
@@ -120,12 +120,12 @@
       },
       {
         "command": "postgres-explorer.sync.share",
-        "title": "Share Items with a Team Member",
+        "title": "Share to Workspace…",
         "category": "NexQL Sync"
       },
       {
         "command": "postgres-explorer.sync.importShares",
-        "title": "Import Shared Items",
+        "title": "Manage Workspaces…",
         "category": "NexQL Sync"
       },
       {
@@ -2059,24 +2059,6 @@
           "default": "https://nexql.astrx.dev/api",
           "scope": "machine",
           "description": "Base URL for NexQL account and cloud sync API."
-        },
-        "postgresExplorer.sync.githubClientId": {
-          "type": "string",
-          "default": "Ov23liPLACEHOLDER_GITHUB_CLIENT",
-          "scope": "machine",
-          "markdownDescription": "GitHub OAuth app client ID for device-flow fallback when built-in GitHub auth is unavailable. Register at https://github.com/settings/developers (enable device flow)."
-        },
-        "postgresExplorer.sync.onedriveClientId": {
-          "type": "string",
-          "default": "00000000-0000-0000-0000-PLACEHOLDER",
-          "scope": "machine",
-          "markdownDescription": "Entra (Azure AD) public client app ID for OneDrive appFolder sync. Register at https://portal.azure.com."
-        },
-        "postgresExplorer.sync.googleClientId": {
-          "type": "string",
-          "default": "000000000000-placeholder.apps.googleusercontent.com",
-          "scope": "machine",
-          "markdownDescription": "Google OAuth client ID for Drive appdata sync (loopback PKCE). Requires Google verification for production."
         },
         "postgresExplorer.sync.postgresConnectionId": {
           "type": "string",

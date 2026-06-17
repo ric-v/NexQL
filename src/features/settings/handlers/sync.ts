@@ -1,8 +1,7 @@
 import * as vscode from 'vscode';
 import { SyncController } from '../../sync/SyncController';
 import { SyncSetupWizard } from '../../sync/SyncSetupWizard';
-import { ConflictResolutionService } from '../../sync/ConflictResolutionService';
-import { SharingService } from '../../sync/SharingService';
+import { WorkspaceSharingService } from '../../sync/WorkspaceSharingService';
 import { LicenseService } from '../../../services/LicenseService';
 import {
   allowedSyncProviders,
@@ -12,11 +11,11 @@ import {
   TIER_DISPLAY,
 } from '../../../services/featureGates';
 import type { SettingsHubHostContext, SettingsHubMessage, SettingsSectionHandler } from '../types';
+import { ConnectionUtils } from '../../../utils/connectionUtils';
+import { DatabaseTreeItem } from '../../../providers/DatabaseTreeProvider';
+import { cmdNewNotebook } from '../../../commands/notebook';
 
 const PROVIDER_LABELS: Record<string, string> = {
-  gist: 'GitHub Gist',
-  onedrive: 'OneDrive',
-  gdrive: 'Google Drive',
   cloud: 'NexQL Cloud',
   postgres: 'Shared Postgres',
 };
@@ -70,14 +69,14 @@ export class SyncSectionHandler implements SettingsSectionHandler {
       case 'wizardTestBackend':
         await this.wizardTestBackend(String(message.providerId ?? 'cloud'));
         break;
-      case 'wizardVault':
-        await this.wizardVault(message);
-        break;
       case 'wizardComplete':
         await this.wizardComplete(message);
         break;
-      case 'wizardRecoveryKit':
-        await this.wizardRecoveryKit(message);
+      case 'savePostgresConnection':
+        await this.savePostgresConnection(String(message.postgresConnectionId ?? ''));
+        break;
+      case 'openNotebook':
+        await this.openNotebook(String(message.postgresConnectionId ?? ''));
         break;
       case 'saveFlags':
         await this.saveFlags(message.flags as Record<string, boolean>);
@@ -123,6 +122,7 @@ export class SyncSectionHandler implements SettingsSectionHandler {
         break;
       case 'diagnostics':
         await SyncController.getInstance().runDiagnostics();
+        this.sendState();
         break;
       case 'stopSyncingItem':
         await this.stopSyncingItem(String(message.itemId ?? ''), String(message.itemName ?? ''));
@@ -161,19 +161,6 @@ export class SyncSectionHandler implements SettingsSectionHandler {
     this.host.post({ type: 'sync/wizardBackendResult', providerId, ...result });
   }
 
-  private async wizardVault(message: SettingsHubMessage): Promise<void> {
-    const wizard = new SyncSetupWizard(this.host.extensionContext);
-    const result = await wizard.setupVault(
-      message.mode === 'unlock' ? 'unlock' : 'create',
-      message.secretKey ? String(message.secretKey) : undefined,
-      {
-        passphrase: message.passphrase ? String(message.passphrase) : undefined,
-        legacyEmail: message.legacyEmail ? String(message.legacyEmail) : undefined,
-      },
-    );
-    this.host.post({ type: 'sync/wizardVaultResult', ...result });
-  }
-
   private async wizardComplete(message: SettingsHubMessage): Promise<void> {
     const wizard = new SyncSetupWizard(this.host.extensionContext);
     const flags = (message.flags ?? {}) as Record<string, boolean>;
@@ -183,21 +170,12 @@ export class SyncSectionHandler implements SettingsSectionHandler {
         syncConnections: flags.syncConnections !== false,
         syncQueries: flags.syncQueries !== false,
         syncNotebooks: flags.syncNotebooks !== false,
-        syncPasswords: !!flags.syncPasswords,
       },
-      message.vaultMode === 'unlock' ? 'unlock' : 'create',
+      message.postgresConnectionId ? String(message.postgresConnectionId) : undefined,
     );
     this.host.post({ type: 'sync/wizardCompleteResult', ...result });
     this.sendState();
     this.sendItems();
-  }
-
-  private async wizardRecoveryKit(message: SettingsHubMessage): Promise<void> {
-    await new SyncSetupWizard(this.host.extensionContext).exportRecoveryKit(
-      String(message.generation ?? ''),
-      String(message.secretKey ?? ''),
-      !!message.customPassphrase,
-    );
   }
 
   private sendItems(): void {
@@ -224,26 +202,12 @@ export class SyncSectionHandler implements SettingsSectionHandler {
   }
 
   private sendConflicts(): void {
-    const service = new ConflictResolutionService(this.host.extensionContext);
-    this.host.post({ type: 'sync/conflicts', conflicts: service.listConflicts() });
+    // v2 resolves conflicts automatically (last-writer-wins, loser backed up
+    // locally), so there is no manual conflict queue.
+    this.host.post({ type: 'sync/conflicts', conflicts: [] });
   }
 
-  private async resolveConflict(message: SettingsHubMessage): Promise<void> {
-    const service = new ConflictResolutionService(this.host.extensionContext);
-    const id = String(message.conflictId ?? '');
-    const action = String(message.resolveAction ?? '');
-    if (action === 'keepMine') {
-      await service.resolveKeepMine(id);
-    } else if (action === 'keepTheirs') {
-      await service.resolveKeepTheirs(id);
-    } else if (action === 'keepBoth') {
-      await service.resolveKeepBoth(id, String(message.newName ?? `${id}-copy`));
-    } else if (action === 'delete') {
-      await service.deleteConflictCopy(id);
-    } else if (action === 'diff') {
-      await service.openDiff(id);
-      return;
-    }
+  private async resolveConflict(_message: SettingsHubMessage): Promise<void> {
     this.sendConflicts();
     this.sendItems();
     this.sendState();
@@ -251,31 +215,21 @@ export class SyncSectionHandler implements SettingsSectionHandler {
 
   private async sendShares(): Promise<void> {
     try {
-      const service = new SharingService(this.host.extensionContext);
-      const [incoming, outgoing] = await Promise.all([
-        service.listIncomingShares(),
-        service.listOutgoingShares(),
-      ]);
-      this.host.post({ type: 'sync/shares', incoming, outgoing });
+      const workspaces = await new WorkspaceSharingService(this.host.extensionContext).listWorkspaces();
+      this.host.post({ type: 'sync/shares', incoming: [], outgoing: [], workspaces });
     } catch (e) {
       this.host.post({
         type: 'sync/shares',
         incoming: [],
         outgoing: [],
+        workspaces: [],
         error: e instanceof Error ? e.message : String(e),
       });
     }
   }
 
-  private async revokeShare(shareId: string): Promise<void> {
-    if (!shareId) {
-      return;
-    }
-    try {
-      await new SharingService(this.host.extensionContext).revokeShare(shareId);
-    } catch (e) {
-      void vscode.window.showErrorMessage(`Revoke failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
+  private async revokeShare(_shareId: string): Promise<void> {
+    // Workspace membership is managed via the "Manage Workspaces" command.
     await this.sendShares();
   }
 
@@ -415,12 +369,22 @@ export class SyncSectionHandler implements SettingsSectionHandler {
           syncConnections: config.syncConnections,
           syncQueries: config.syncQueries,
           syncNotebooks: config.syncNotebooks,
-          syncPasswords: config.syncPasswords,
         },
         auto: wsConfig.get<boolean>(AUTO_SYNC_KEY, true),
         pullIntervalMinutes: pullInterval,
+        postgresConnectionId: wsConfig.get<string>('postgresExplorer.sync.postgresConnectionId') ?? null,
       },
     });
+  }
+
+  private async savePostgresConnection(postgresConnectionId: string): Promise<void> {
+    if (!postgresConnectionId) {
+      return;
+    }
+    await vscode.workspace
+      .getConfiguration()
+      .update('postgresExplorer.sync.postgresConnectionId', postgresConnectionId, vscode.ConfigurationTarget.Global);
+    this.sendState();
   }
 
   private async syncNow(direction: 'both' | 'pull' | 'push'): Promise<void> {
@@ -446,7 +410,6 @@ export class SyncSectionHandler implements SettingsSectionHandler {
     if (!(await requirePro(ProFeature.CloudBackup))) {
       return;
     }
-    this.host.post({ type: 'sync/running' });
     const preview = await SyncController.getInstance().previewSync(transientExcludedIds);
     this.host.post({ type: 'sync/preview', preview: preview ?? null });
     this.sendState();
@@ -499,7 +462,6 @@ export class SyncSectionHandler implements SettingsSectionHandler {
       syncConnections: !!flags.syncConnections,
       syncQueries: !!flags.syncQueries,
       syncNotebooks: !!flags.syncNotebooks,
-      syncPasswords: !!flags.syncPasswords,
     });
     this.sendState();
   }
@@ -516,5 +478,25 @@ export class SyncSectionHandler implements SettingsSectionHandler {
       await wsConfig.update(PULL_INTERVAL_KEY, clamped, vscode.ConfigurationTarget.Global);
     }
     this.sendState();
+  }
+
+  private async openNotebook(postgresConnectionId: string): Promise<void> {
+    if (!postgresConnectionId) {
+      void vscode.window.showErrorMessage('No database connection selected.');
+      return;
+    }
+    const connection = ConnectionUtils.findConnection(postgresConnectionId);
+    if (!connection) {
+      void vscode.window.showErrorMessage('Database connection not found.');
+      return;
+    }
+    const treeItem = new DatabaseTreeItem(
+      connection.database || 'postgres',
+      vscode.TreeItemCollapsibleState.None,
+      'database',
+      connection.id,
+      connection.database || 'postgres'
+    );
+    await cmdNewNotebook(treeItem, this.host.extensionContext);
   }
 }
