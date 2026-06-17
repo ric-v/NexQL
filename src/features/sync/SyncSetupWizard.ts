@@ -3,10 +3,6 @@ import { LicenseService } from '../../services/LicenseService';
 import { TIER_DISPLAY, allowedSyncProviders, syncProviderMinTier } from '../../services/featureGates';
 import { SyncController } from './SyncController';
 import { AccountService } from './AccountService';
-import { VaultService } from './VaultService';
-import { GistSyncProvider } from './providers/GistSyncProvider';
-import { OneDriveSyncProvider } from './providers/OneDriveSyncProvider';
-import { GoogleDriveSyncProvider } from './providers/GoogleDriveSyncProvider';
 import { CloudSyncProvider } from './providers/CloudSyncProvider';
 import { PostgresSyncProvider } from './providers/PostgresSyncProvider';
 import { ensureDeviceName } from './deviceId';
@@ -22,7 +18,9 @@ export interface WizardCompleteResult {
 export type CloudSignInMode = 'license' | 'browser';
 
 /**
- * Settings-hub onboarding wizard — cloud-first path with Advanced backends.
+ * Settings-hub onboarding wizard. Pass 1 has no vault step — sign in, pick a
+ * backend (Cloud or self-hosted Postgres), and run the first sync. Empty remote
+ * pushes local; existing remote pulls.
  */
 export class SyncSetupWizard {
   constructor(private readonly context: vscode.ExtensionContext) {}
@@ -52,50 +50,20 @@ export class SyncSetupWizard {
   }
 
   async testBackend(providerId: SyncProviderId): Promise<{ ok: boolean; error?: string }> {
-    const provider = this.createProvider(providerId);
-    if (providerId === 'gist') {
-      await (provider as GistSyncProvider).ensureAuth();
-    } else if (providerId === 'onedrive') {
-      await (provider as OneDriveSyncProvider).ensureAuth();
-    } else if (providerId === 'gdrive') {
-      await (provider as GoogleDriveSyncProvider).ensureAuth();
-    } else if (providerId === 'cloud') {
+    if (providerId === 'cloud') {
       const signedIn = await AccountService.getInstance(this.context).isSignedIn();
       if (!signedIn) {
         return { ok: false, error: 'Sign in to NexQL Cloud first.' };
       }
     }
+    const provider = this.createProvider(providerId);
     const test = await provider.testConnection();
     return test.ok ? { ok: true } : { ok: false, error: test.error ?? 'Connection failed' };
   }
 
-  async setupVault(
-    mode: 'create' | 'unlock',
-    secretKey?: string,
-    options?: { passphrase?: string; legacyEmail?: string },
-  ): Promise<{ ok: boolean; secretKey?: string; generation?: string; error?: string }> {
-    const vault = VaultService.getInstance(this.context);
-    if (mode === 'create') {
-      const { secretKey: created, generation } = await vault.createVault({
-        passphrase: options?.passphrase,
-      });
-      return { ok: true, secretKey: created, generation };
-    }
-    if (!secretKey) {
-      return { ok: false, error: 'Secret key required to unlock.' };
-    }
-    try {
-      await vault.unlock(secretKey, options?.legacyEmail);
-      return { ok: true, generation: vault.getGeneration() };
-    } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : 'Unlock failed' };
-    }
-  }
-
   async completeSetup(
     providerId: SyncProviderId,
-    flags: { syncConnections: boolean; syncQueries: boolean; syncNotebooks: boolean; syncPasswords: boolean },
-    vaultMode: 'create' | 'unlock',
+    flags: { syncConnections: boolean; syncQueries: boolean; syncNotebooks: boolean },
     postgresConnectionId?: string,
   ): Promise<WizardCompleteResult> {
     if (!allowedSyncProviders().includes(providerId)) {
@@ -112,73 +80,27 @@ export class SyncSetupWizard {
     await ensureDeviceName(this.context);
 
     const controller = SyncController.getInstance();
-    const vault = VaultService.getInstance(this.context);
-    const gistId = providerId === 'gist'
-      ? await this.context.secrets.get('postgresExplorer.sync.gistId')
-      : undefined;
-
     const accountEmail = await AccountService.getInstance(this.context).getAccountEmail();
 
     await controller.saveConfig({
       providerId,
-      gistId,
       syncConnections: flags.syncConnections,
       syncQueries: flags.syncQueries,
       syncNotebooks: flags.syncNotebooks,
-      syncPasswords: flags.syncPasswords,
       paused: false,
       accountEmail: accountEmail?.trim(),
-      vaultGeneration: vault.getGeneration(),
     });
-
-    if (providerId === 'gist' && vaultMode === 'unlock') {
-      const provider = new GistSyncProvider(this.context);
-      await provider.linkToRemoteStorage({ mode: 'unlock', vaultGeneration: vault.getGeneration() });
-    }
 
     const result = await controller.runSync();
-    if (providerId === 'cloud') {
-      try {
-        const { SharingService } = await import('./SharingService');
-        await new SharingService(this.context).registerPublicKey();
-      } catch {
-        /* best-effort */
-      }
-    }
-
     return {
       ok: true,
-      pushed: result?.pushed,
-      pulled: result?.pulled,
+      pushed: result && 'pushed' in result ? result.pushed : undefined,
+      pulled: result && 'pulled' in result ? result.pulled : undefined,
     };
-  }
-
-  async exportRecoveryKit(generation: string, secretKey: string, customPassphrase?: boolean): Promise<void> {
-    const uri = await vscode.window.showSaveDialog({
-      defaultUri: vscode.Uri.file('pgstudio-recovery-kit.txt'),
-      filters: { Text: ['txt'] },
-    });
-    if (uri) {
-      const secretLine = customPassphrase
-        ? 'Secret: (your custom passphrase — not stored here)'
-        : `Secret: ${secretKey}`;
-      await vscode.workspace.fs.writeFile(
-        uri,
-        Buffer.from(
-          `PgStudio Sync Recovery Kit\nVault ID: ${generation}\n${secretLine}\n\nKeep this safe. Without the secret, encrypted data cannot be recovered.`,
-        ),
-      );
-    }
   }
 
   private createProvider(id: SyncProviderId) {
     switch (id) {
-      case 'gist':
-        return new GistSyncProvider(this.context);
-      case 'onedrive':
-        return new OneDriveSyncProvider(this.context);
-      case 'gdrive':
-        return new GoogleDriveSyncProvider(this.context);
       case 'cloud':
         return new CloudSyncProvider(this.context);
       case 'postgres':

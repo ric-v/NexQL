@@ -720,7 +720,7 @@
               <label class="pref-row"><input type="checkbox" id="syncFlagConnections"><span class="pref-row-text"><span class="pref-row-label">Connections</span></span></label>
               <label class="pref-row"><input type="checkbox" id="syncFlagQueries"><span class="pref-row-text"><span class="pref-row-label">Saved queries</span></span></label>
               <label class="pref-row"><input type="checkbox" id="syncFlagNotebooks"><span class="pref-row-text"><span class="pref-row-label">Notebooks</span></span></label>
-              <label class="pref-row"><input type="checkbox" id="syncFlagPasswords"><span class="pref-row-text"><span class="pref-row-label">Passwords</span><span class="label-hint">Opt-in — encrypted with your vault key before upload</span></span></label>
+              <p class="label-hint" style="margin: 6px 0 0;">Connection passwords and SSH/SSL key paths stay on this device and are never uploaded.</p>
             </div>
 
             <div id="syncPostgresSettingsBlock" hidden>
@@ -813,7 +813,6 @@
                 <option value="connection">Connections</option>
                 <option value="query">Saved queries</option>
                 <option value="notebook">Notebooks</option>
-                <option value="secrets">Passwords</option>
               </select>
             </div>
             <div class="conn-table-wrap">

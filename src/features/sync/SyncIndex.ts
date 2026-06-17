@@ -1,17 +1,18 @@
 import * as path from 'path';
 import type * as vscode from 'vscode';
 import { SYNC_ITEM_INDEX_KEY } from './constants';
-import type { SyncItemMeta, SyncKind } from './types';
+import type { SyncKind } from './types';
 
 export interface SyncIndexEntry {
   kind: SyncKind;
-  /** Display name (local-only; never uploaded in plaintext). */
+  /** Display name (local-only). */
   name?: string;
   /** Absolute path of the backing file (notebooks only). */
   filePath?: string;
-  /** Revision confirmed by the last successful sync (0 = never synced). */
-  syncedRevision: number;
+  /** Content hash confirmed by the last successful sync. */
   syncedHash?: string;
+  /** Server version confirmed by the last successful sync (compare-and-swap base). */
+  syncedVersion?: number;
   syncedAt?: number;
   /** Last content hash observed during collection. */
   lastObservedHash?: string;
@@ -19,36 +20,19 @@ export interface SyncIndexEntry {
   modifiedAt?: number;
 }
 
+/** What a single observe() call reports back to the disk-mapping services. */
 export interface ObservedRevision {
+  /** Vestigial; the engine orders by server version + hash. Kept for callers. */
   revision: number;
+  /** Local edit time (epoch ms) — used for last-writer-wins resolution. */
   updatedAt: number;
 }
 
 /**
- * Pure revision decision: stable identity across sync runs.
- * - Unchanged since last sync → reuse synced revision/timestamp.
- * - Changed → synced revision + 1 (idempotent until the next successful sync).
- */
-export function decideRevision(
-  entry: SyncIndexEntry | undefined,
-  currentHash: string,
-  fallbackRevision: number | undefined,
-  now: number,
-): ObservedRevision {
-  if (!entry || entry.syncedRevision === 0) {
-    return { revision: Math.max(1, fallbackRevision ?? 1), updatedAt: entry?.modifiedAt ?? now };
-  }
-  if (currentHash === entry.syncedHash) {
-    return { revision: entry.syncedRevision, updatedAt: entry.syncedAt ?? now };
-  }
-  const modifiedAt = currentHash === entry.lastObservedHash ? (entry.modifiedAt ?? now) : now;
-  return { revision: entry.syncedRevision + 1, updatedAt: modifiedAt };
-}
-
-/**
  * Local item index keyed by sync id. Tracks file locations, display names and
- * per-item revisions so identity stays stable across devices and sync runs.
- * Kept in globalState; mutate via observe/update/markSynced then flush().
+ * the last-synced content hash + server version, so the git-like engine can
+ * tell what is dirty and what compare-and-swap base to push with. Kept in
+ * globalState; mutate via observe/update/markSynced/remove then flush().
  */
 export class SyncIndex {
   private entries: Record<string, SyncIndexEntry>;
@@ -76,9 +60,28 @@ export class SyncIndex {
     return undefined;
   }
 
+  /** Server version to push as the compare-and-swap base (0 = never synced). */
+  baseVersion(id: string): number {
+    return this.entries[id]?.syncedVersion ?? 0;
+  }
+
+  /** True when the local content differs from what was last pushed. */
+  isDirty(id: string, currentHash: string): boolean {
+    const entry = this.entries[id];
+    return !entry || entry.syncedHash !== currentHash;
+  }
+
+  /** Ids that have been synced at least once (used to detect local deletions). */
+  syncedIds(): string[] {
+    return Object.entries(this.entries)
+      .filter(([, e]) => e.syncedVersion != null)
+      .map(([id]) => id);
+  }
+
   /**
-   * Record an observation of a local item and return the revision/updatedAt
-   * to advertise in its sync meta.
+   * Record an observation of a local item and return the revision/updatedAt to
+   * advertise in its sync meta. `updatedAt` is held stable while content is
+   * unchanged and bumped to "now" the first time changed content appears.
    */
   observe(
     id: string,
@@ -88,26 +91,34 @@ export class SyncIndex {
     now = Date.now(),
   ): ObservedRevision {
     const existing = this.entries[id];
-    const decision = decideRevision(existing, currentHash, opts.fallbackRevision, opts.modifiedAt ?? now);
+    let updatedAt: number;
+    if (existing && currentHash === existing.syncedHash) {
+      updatedAt = existing.syncedAt ?? now;
+    } else if (existing && currentHash === existing.lastObservedHash) {
+      updatedAt = existing.modifiedAt ?? opts.modifiedAt ?? now;
+    } else {
+      updatedAt = opts.modifiedAt ?? now;
+    }
+
     const next: SyncIndexEntry = {
       kind,
       name: opts.name ?? existing?.name,
       filePath: opts.filePath ?? existing?.filePath,
-      syncedRevision: existing?.syncedRevision ?? 0,
       syncedHash: existing?.syncedHash,
+      syncedVersion: existing?.syncedVersion,
       syncedAt: existing?.syncedAt,
       lastObservedHash: currentHash,
-      modifiedAt: currentHash === existing?.lastObservedHash ? existing?.modifiedAt : (opts.modifiedAt ?? now),
+      modifiedAt: updatedAt,
     };
     if (JSON.stringify(next) !== JSON.stringify(existing)) {
       this.entries[id] = next;
       this.dirty = true;
     }
-    return decision;
+    return { revision: existing?.syncedVersion ?? 0, updatedAt };
   }
 
   update(id: string, patch: Partial<SyncIndexEntry> & { kind: SyncKind }): void {
-    const existing: SyncIndexEntry = this.entries[id] ?? { kind: patch.kind, syncedRevision: 0 };
+    const existing: SyncIndexEntry = this.entries[id] ?? { kind: patch.kind };
     this.entries[id] = { ...existing, ...patch };
     this.dirty = true;
   }
@@ -119,23 +130,20 @@ export class SyncIndex {
     }
   }
 
-  /** Record the outcome of a successful sync run. */
-  markSynced(manifest: SyncItemMeta[]): void {
-    for (const meta of manifest) {
-      if (meta.deleted) {
-        this.remove(meta.id);
-        continue;
-      }
-      const existing: SyncIndexEntry = this.entries[meta.id] ?? { kind: meta.kind, syncedRevision: 0 };
-      this.entries[meta.id] = {
-        ...existing,
-        syncedRevision: meta.revision,
-        syncedHash: meta.contentHash,
-        syncedAt: meta.updatedAt,
-        lastObservedHash: meta.contentHash,
-      };
-      this.dirty = true;
-    }
+  /** Record a successful sync of one item at the given server version. */
+  markSynced(id: string, fields: { kind: SyncKind; contentHash: string; version: number; updatedAt?: number; name?: string; filePath?: string }): void {
+    const existing: SyncIndexEntry = this.entries[id] ?? { kind: fields.kind };
+    this.entries[id] = {
+      ...existing,
+      kind: fields.kind,
+      name: fields.name ?? existing.name,
+      filePath: fields.filePath ?? existing.filePath,
+      syncedHash: fields.contentHash,
+      syncedVersion: fields.version,
+      syncedAt: fields.updatedAt ?? Date.now(),
+      lastObservedHash: fields.contentHash,
+    };
+    this.dirty = true;
   }
 
   async flush(): Promise<void> {

@@ -1,8 +1,15 @@
-// Neon Postgres pool for NexQL Cloud sync storage.
+// Neon Postgres pool for NexQL Cloud sync storage (sync v2 — git-like).
 // Connection URL: DATABASE_URL, POSTGRES_URL, or Vercel-prefixed variants (see db-url.js).
+//
+// Model: each "space" is one sync stream. Personal space_id === account_id;
+// shared spaces have a generated id + member roster. Every write stamps a row
+// with a monotonic `version` drawn from cursor_seq. Pull returns everything past
+// a client cursor (upserts + permanent deletes). Push is an atomic batch with
+// per-item optimistic concurrency (compare-and-swap on version).
 
 const { neon } = require('@neondatabase/serverless');
 const { resolveDatabaseUrl } = require('./db-url');
+const { CLOUD_INACTIVE_RETENTION_DAYS } = require('./sync-retention');
 
 let sql = null;
 let schemaReady = null;
@@ -22,58 +29,57 @@ async function ensureSchema() {
   if (!schemaReady) {
     schemaReady = (async () => {
       const db = getSql();
+      await db`CREATE SCHEMA IF NOT EXISTS pgstudio_sync`;
+      await db`CREATE SEQUENCE IF NOT EXISTS pgstudio_sync.cursor_seq`;
       await db`
-        CREATE SCHEMA IF NOT EXISTS pgstudio_sync
-      `;
-      await db`
-        CREATE TABLE IF NOT EXISTS pgstudio_sync.sync_items (
-          account_id   TEXT        NOT NULL,
+        CREATE TABLE IF NOT EXISTS pgstudio_sync.items_v2 (
+          space_id     TEXT        NOT NULL,
           item_id      TEXT        NOT NULL,
-          kind         TEXT        NOT NULL CHECK (kind IN ('connection','query','notebook','secrets')),
-          blob         BYTEA       NOT NULL DEFAULT ''::bytea,
+          kind         TEXT        NOT NULL CHECK (kind IN ('connection','query','notebook')),
+          blob         BYTEA       NOT NULL,
           content_hash TEXT        NOT NULL,
-          revision     INT         NOT NULL DEFAULT 1,
+          version      BIGINT      NOT NULL,
           device_id    TEXT        NOT NULL,
-          deleted      BOOLEAN     NOT NULL DEFAULT false,
-          created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-          PRIMARY KEY (account_id, item_id)
+          PRIMARY KEY (space_id, item_id)
         )
       `;
       await db`
-        CREATE INDEX IF NOT EXISTS sync_items_pull_idx
-          ON pgstudio_sync.sync_items (account_id, updated_at)
+        CREATE INDEX IF NOT EXISTS items_v2_cursor_idx
+          ON pgstudio_sync.items_v2 (space_id, version)
       `;
-      // Per-user X25519 public keys, keyed by email (team sharing identity).
+      // Permanent delete log — never pruned. Stops deleted items resurrecting.
       await db`
-        CREATE TABLE IF NOT EXISTS pgstudio_sync.sync_identities (
-          email      TEXT        PRIMARY KEY,
-          account_id TEXT        NOT NULL,
-          public_key TEXT        NOT NULL,
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-        )
-      `;
-      // Shared items: each row is one item sealed to one grantee.
-      await db`
-        CREATE TABLE IF NOT EXISTS pgstudio_sync.sync_shares (
-          share_id      TEXT        PRIMARY KEY,
-          owner_email   TEXT        NOT NULL,
-          grantee_email TEXT        NOT NULL,
-          item_kind     TEXT        NOT NULL CHECK (item_kind IN ('query','notebook')),
-          item_name     TEXT,
-          share_blob    TEXT        NOT NULL,
-          wrapped_key   TEXT        NOT NULL,
-          created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-          revoked       BOOLEAN     NOT NULL DEFAULT false
+        CREATE TABLE IF NOT EXISTS pgstudio_sync.deletes_v2 (
+          space_id   TEXT        NOT NULL,
+          item_id    TEXT        NOT NULL,
+          version    BIGINT      NOT NULL,
+          deleted_by TEXT        NOT NULL,
+          deleted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          PRIMARY KEY (space_id, item_id)
         )
       `;
       await db`
-        CREATE INDEX IF NOT EXISTS sync_shares_grantee_idx
-          ON pgstudio_sync.sync_shares (grantee_email) WHERE revoked = false
+        CREATE INDEX IF NOT EXISTS deletes_v2_cursor_idx
+          ON pgstudio_sync.deletes_v2 (space_id, version)
+      `;
+      // Shared workspaces (team sharing). Personal space rows are implicit.
+      await db`
+        CREATE TABLE IF NOT EXISTS pgstudio_sync.spaces (
+          space_id    TEXT        PRIMARY KEY,
+          name        TEXT        NOT NULL,
+          owner_email TEXT        NOT NULL,
+          created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
       `;
       await db`
-        CREATE INDEX IF NOT EXISTS sync_shares_owner_idx
-          ON pgstudio_sync.sync_shares (owner_email)
+        CREATE TABLE IF NOT EXISTS pgstudio_sync.space_members (
+          space_id TEXT        NOT NULL REFERENCES pgstudio_sync.spaces(space_id) ON DELETE CASCADE,
+          email    TEXT        NOT NULL,
+          role     TEXT        NOT NULL CHECK (role IN ('owner','editor','viewer')),
+          added_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          PRIMARY KEY (space_id, email)
+        )
       `;
       await db`
         CREATE TABLE IF NOT EXISTS pgstudio_sync.sync_accounts (
@@ -84,10 +90,6 @@ async function ensureSchema() {
           inactive_since TIMESTAMPTZ,
           updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
         )
-      `;
-      await db`
-        ALTER TABLE pgstudio_sync.sync_accounts
-        ADD COLUMN IF NOT EXISTS inactive_since TIMESTAMPTZ
       `;
       await db`
         CREATE TABLE IF NOT EXISTS pgstudio_sync.sync_devices (
@@ -111,186 +113,260 @@ function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
 }
 
-async function upsertIdentity(email, accountId, publicKey) {
-  await ensureSchema();
-  const db = getSql();
-  await db`
-    INSERT INTO pgstudio_sync.sync_identities (email, account_id, public_key, updated_at)
-    VALUES (${normalizeEmail(email)}, ${accountId}, ${publicKey}, now())
-    ON CONFLICT (email) DO UPDATE SET
-      account_id = EXCLUDED.account_id,
-      public_key = EXCLUDED.public_key,
-      updated_at = now()
-  `;
-}
-
-async function getPublicKey(email) {
-  await ensureSchema();
-  const db = getSql();
-  const rows = await db`
-    SELECT public_key FROM pgstudio_sync.sync_identities
-    WHERE email = ${normalizeEmail(email)} LIMIT 1
-  `;
-  return rows.length ? rows[0].public_key : null;
-}
-
-async function createShares(ownerEmail, granteeEmail, items) {
-  await ensureSchema();
-  const db = getSql();
-  const owner = normalizeEmail(ownerEmail);
-  const grantee = normalizeEmail(granteeEmail);
-  const created = [];
-  for (const item of items) {
-    const shareId = item.share_id;
-    await db`
-      INSERT INTO pgstudio_sync.sync_shares (
-        share_id, owner_email, grantee_email, item_kind, item_name, share_blob, wrapped_key
-      ) VALUES (
-        ${shareId}, ${owner}, ${grantee}, ${item.kind}, ${item.name || null},
-        ${item.share_blob}, ${item.wrapped_key}
-      )
-      ON CONFLICT (share_id) DO UPDATE SET
-        item_kind = EXCLUDED.item_kind,
-        item_name = EXCLUDED.item_name,
-        share_blob = EXCLUDED.share_blob,
-        wrapped_key = EXCLUDED.wrapped_key,
-        revoked = false
-    `;
-    created.push(shareId);
-  }
-  return created;
-}
-
-async function listSharesForGrantee(granteeEmail) {
-  await ensureSchema();
-  const db = getSql();
-  return db`
-    SELECT share_id, owner_email, item_kind, item_name, share_blob, wrapped_key, created_at
-    FROM pgstudio_sync.sync_shares
-    WHERE grantee_email = ${normalizeEmail(granteeEmail)} AND revoked = false
-    ORDER BY created_at DESC
-  `;
-}
-
-async function listSharesByOwner(ownerEmail) {
-  await ensureSchema();
-  const db = getSql();
-  return db`
-    SELECT share_id, grantee_email, item_kind, item_name, created_at, revoked
-    FROM pgstudio_sync.sync_shares
-    WHERE owner_email = ${normalizeEmail(ownerEmail)}
-    ORDER BY created_at DESC
-  `;
-}
-
-async function revokeShare(ownerEmail, shareId) {
-  await ensureSchema();
-  const db = getSql();
-  const rows = await db`
-    UPDATE pgstudio_sync.sync_shares
-    SET revoked = true
-    WHERE share_id = ${shareId} AND owner_email = ${normalizeEmail(ownerEmail)}
-    RETURNING share_id
-  `;
-  return rows.length > 0;
-}
-
-async function listManifest(accountId, sinceRevision) {
-  await ensureSchema();
-  const db = getSql();
-  if (sinceRevision) {
-    return db`
-      SELECT item_id, kind, content_hash, revision, device_id, deleted, updated_at
-      FROM pgstudio_sync.sync_items
-      WHERE account_id = ${accountId} AND revision > ${sinceRevision}
-      ORDER BY updated_at ASC
-    `;
-  }
-  return db`
-    SELECT item_id, kind, content_hash, revision, device_id, deleted, updated_at
-    FROM pgstudio_sync.sync_items
-    WHERE account_id = ${accountId}
-    ORDER BY updated_at ASC
-  `;
-}
-
-async function getItemBlob(accountId, itemId) {
-  await ensureSchema();
-  const db = getSql();
-  const rows = await db`
-    SELECT blob FROM pgstudio_sync.sync_items
-    WHERE account_id = ${accountId} AND item_id = ${itemId}
-    LIMIT 1
-  `;
-  if (!rows.length) {
-    return null;
-  }
-  const blob = rows[0].blob;
+function toBuffer(blob) {
   return Buffer.isBuffer(blob) ? blob : Buffer.from(blob);
 }
 
-async function upsertItem(accountId, itemId, fields) {
+// ── Delta sync ──────────────────────────────────────────────────────────────
+
+/** Highest version stamped in a space across items + deletes (the sync cursor). */
+async function spaceCursor(spaceId) {
+  const db = getSql();
+  const rows = await db`
+    SELECT GREATEST(
+      COALESCE((SELECT MAX(version) FROM pgstudio_sync.items_v2   WHERE space_id = ${spaceId}), 0),
+      COALESCE((SELECT MAX(version) FROM pgstudio_sync.deletes_v2 WHERE space_id = ${spaceId}), 0)
+    ) AS cursor
+  `;
+  return Number(rows[0]?.cursor || 0);
+}
+
+/** Everything changed in a space since `since` (0 = full snapshot). Blobs inline (base64). */
+async function pullDelta(spaceId, since) {
   await ensureSchema();
   const db = getSql();
-  const blob = fields.blob ?? Buffer.alloc(0);
+  const sinceVersion = Number.isFinite(since) ? Number(since) : 0;
+
+  const itemRows = await db`
+    SELECT item_id, kind, content_hash, version, device_id,
+           encode(blob, 'base64') AS blob,
+           updated_at
+    FROM pgstudio_sync.items_v2
+    WHERE space_id = ${spaceId} AND version > ${sinceVersion}
+    ORDER BY version ASC
+  `;
+  const deleteRows = await db`
+    SELECT item_id, version
+    FROM pgstudio_sync.deletes_v2
+    WHERE space_id = ${spaceId} AND version > ${sinceVersion}
+    ORDER BY version ASC
+  `;
+  const cursor = await spaceCursor(spaceId);
+
+  return {
+    cursor,
+    upserts: itemRows.map((r) => ({
+      item_id: r.item_id,
+      kind: r.kind,
+      content_hash: r.content_hash,
+      version: Number(r.version),
+      device_id: r.device_id,
+      blob: r.blob,
+      updated_at: r.updated_at instanceof Date ? r.updated_at.toISOString() : new Date(r.updated_at).toISOString(),
+    })),
+    deletes: deleteRows.map((r) => r.item_id),
+  };
+}
+
+/**
+ * Atomic batch push with per-item optimistic concurrency.
+ *
+ * Each op carries `base_version` (the version the client last saw). An upsert is
+ * accepted when the server row is unchanged since (`version <= base_version`) or
+ * the content is identical (idempotent). Otherwise it is rejected and the server
+ * row is returned so the client can resolve last-writer-wins, then re-push.
+ * A delete is accepted when the row is unchanged since base_version, or absent.
+ *
+ * The whole batch runs in one transaction: the cursor advances all-or-nothing.
+ */
+async function pushBatch(spaceId, deviceId, ops) {
+  await ensureSchema();
+  const db = getSql();
+  const device = String(deviceId || '');
+
+  const queries = ops.map((op) => {
+    const baseVersion = Number(op.base_version) || 0;
+    if (op.op === 'delete') {
+      return db`
+        WITH existing AS (
+          SELECT version FROM pgstudio_sync.items_v2
+          WHERE space_id = ${spaceId} AND item_id = ${op.item_id}
+        ), del AS (
+          DELETE FROM pgstudio_sync.items_v2
+          WHERE space_id = ${spaceId} AND item_id = ${op.item_id} AND version <= ${baseVersion}
+          RETURNING item_id
+        ), logged AS (
+          INSERT INTO pgstudio_sync.deletes_v2 (space_id, item_id, version, deleted_by, deleted_at)
+          SELECT ${spaceId}, ${op.item_id}, nextval('pgstudio_sync.cursor_seq'), ${device}, now()
+          WHERE EXISTS (SELECT 1 FROM del) OR NOT EXISTS (SELECT 1 FROM existing)
+          ON CONFLICT (space_id, item_id) DO UPDATE
+            SET version = nextval('pgstudio_sync.cursor_seq'), deleted_by = EXCLUDED.deleted_by, deleted_at = now()
+          RETURNING version
+        )
+        SELECT ${op.item_id} AS item_id,
+               (SELECT version FROM logged)   AS new_version,
+               (SELECT version FROM existing) AS remote_version,
+               NULL::text                     AS remote_hash
+      `;
+    }
+    const blob = Buffer.from(String(op.blob || ''), 'base64');
+    return db`
+      WITH existing AS (
+        SELECT version, content_hash FROM pgstudio_sync.items_v2
+        WHERE space_id = ${spaceId} AND item_id = ${op.item_id}
+      ), up AS (
+        INSERT INTO pgstudio_sync.items_v2
+          (space_id, item_id, kind, blob, content_hash, version, device_id, updated_at)
+        VALUES
+          (${spaceId}, ${op.item_id}, ${op.kind}, ${blob}, ${op.content_hash},
+           nextval('pgstudio_sync.cursor_seq'), ${device}, now())
+        ON CONFLICT (space_id, item_id) DO UPDATE
+          SET kind = EXCLUDED.kind, blob = EXCLUDED.blob, content_hash = EXCLUDED.content_hash,
+              version = nextval('pgstudio_sync.cursor_seq'), device_id = EXCLUDED.device_id, updated_at = now()
+          WHERE pgstudio_sync.items_v2.version <= ${baseVersion}
+             OR pgstudio_sync.items_v2.content_hash = EXCLUDED.content_hash
+        RETURNING version
+      )
+      SELECT ${op.item_id} AS item_id,
+             (SELECT version FROM up)                AS new_version,
+             (SELECT version FROM existing)          AS remote_version,
+             (SELECT content_hash FROM existing)     AS remote_hash
+    `;
+  });
+
+  const results = queries.length ? await db.transaction(queries) : [];
+  const accepted = [];
+  const rejected = [];
+  results.forEach((rows, i) => {
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    const op = ops[i];
+    if (row && row.new_version != null) {
+      accepted.push({ item_id: op.item_id, version: Number(row.new_version) });
+    } else {
+      rejected.push({
+        item_id: op.item_id,
+        remote_version: row && row.remote_version != null ? Number(row.remote_version) : null,
+        remote_hash: row ? row.remote_hash : null,
+      });
+    }
+  });
+
+  const cursor = await spaceCursor(spaceId);
+  if (spaceId) {
+    await refreshAccountQuota(spaceId);
+  }
+  return { cursor, accepted, rejected };
+}
+
+/** Wipe a space (items + deletes). Powers "clear cloud & push". */
+async function resetSpace(spaceId) {
+  await ensureSchema();
+  const db = getSql();
+  await db`DELETE FROM pgstudio_sync.items_v2   WHERE space_id = ${spaceId}`;
+  await db`DELETE FROM pgstudio_sync.deletes_v2 WHERE space_id = ${spaceId}`;
+  await refreshAccountQuota(spaceId);
+}
+
+// ── Shared workspaces ─────────────────────────────────────────────────────────
+
+async function createSpace(spaceId, name, ownerEmail) {
+  await ensureSchema();
+  const db = getSql();
+  const owner = normalizeEmail(ownerEmail);
   await db`
-    INSERT INTO pgstudio_sync.sync_items (
-      account_id, item_id, kind, blob, content_hash, revision, device_id, deleted, updated_at
-    ) VALUES (
-      ${accountId},
-      ${itemId},
-      ${fields.kind},
-      ${blob},
-      ${fields.content_hash},
-      ${fields.revision},
-      ${fields.device_id},
-      ${fields.deleted},
-      now()
-    )
-    ON CONFLICT (account_id, item_id) DO UPDATE SET
-      kind = EXCLUDED.kind,
-      blob = CASE WHEN EXCLUDED.blob = ''::bytea THEN pgstudio_sync.sync_items.blob ELSE EXCLUDED.blob END,
-      content_hash = EXCLUDED.content_hash,
-      revision = EXCLUDED.revision,
-      device_id = EXCLUDED.device_id,
-      deleted = EXCLUDED.deleted,
-      updated_at = now()
+    INSERT INTO pgstudio_sync.spaces (space_id, name, owner_email)
+    VALUES (${spaceId}, ${name}, ${owner})
+    ON CONFLICT (space_id) DO UPDATE SET name = EXCLUDED.name
+  `;
+  await db`
+    INSERT INTO pgstudio_sync.space_members (space_id, email, role)
+    VALUES (${spaceId}, ${owner}, 'owner')
+    ON CONFLICT (space_id, email) DO UPDATE SET role = 'owner'
   `;
 }
 
-async function upsertManifestMeta(accountId, entries) {
+async function listSpacesForEmail(email) {
   await ensureSchema();
-  for (const entry of entries) {
-    await upsertItem(accountId, entry.id, {
-      kind: entry.kind,
-      blob: Buffer.alloc(0),
-      content_hash: entry.contentHash,
-      revision: entry.revision,
-      device_id: entry.deviceId,
-      deleted: !!entry.deleted,
-    });
-  }
-  await refreshAccountQuota(accountId);
+  const db = getSql();
+  return db`
+    SELECT s.space_id, s.name, s.owner_email, m.role
+    FROM pgstudio_sync.space_members m
+    JOIN pgstudio_sync.spaces s ON s.space_id = m.space_id
+    WHERE m.email = ${normalizeEmail(email)}
+    ORDER BY s.created_at ASC
+  `;
 }
+
+async function listMembers(spaceId) {
+  await ensureSchema();
+  const db = getSql();
+  return db`
+    SELECT email, role, added_at FROM pgstudio_sync.space_members
+    WHERE space_id = ${spaceId} ORDER BY added_at ASC
+  `;
+}
+
+async function addMember(spaceId, email, role) {
+  await ensureSchema();
+  const db = getSql();
+  await db`
+    INSERT INTO pgstudio_sync.space_members (space_id, email, role)
+    VALUES (${spaceId}, ${normalizeEmail(email)}, ${role})
+    ON CONFLICT (space_id, email) DO UPDATE SET role = EXCLUDED.role
+  `;
+}
+
+async function removeMember(spaceId, email) {
+  await ensureSchema();
+  const db = getSql();
+  await db`
+    DELETE FROM pgstudio_sync.space_members
+    WHERE space_id = ${spaceId} AND email = ${normalizeEmail(email)} AND role <> 'owner'
+  `;
+}
+
+const ROLE_RANK = { viewer: 1, editor: 2, owner: 3 };
+
+/** Resolve the caller's role in a space. Personal space (id === account_id) is always owner. */
+async function memberRole(spaceId, email, accountId) {
+  if (spaceId === accountId) {
+    return 'owner';
+  }
+  await ensureSchema();
+  const db = getSql();
+  const rows = await db`
+    SELECT role FROM pgstudio_sync.space_members
+    WHERE space_id = ${spaceId} AND email = ${normalizeEmail(email)} LIMIT 1
+  `;
+  return rows.length ? rows[0].role : null;
+}
+
+/** True when the caller holds at least `minRole` in the space. */
+async function assertSpaceMember(spaceId, email, accountId, minRole) {
+  const role = await memberRole(spaceId, email, accountId);
+  if (!role) {
+    return false;
+  }
+  return ROLE_RANK[role] >= ROLE_RANK[minRole];
+}
+
+// ── Quota / tier / devices ────────────────────────────────────────────────────
 
 async function refreshAccountQuota(accountId) {
   await ensureSchema();
   const db = getSql();
   const rows = await db`
-    SELECT
-      COALESCE(SUM(octet_length(blob)), 0)::bigint AS bytes_used,
-      COUNT(*) FILTER (WHERE NOT deleted)::int AS item_count
-    FROM pgstudio_sync.sync_items
-    WHERE account_id = ${accountId}
+    SELECT COALESCE(SUM(octet_length(blob)), 0)::bigint AS bytes_used,
+           COUNT(*)::int AS item_count
+    FROM pgstudio_sync.items_v2
+    WHERE space_id = ${accountId}
   `;
   const stats = rows[0] || { bytes_used: 0, item_count: 0 };
   await db`
     INSERT INTO pgstudio_sync.sync_accounts (account_id, bytes_used, item_count, updated_at)
     VALUES (${accountId}, ${stats.bytes_used}, ${stats.item_count}, now())
     ON CONFLICT (account_id) DO UPDATE SET
-      bytes_used = EXCLUDED.bytes_used,
-      item_count = EXCLUDED.item_count,
-      updated_at = now()
+      bytes_used = EXCLUDED.bytes_used, item_count = EXCLUDED.item_count, updated_at = now()
   `;
 }
 
@@ -299,17 +375,13 @@ async function getAccountQuota(accountId) {
   const db = getSql();
   const rows = await db`
     SELECT tier, bytes_used, item_count, updated_at
-    FROM pgstudio_sync.sync_accounts
-    WHERE account_id = ${accountId}
-    LIMIT 1
+    FROM pgstudio_sync.sync_accounts WHERE account_id = ${accountId} LIMIT 1
   `;
   if (!rows.length) {
     await refreshAccountQuota(accountId);
     const again = await db`
       SELECT tier, bytes_used, item_count, updated_at
-      FROM pgstudio_sync.sync_accounts
-      WHERE account_id = ${accountId}
-      LIMIT 1
+      FROM pgstudio_sync.sync_accounts WHERE account_id = ${accountId} LIMIT 1
     `;
     return again[0] || { tier: 'sponsor', bytes_used: 0, item_count: 0, updated_at: new Date() };
   }
@@ -322,9 +394,7 @@ async function setAccountTier(accountId, tier) {
   await db`
     INSERT INTO pgstudio_sync.sync_accounts (account_id, tier, updated_at)
     VALUES (${accountId}, ${tier}, now())
-    ON CONFLICT (account_id) DO UPDATE SET
-      tier = EXCLUDED.tier,
-      updated_at = now()
+    ON CONFLICT (account_id) DO UPDATE SET tier = EXCLUDED.tier, updated_at = now()
   `;
 }
 
@@ -347,10 +417,8 @@ async function listDevices(accountId) {
   await ensureSchema();
   const db = getSql();
   return db`
-    SELECT device_id, device_name, last_seen
-    FROM pgstudio_sync.sync_devices
-    WHERE account_id = ${accountId}
-    ORDER BY last_seen DESC
+    SELECT device_id, device_name, last_seen FROM pgstudio_sync.sync_devices
+    WHERE account_id = ${accountId} ORDER BY last_seen DESC
   `;
 }
 
@@ -359,15 +427,11 @@ async function revokeDevice(accountId, deviceId) {
   const db = getSql();
   const rows = await db`
     DELETE FROM pgstudio_sync.sync_devices
-    WHERE account_id = ${accountId} AND device_id = ${deviceId}
-    RETURNING device_id
+    WHERE account_id = ${accountId} AND device_id = ${deviceId} RETURNING device_id
   `;
   return rows.length > 0;
 }
 
-const { CLOUD_INACTIVE_RETENTION_DAYS } = require('./sync-retention');
-
-/** Mark cloud storage inactive (license lapsed). Retains prior inactive_since if already set. */
 async function markAccountInactive(accountId) {
   if (!accountId) {
     return;
@@ -378,12 +442,10 @@ async function markAccountInactive(accountId) {
     INSERT INTO pgstudio_sync.sync_accounts (account_id, inactive_since, updated_at)
     VALUES (${accountId}, now(), now())
     ON CONFLICT (account_id) DO UPDATE SET
-      inactive_since = COALESCE(pgstudio_sync.sync_accounts.inactive_since, now()),
-      updated_at = now()
+      inactive_since = COALESCE(pgstudio_sync.sync_accounts.inactive_since, now()), updated_at = now()
   `;
 }
 
-/** Clear inactive flag when paid sync access is restored. */
 async function markAccountActive(accountId) {
   if (!accountId) {
     return;
@@ -391,8 +453,7 @@ async function markAccountActive(accountId) {
   await ensureSchema();
   const db = getSql();
   await db`
-    UPDATE pgstudio_sync.sync_accounts
-    SET inactive_since = NULL, updated_at = now()
+    UPDATE pgstudio_sync.sync_accounts SET inactive_since = NULL, updated_at = now()
     WHERE account_id = ${accountId}
   `;
 }
@@ -400,11 +461,12 @@ async function markAccountActive(accountId) {
 async function deleteAccountCloudData(accountId, ownerEmail) {
   await ensureSchema();
   const db = getSql();
-  await db`DELETE FROM pgstudio_sync.sync_items WHERE account_id = ${accountId}`;
+  await db`DELETE FROM pgstudio_sync.items_v2   WHERE space_id = ${accountId}`;
+  await db`DELETE FROM pgstudio_sync.deletes_v2 WHERE space_id = ${accountId}`;
   await db`DELETE FROM pgstudio_sync.sync_devices WHERE account_id = ${accountId}`;
   if (ownerEmail) {
-    const email = String(ownerEmail).trim().toLowerCase();
-    await db`DELETE FROM pgstudio_sync.sync_shares WHERE owner_email = ${email}`;
+    const email = normalizeEmail(ownerEmail);
+    await db`DELETE FROM pgstudio_sync.spaces WHERE owner_email = ${email}`;
   }
   await db`DELETE FROM pgstudio_sync.sync_accounts WHERE account_id = ${accountId}`;
 }
@@ -414,15 +476,13 @@ async function purgeInactiveCloudData() {
   await ensureSchema();
   const db = getSql();
   const rows = await db`
-    SELECT account_id
-    FROM pgstudio_sync.sync_accounts
+    SELECT account_id FROM pgstudio_sync.sync_accounts
     WHERE inactive_since IS NOT NULL
       AND inactive_since < now() - (${CLOUD_INACTIVE_RETENTION_DAYS} * interval '1 day')
   `;
   if (!rows.length) {
     return 0;
   }
-
   const store = require('./store');
   let purged = 0;
   for (const row of rows) {
@@ -441,16 +501,17 @@ async function purgeInactiveCloudData() {
 
 module.exports = {
   ensureSchema,
-  listManifest,
-  getItemBlob,
-  upsertItem,
-  upsertManifestMeta,
-  upsertIdentity,
-  getPublicKey,
-  createShares,
-  listSharesForGrantee,
-  listSharesByOwner,
-  revokeShare,
+  pullDelta,
+  pushBatch,
+  resetSpace,
+  spaceCursor,
+  createSpace,
+  listSpacesForEmail,
+  listMembers,
+  addMember,
+  removeMember,
+  memberRole,
+  assertSpaceMember,
   refreshAccountQuota,
   getAccountQuota,
   setAccountTier,
@@ -459,5 +520,6 @@ module.exports = {
   revokeDevice,
   markAccountInactive,
   markAccountActive,
+  deleteAccountCloudData,
   purgeInactiveCloudData,
 };

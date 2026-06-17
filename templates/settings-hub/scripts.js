@@ -1675,42 +1675,7 @@ const syncWizardState = {
   legacyVault: false,
 };
 
-const SYNC_WIZARD_STEP_TITLES = ['Connect', 'Protect', 'Done'];
-
-function isVaultStepSubmittable() {
-  const mode = document.querySelector('input[name="vaultMode"]:checked')?.value || syncWizardState.vaultMode || 'create';
-  if (mode === 'unlock') {
-    return !!($('syncWizardSecret')?.value || '').trim();
-  }
-  if ($('syncWizardCustomPass')?.checked) {
-    return !!($('syncWizardPassphrase')?.value || '').trim();
-  }
-  return true;
-}
-
-function attachVaultStepListeners() {
-  const refresh = () => updateSyncWizardNextBtn();
-  document.querySelectorAll('input[name="vaultMode"]').forEach((el) => {
-    el.addEventListener('change', () => {
-      const unlock = document.querySelector('input[name="vaultMode"]:checked')?.value === 'unlock';
-      syncWizardState.vaultMode = unlock ? 'unlock' : 'create';
-      $('syncWizardCreateBlock').hidden = unlock;
-      $('syncWizardUnlockBlock').hidden = !unlock;
-      $('syncWizardLegacyEmailWrap').hidden = !unlock;
-      refresh();
-    });
-  });
-  $('syncWizardCustomPass')?.addEventListener('change', (e) => {
-    const on = e.target.checked;
-    syncWizardState.customPassphrase = on;
-    $('syncWizardPassphraseWrap').hidden = !on;
-    refresh();
-  });
-  ['syncWizardPassphrase', 'syncWizardSecret', 'syncWizardLegacyEmail'].forEach((id) => {
-    $(id)?.addEventListener('input', refresh);
-  });
-  refresh();
-}
+const SYNC_WIZARD_STEP_TITLES = ['Connect', 'Sync', 'Done'];
 
 function updateSyncWizardNextBtn() {
   const s = syncWizardState.step;
@@ -1726,18 +1691,9 @@ function updateSyncWizardNextBtn() {
       btn.disabled = false;
     }
   } else if (s === 1) {
-    if (syncWizardState.vaultReady) {
-      btn.textContent = 'Next';
-      btn.disabled = false;
-    } else {
-      const unlock = (document.querySelector('input[name="vaultMode"]:checked')?.value || 'create') === 'unlock';
-      btn.textContent = unlock ? 'Unlock vault' : 'Create vault';
-      btn.disabled = !isVaultStepSubmittable();
-    }
-  } else if (s === 2) {
     btn.textContent = 'Finish';
     btn.disabled = false;
-  } else if (s === 3) {
+  } else if (s === 2) {
     btn.textContent = 'Done';
     btn.disabled = false;
   }
@@ -1771,7 +1727,7 @@ function renderSyncWizardStep() {
   if (s === 0) {
     if (syncWizardState.providerId === 'cloud') {
       body.innerHTML = [
-        '<p>Enable encrypted sync to NexQL Cloud. Your data is encrypted on this device before upload.</p>',
+        '<p>Enable sync to NexQL Cloud. Connections (without passwords), saved queries and notebooks sync across your devices, protected by TLS in transit and your account.</p>',
         '<p id="syncWizardTier" class="label-hint"></p>',
         '<button type="button" id="syncWizardEnableBtn" class="btn-primary">Enable Cloud Sync</button>',
         '<p id="syncWizardSignInStatus" class="status-line"></p>',
@@ -1805,54 +1761,60 @@ function renderSyncWizardStep() {
             return `<option value="${c.id}">${escapeText(label)}</option>`;
           }).join('\n'),
           '  </select>',
-          '  <p class="label-hint" style="margin-top: 8px;">Connection to store the encrypted sync vault blobs.</p>',
+          '  <p class="label-hint" style="margin-top: 8px;">Connection that stores your synced data (pgstudio_sync schema).</p>',
           '</div>'
         ].join('\n');
       }
 
       const sqlCode = [
         'CREATE SCHEMA IF NOT EXISTS pgstudio_sync;',
+        'CREATE SEQUENCE IF NOT EXISTS pgstudio_sync.cursor_seq;',
         '',
-        'CREATE TABLE IF NOT EXISTS pgstudio_sync.sync_items (',
-        '    account_id   TEXT NOT NULL,',
+        'CREATE TABLE IF NOT EXISTS pgstudio_sync.items_v2 (',
+        '    space_id     TEXT NOT NULL,',
         '    item_id      TEXT NOT NULL,',
         '    kind         TEXT NOT NULL,',
         '    blob         BYTEA NOT NULL,',
         '    content_hash TEXT NOT NULL,',
-        '    revision     INTEGER NOT NULL,',
+        '    version      BIGINT NOT NULL,',
         '    device_id    TEXT NOT NULL,',
-        '    deleted      BOOLEAN NOT NULL,',
         '    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),',
-        '    PRIMARY KEY (account_id, item_id)',
+        '    PRIMARY KEY (space_id, item_id)',
         ');',
         '',
-        'CREATE TABLE IF NOT EXISTS pgstudio_sync.sync_meta (',
-        '    account_id      TEXT PRIMARY KEY,',
-        '    bound_device_id TEXT,',
-        '    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()',
+        'CREATE TABLE IF NOT EXISTS pgstudio_sync.deletes_v2 (',
+        '    space_id   TEXT NOT NULL,',
+        '    item_id    TEXT NOT NULL,',
+        '    version    BIGINT NOT NULL,',
+        '    deleted_by TEXT NOT NULL,',
+        '    deleted_at TIMESTAMPTZ NOT NULL DEFAULT now(),',
+        '    PRIMARY KEY (space_id, item_id)',
         ');'
       ].join('\n');
 
       const highlightedSqlHtml = [
         '<span class="sql-keyword">CREATE SCHEMA IF NOT EXISTS</span> pgstudio_sync;',
+        '<span class="sql-keyword">CREATE SEQUENCE IF NOT EXISTS</span> pgstudio_sync.cursor_seq;',
         '',
-        '<span class="sql-keyword">CREATE TABLE IF NOT EXISTS</span> pgstudio_sync.sync_items (',
-        '    account_id   <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,',
+        '<span class="sql-keyword">CREATE TABLE IF NOT EXISTS</span> pgstudio_sync.items_v2 (',
+        '    space_id     <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,',
         '    item_id      <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,',
         '    kind         <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,',
         '    blob         <span class="sql-type">BYTEA</span> <span class="sql-keyword">NOT NULL</span>,',
         '    content_hash <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,',
-        '    revision     <span class="sql-type">INTEGER</span> <span class="sql-keyword">NOT NULL</span>,',
+        '    version      <span class="sql-type">BIGINT</span> <span class="sql-keyword">NOT NULL</span>,',
         '    device_id    <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,',
-        '    deleted      <span class="sql-type">BOOLEAN</span> <span class="sql-keyword">NOT NULL</span>,',
         '    updated_at   <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">now</span>(),',
-        '    <span class="sql-keyword">PRIMARY KEY</span> (account_id, item_id)',
+        '    <span class="sql-keyword">PRIMARY KEY</span> (space_id, item_id)',
         ');',
         '',
-        '<span class="sql-keyword">CREATE TABLE IF NOT EXISTS</span> pgstudio_sync.sync_meta (',
-        '    account_id      <span class="sql-type">TEXT</span> <span class="sql-keyword">PRIMARY KEY</span>,',
-        '    bound_device_id <span class="sql-type">TEXT</span>,',
-        '    updated_at      <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">now</span>()',
+        '<span class="sql-keyword">CREATE TABLE IF NOT EXISTS</span> pgstudio_sync.deletes_v2 (',
+        '    space_id   <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,',
+        '    item_id    <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,',
+        '    version    <span class="sql-type">BIGINT</span> <span class="sql-keyword">NOT NULL</span>,',
+        '    deleted_by <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,',
+        '    deleted_at <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">now</span>(),',
+        '    <span class="sql-keyword">PRIMARY KEY</span> (space_id, item_id)',
         ');'
       ].join('\n');
 
@@ -1920,82 +1882,14 @@ function renderSyncWizardStep() {
     }
   } else if (s === 1) {
     body.innerHTML = [
-      '<div class="sync-wizard-protect">',
-      '  <p class="sync-wizard-lead">Your sync vault encrypts connections and queries. Save the secret key — it is shown only once.</p>',
-      '  <div class="sync-wizard-choices" role="radiogroup" aria-label="Vault mode">',
-      '    <label class="sync-wizard-choice">',
-      '      <input type="radio" name="vaultMode" value="create" checked>',
-      '      <span class="sync-wizard-choice-card">',
-      '        <span class="sync-wizard-choice-title">Create new vault</span>',
-      '        <span class="sync-wizard-choice-hint">Auto-generate a secret key</span>',
-      '      </span>',
-      '    </label>',
-      '    <label class="sync-wizard-choice">',
-      '      <input type="radio" name="vaultMode" value="unlock">',
-      '      <span class="sync-wizard-choice-card">',
-      '        <span class="sync-wizard-choice-title">Unlock existing vault</span>',
-      '        <span class="sync-wizard-choice-hint">Use your recovery kit secret</span>',
-      '      </span>',
-      '    </label>',
-      '  </div>',
-      '  <div id="syncWizardCreateBlock" class="sync-wizard-panel">',
-      '    <label class="sync-wizard-check">',
-      '      <input type="checkbox" id="syncWizardCustomPass">',
-      '      <span>Use custom passphrase</span>',
-      '    </label>',
-      '    <div id="syncWizardPassphraseWrap" class="form-group" hidden>',
-      '      <label for="syncWizardPassphrase">Passphrase</label>',
-      '      <input type="password" id="syncWizardPassphrase" class="hub-input mono" placeholder="Enter a memorable passphrase" autocomplete="new-password">',
-      '    </div>',
-      '  </div>',
-      '  <div id="syncWizardUnlockBlock" class="sync-wizard-panel" hidden>',
-      '    <div class="form-group">',
-      '      <label for="syncWizardSecret">Secret key</label>',
-      '      <input type="password" id="syncWizardSecret" class="hub-input mono" placeholder="Paste secret from recovery kit" autocomplete="off">',
-      '    </div>',
-      '    <div id="syncWizardLegacyEmailWrap" class="form-group" hidden>',
-      '      <label for="syncWizardLegacyEmail">Account email <span class="label-hint">(legacy vaults only)</span></label>',
-      '      <input type="email" id="syncWizardLegacyEmail" class="hub-input mono" placeholder="you@example.com" autocomplete="email">',
-      '    </div>',
-      '  </div>',
-      '  <p id="syncWizardVaultStatus" class="status-line" role="status"></p>',
-      '  <div id="syncWizardSecretReveal" class="sync-secret-reveal" hidden>',
-      '    <p class="sync-secret-reveal-label">Your secret key</p>',
-      '    <div class="sync-secret-reveal-row">',
-      '      <code id="syncWizardSecretValue" class="mono hub-input hub-input-code"></code>',
-      '      <button type="button" id="syncWizardCopySecret" class="btn-secondary btn-sm">Copy</button>',
-      '    </div>',
-      '    <p class="label-hint">Save this — you will need it on other devices.</p>',
-      '  </div>',
-      '</div>',
-    ].join('');
-    attachVaultStepListeners();
-    if (syncWizardState.vaultReady && syncWizardState.secretKey) {
-      $('syncWizardSecretReveal').hidden = false;
-      $('syncWizardSecretValue').textContent = syncWizardState.secretKey;
-      $('syncWizardCopySecret')?.addEventListener('click', () => {
-        navigator.clipboard?.writeText(syncWizardState.secretKey);
-        const copyBtn = $('syncWizardCopySecret');
-        if (copyBtn) {
-          const prev = copyBtn.textContent;
-          copyBtn.textContent = 'Copied';
-          setTimeout(() => { copyBtn.textContent = prev; }, 1500);
-        }
-      });
-      document.querySelectorAll('input[name="vaultMode"], #syncWizardCustomPass, #syncWizardPassphrase, #syncWizardSecret').forEach((el) => {
-        el.disabled = true;
-      });
-    }
-  } else if (s === 2) {
-    body.innerHTML = [
       '<p>Choose what to sync, then click Finish.</p>',
       '<label><input type="checkbox" id="wizConn" checked> Connections</label>',
       '<label><input type="checkbox" id="wizQueries" checked> Saved queries</label>',
       '<label><input type="checkbox" id="wizNotebooks" checked> Notebooks</label>',
-      '<label><input type="checkbox" id="wizPasswords"> Passwords</label>',
+      '<p class="label-hint">Connection passwords and SSH/SSL key paths stay on this device and are never uploaded. Synced data is protected by TLS in transit and your account credentials.</p>',
       '<p id="syncWizardCompleteStatus" class="status-line"></p>',
     ].join('');
-  } else if (s === 3) {
+  } else if (s === 2) {
     body.innerHTML = '<p class="success">Cloud sync is ready.</p><button type="button" id="syncWizardDoneBtn" class="btn-primary">Open Sync Settings</button>';
     $('syncWizardDoneBtn')?.addEventListener('click', () => { $('syncWizardBackdrop').hidden = true; showSyncTab('overview'); });
   }
@@ -2006,45 +1900,23 @@ function renderSyncWizardStep() {
 
 $('syncWizardNextBtn')?.addEventListener('click', () => {
   const s = syncWizardState.step;
-  if (s === 1 && !syncWizardState.vaultReady) {
-    syncWizardState.vaultMode = document.querySelector('input[name="vaultMode"]:checked')?.value || 'create';
-    const unlock = syncWizardState.vaultMode === 'unlock';
-    const statusEl = $('syncWizardVaultStatus');
-    if (statusEl) {
-      statusEl.textContent = unlock ? 'Unlocking vault…' : 'Creating vault…';
-      statusEl.className = 'status-line';
-    }
-    const btn = $('syncWizardNextBtn');
-    if (btn) { btn.disabled = true; }
-    vscode.postMessage({
-      command: 'sync/wizardVault',
-      mode: syncWizardState.vaultMode,
-      secretKey: unlock ? ($('syncWizardSecret')?.value || '') : undefined,
-      passphrase: !unlock && $('syncWizardCustomPass')?.checked ? ($('syncWizardPassphrase')?.value || '') : undefined,
-      legacyEmail: unlock ? ($('syncWizardLegacyEmail')?.value || '') : undefined,
-    });
-    return;
-  }
-  if (s === 2) {
+  if (s === 1) {
     $('syncWizardCompleteStatus').textContent = 'Running first sync…';
-    updateSyncWizardNextBtn();
     const btn = $('syncWizardNextBtn');
     if (btn) { btn.disabled = true; }
     vscode.postMessage({
       command: 'sync/wizardComplete',
       providerId: syncWizardState.providerId,
-      vaultMode: syncWizardState.vaultMode,
       postgresConnectionId: syncWizardState.postgresConnectionId,
       flags: {
         syncConnections: $('wizConn')?.checked !== false,
         syncQueries: $('wizQueries')?.checked !== false,
         syncNotebooks: $('wizNotebooks')?.checked !== false,
-        syncPasswords: !!$('wizPasswords')?.checked,
       },
     });
     return;
   }
-  if (s >= 3) {
+  if (s >= 2) {
     $('syncWizardBackdrop').hidden = true;
     return;
   }
@@ -2084,9 +1956,6 @@ function showSyncTab(tab) {
 $('syncWizardBackBtn')?.addEventListener('click', () => {
   if (syncWizardState.step > 0) {
     syncWizardState.step -= 1;
-    if (syncWizardState.step === 1) {
-      syncWizardState.vaultReady = false;
-    }
     renderSyncWizardStep();
   }
 });
@@ -2443,8 +2312,8 @@ $('syncActivateLink').addEventListener('click', () => {
   showSection('license');
 });
 
-['syncFlagConnections', 'syncFlagQueries', 'syncFlagNotebooks', 'syncFlagPasswords'].forEach((id) => {
-  $(id).addEventListener('change', () => {
+['syncFlagConnections', 'syncFlagQueries', 'syncFlagNotebooks'].forEach((id) => {
+  $(id)?.addEventListener('change', () => {
     if (syncFlagsDirtyGuard) { return; }
     vscode.postMessage({
       command: 'sync/saveFlags',
@@ -2452,7 +2321,6 @@ $('syncActivateLink').addEventListener('click', () => {
         syncConnections: $('syncFlagConnections').checked,
         syncQueries: $('syncFlagQueries').checked,
         syncNotebooks: $('syncFlagNotebooks').checked,
-        syncPasswords: $('syncFlagPasswords').checked,
       },
     });
   });
@@ -2555,7 +2423,6 @@ function handleSyncMessage(message) {
         $('syncFlagConnections').checked = !!sync.flags.syncConnections;
         $('syncFlagQueries').checked = !!sync.flags.syncQueries;
         $('syncFlagNotebooks').checked = !!sync.flags.syncNotebooks;
-        $('syncFlagPasswords').checked = !!sync.flags.syncPasswords;
         $('syncAutoEnabled').checked = !!sync.auto && !!sync.autoAllowed;
         $('syncAutoEnabled').disabled = !sync.autoAllowed;
         $('syncPullInterval').disabled = !sync.autoAllowed;
@@ -2728,31 +2595,6 @@ function handleSyncMessage(message) {
       }
       break;
     }
-    case 'sync/wizardVaultResult': {
-      const vaultStatus = $('syncWizardVaultStatus');
-      if (vaultStatus) {
-        vaultStatus.textContent = message.ok ? 'Vault ready' : (message.error || 'Vault failed');
-        vaultStatus.className = 'status-line' + (message.ok ? ' success' : ' error');
-      }
-      if (message.secretKey) { syncWizardState.secretKey = message.secretKey; }
-      if (message.generation) { syncWizardState.generation = message.generation; }
-      if (message.ok) {
-        syncWizardState.vaultReady = true;
-        if (syncWizardState.vaultMode === 'create' && message.secretKey) {
-          vscode.postMessage({
-            command: 'sync/wizardRecoveryKit',
-            generation: syncWizardState.generation,
-            secretKey: message.secretKey,
-            customPassphrase: syncWizardState.customPassphrase,
-          });
-        }
-        renderSyncWizardStep();
-        updateSyncWizardNextBtn();
-      } else {
-        updateSyncWizardNextBtn();
-      }
-      break;
-    }
     case 'sync/wizardCompleteResult': {
       const completeStatus = $('syncWizardCompleteStatus');
       if (message.ok) {
@@ -2760,7 +2602,7 @@ function handleSyncMessage(message) {
           completeStatus.textContent = 'Sync complete.';
           completeStatus.className = 'status-line success';
         }
-        syncWizardState.step = 3;
+        syncWizardState.step = 2;
         renderSyncWizardStep();
       } else {
         if (completeStatus) {

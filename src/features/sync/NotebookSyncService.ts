@@ -162,22 +162,10 @@ export class NotebookSyncService {
             const parsed = JSON.parse(raw.toString());
             let syncId = readNotebookSyncId(parsed);
             if (syncId && seenIds.has(syncId)) {
-              // Stale duplicate (e.g. cloud pulled the old name after a rename).
-              // Keep the canonical file; drop the extra copy.
-              const indexedPath = this.index.get(syncId)?.filePath;
-              if (indexedPath && path.resolve(indexedPath) !== resolvedFull && fs.existsSync(indexedPath)) {
-                try {
-                  fs.unlinkSync(full);
-                } catch {
-                  /* skip unreadable duplicate */
-                }
-                continue;
-              }
-              try {
-                fs.unlinkSync(full);
-              } catch {
-                continue;
-              }
+              // Another file already claimed this identity this scan. Never delete
+              // here — silent deletion caused data loss. Skip the extra copy; if it
+              // is a genuine duplicate, applyNotebook reconciles it on the next pull.
+              continue;
             }
             if (!syncId) {
               syncId = crypto.randomUUID();

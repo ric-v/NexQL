@@ -1,190 +1,128 @@
+import * as fs from 'fs';
 import * as vscode from 'vscode';
-import { SavedQueriesService } from '../savedQueries/SavedQueriesService';
-import { TelemetryService } from '../../services/TelemetryService';
-import {
-  isProFeatureEnabled,
-  isSyncProviderAllowed,
-  ProFeature,
-  requirePro,
-  syncProviderMinTier,
-  TIER_DISPLAY,
-} from '../../services/featureGates';
-import { AccountService } from './AccountService';
-import { VaultService } from './VaultService';
-import { buildSyncChangeSummary, formatCountsLine } from './syncChangeStats';
-import { attachEncryptedBlobs, mergeSyncState, tombstoneMeta } from './SyncEngine';
-import { getOrCreateDeviceId, getDeviceName } from './deviceId';
-import { NotebookSyncService } from './NotebookSyncService';
-import { ConnectionSyncService } from './ConnectionSyncService';
-import { SyncIndex } from './SyncIndex';
 import { contentHash } from './envelope';
-import {
-  SYNC_BACKOFF_INITIAL_MS,
-  SYNC_BACKOFF_MAX_MS,
-  SYNC_BASE_MANIFEST_KEY,
-  SYNC_CONFIG_KEY,
-  SYNC_DEBOUNCE_MS,
-  SYNC_LAST_CONFLICTS_KEY,
-  SYNC_LAST_ERROR_KEY,
-  SYNC_LAST_SYNC_AT_KEY,
-  SYNC_PERIODIC_MS,
-  CLOUD_INACTIVE_RETENTION_DAYS,
-  SYNC_PREVIEW_CACHE_KEY,
-} from './constants';
-import type {
-  SyncConfig,
-  SyncItemMeta,
-  SyncProvider,
-  SyncProviderId,
-  SyncRunResult,
-  SyncRunOptions,
-  SyncPreviewResult,
-  SyncStatus,
-  SyncActivityView,
-  SyncedItemView,
-  CloudQuotaView,
-  SyncDeviceView,
-  InboundEntry,
-} from './types';
-import { GistSyncProvider, OversizedItemError } from './providers/GistSyncProvider';
-import { OneDriveSyncProvider } from './providers/OneDriveSyncProvider';
-import { GoogleDriveSyncProvider } from './providers/GoogleDriveSyncProvider';
+import { SyncIndex } from './SyncIndex';
+import { SyncMutex } from './SyncMutex';
+import { PlaintextCodec, type BlobCodec } from './BlobCodec';
+import { decideIncoming } from './SyncEngineV2';
+import { ConnectionSyncService } from './ConnectionSyncService';
+import { NotebookSyncService } from './NotebookSyncService';
 import { CloudSyncProvider } from './providers/CloudSyncProvider';
 import { PostgresSyncProvider } from './providers/PostgresSyncProvider';
-import { bindSyncActivityLog, recordSyncActivity, SyncActivityLog } from './SyncActivityLog';
-import { readNotebookSyncId } from './notebookSyncId';
-import { buildPreviewFromMerge, mergeBaseManifestPartial } from './syncPreviewUtils';
+import { SyncActivityLog, bindSyncActivityLog, recordSyncActivity } from './SyncActivityLog';
+import { getOrCreateDeviceId } from './deviceId';
+import { SavedQueriesService } from '../savedQueries/SavedQueriesService';
+import {
+  ProFeature,
+  isProFeatureEnabled,
+  isSyncProviderAllowed,
+} from '../../services/featureGates';
 import type { SyncStatusBar } from '../../activation/statusBar';
+import {
+  SYNC_CONFIG_KEY,
+  SYNC_CURSOR_KEY,
+  SYNC_LAST_SYNC_AT_KEY,
+  SYNC_LAST_ERROR_KEY,
+  SYNC_DEBOUNCE_MS,
+  SYNC_PERIODIC_MS,
+} from './constants';
+import type {
+  CloudQuotaView,
+  InboundEntry,
+  SyncChangeSummary,
+  SyncConfig,
+  SyncDelta,
+  SyncDeviceView,
+  SyncDirectionSummary,
+  SyncItemMeta,
+  SyncOp,
+  RemoteItemMeta,
+  SyncPreviewItem,
+  SyncPreviewResult,
+  SyncProviderId,
+  SyncProviderV2,
+  SyncRunOptions,
+  SyncRunResult,
+  SyncStatus,
+  SyncedItemView,
+} from './types';
 
-function metaKey(m: SyncItemMeta): string {
-  return `${m.kind}:${m.id}`;
+type LocalItem = { meta: SyncItemMeta; plaintext: Buffer };
+
+const DEFAULT_CONFIG: SyncConfig = {
+  syncConnections: true,
+  syncQueries: true,
+  syncNotebooks: true,
+  paused: false,
+};
+
+function emptyDirection(): SyncDirectionSummary {
+  const z = () => ({ created: 0, updated: 0, deleted: 0 });
+  return { connections: z(), queries: z(), notebooks: z() };
 }
 
+function emptySummary(): SyncChangeSummary {
+  return { pushed: emptyDirection(), pulled: emptyDirection() };
+}
+
+/**
+ * Git-like sync orchestrator. The server is the source of truth; this device
+ * tracks a single cursor per space and reconciles via delta pull + atomic
+ * compare-and-swap push. Status only reaches `synced` after a full run commits.
+ */
 export class SyncController implements vscode.Disposable {
-  private static instance: SyncController;
-  private debounceTimer: ReturnType<typeof setTimeout> | undefined;
-  private periodicTimer: ReturnType<typeof setInterval> | undefined;
-  private backoffMs = SYNC_BACKOFF_INITIAL_MS;
+  private static instance: SyncController | undefined;
+
+  private readonly mutex = new SyncMutex();
+  private readonly codec: BlobCodec = new PlaintextCodec();
   private status: SyncStatus = 'not_configured';
   private conflictCount = 0;
-  private syncInFlight = false;
-  /** Serializes sync runs so manual Sync Now waits instead of no-oping. */
-  private syncTail: Promise<unknown> = Promise.resolve();
-  private statusBar: SyncStatusBar | undefined;
-  private readonly disposables: vscode.Disposable[] = [];
+  private statusBar?: SyncStatusBar;
+  private provider?: SyncProviderV2;
+  private debounceTimer?: NodeJS.Timeout;
+  private periodicTimer?: NodeJS.Timeout;
+  private disposables: vscode.Disposable[] = [];
 
   private constructor(
     private readonly context: vscode.ExtensionContext,
-    private readonly outputChannel: vscode.OutputChannel,
+    private readonly output: vscode.OutputChannel,
   ) {}
 
-  static getInstance(context?: vscode.ExtensionContext, outputChannel?: vscode.OutputChannel): SyncController {
+  static getInstance(context?: vscode.ExtensionContext, output?: vscode.OutputChannel): SyncController {
     if (!SyncController.instance) {
-      if (!context || !outputChannel) {
+      if (!context || !output) {
         throw new Error('SyncController not initialized');
       }
-      SyncController.instance = new SyncController(context, outputChannel);
+      SyncController.instance = new SyncController(context, output);
     }
     return SyncController.instance;
   }
 
   static resetInstanceForTests(): void {
-    SyncController.instance = undefined as unknown as SyncController;
+    SyncController.instance = undefined;
   }
 
   initialize(statusBar?: SyncStatusBar): void {
     this.statusBar = statusBar;
     bindSyncActivityLog(this.context);
-    VaultService.getInstance(this.context);
-    AccountService.getInstance(this.context);
-
     const config = this.getConfig();
     this.status = config.providerId ? (config.paused ? 'paused' : 'idle') : 'not_configured';
     this.updateStatusBar();
-    this.seedConnectionSnapshot();
-
-    if (config.providerId && !config.paused) {
-      void this.bootstrapVaultAndSync();
-    }
 
     this.disposables.push(
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('postgresExplorer.connections')) {
-          if (this.recordConnectionConfigChanges()) {
-            this.scheduleInstantSync();
-          }
+          recordSyncActivity({ kind: 'connection', action: 'update', itemId: 'connections', name: 'Connections' });
+          this.schedulePush();
         }
       }),
-      vscode.workspace.onDidSaveNotebookDocument((doc) => {
-        this.recordOpenNotebookActivity(doc, 'update');
-        this.schedulePush();
-      }),
-      vscode.workspace.onDidChangeNotebookDocument(() => this.schedulePush()),
+      vscode.workspace.onDidSaveNotebookDocument(() => this.scheduleInstantSync()),
     );
 
-    try {
-      const notebookPattern = new vscode.RelativePattern(this.context.globalStorageUri, '**/*.pgsql');
-      const notebookWatcher = vscode.workspace.createFileSystemWatcher(notebookPattern);
-      notebookWatcher.onDidCreate((uri) => {
-        void this.recordNotebookFileActivity(uri, 'create').then(() => {
-          this.scheduleInstantSync();
-        });
-      });
-      notebookWatcher.onDidChange((uri) => {
-        void this.recordNotebookFileActivity(uri, 'update');
-        this.schedulePush();
-      });
-      notebookWatcher.onDidDelete((uri) => {
-        this.recordNotebookFileDelete(uri);
-        this.scheduleInstantSync();
-      });
-      this.disposables.push(notebookWatcher);
-    } catch {
-      /* watcher unavailable — manual sync still works */
+    if (config.providerId && !config.paused && this.isAutoSyncEnabled()) {
+      this.startPeriodicPull();
+      void this.runSync().catch(() => undefined);
     }
-
-    if (
-      this.isAutoSyncEnabled() &&
-      config.providerId &&
-      !config.paused &&
-      isProFeatureEnabled(ProFeature.CloudSync)
-    ) {
-      const intervalMin = vscode.workspace
-        .getConfiguration()
-        .get<number>('postgresExplorer.sync.pullIntervalMinutes', 5);
-      const intervalMs = Math.max(1, intervalMin) * 60 * 1000;
-      this.periodicTimer = setInterval(() => void this.runSync(), intervalMs);
-    }
-  }
-
-  /** Restore cached vault key after restart, then run an initial pull/push. */
-  private async bootstrapVaultAndSync(): Promise<void> {
-    const config = this.getConfig();
-    const vault = VaultService.getInstance();
-    const account = AccountService.getInstance();
-
-    if (!vault.isUnlocked()) {
-      const loaded = await vault.tryLoadCachedKey();
-      if (!loaded && config.providerId === 'cloud') {
-        const token = await account.getAccessToken() ?? await account.refreshAccessToken();
-        if (token) {
-          const loadedAfterToken = await vault.tryLoadCachedKey();
-          if (loadedAfterToken) {
-            this.status = config.paused ? 'paused' : 'idle';
-            this.updateStatusBar();
-          }
-        }
-      }
-      if (!vault.isUnlocked()) {
-        this.status = 'locked';
-        this.updateStatusBar();
-        return;
-      }
-    }
-    if (!this.isAutoSyncEnabled() || !isProFeatureEnabled(ProFeature.CloudSync)) {
-      return;
-    }
-    setTimeout(() => void this.runSync(), 2000);
   }
 
   setStatusBar(statusBar: SyncStatusBar): void {
@@ -192,359 +130,65 @@ export class SyncController implements vscode.Disposable {
     this.updateStatusBar();
   }
 
+  // ── Config / cursor ─────────────────────────────────────────────────────────
+
+  getConfig(): SyncConfig {
+    return { ...DEFAULT_CONFIG, ...this.context.globalState.get<SyncConfig>(SYNC_CONFIG_KEY, {} as SyncConfig) };
+  }
+
+  async saveConfig(config: SyncConfig): Promise<void> {
+    await this.context.globalState.update(SYNC_CONFIG_KEY, config);
+    this.provider = undefined;
+    this.status = config.providerId ? (config.paused ? 'paused' : 'idle') : 'not_configured';
+    if (config.providerId && !config.paused && this.isAutoSyncEnabled()) {
+      this.startPeriodicPull();
+    } else {
+      this.stopPeriodicPull();
+    }
+    this.updateStatusBar();
+  }
+
+  private cursorKey(config: SyncConfig): string {
+    return `${config.providerId}:${config.spaceId ?? 'personal'}`;
+  }
+
+  private getCursor(config: SyncConfig): number {
+    const all = this.context.globalState.get<Record<string, number>>(SYNC_CURSOR_KEY, {});
+    return all[this.cursorKey(config)] ?? 0;
+  }
+
+  private async setCursor(config: SyncConfig, cursor: number): Promise<void> {
+    const all = { ...this.context.globalState.get<Record<string, number>>(SYNC_CURSOR_KEY, {}) };
+    all[this.cursorKey(config)] = cursor;
+    await this.context.globalState.update(SYNC_CURSOR_KEY, all);
+  }
+
+  createProvider(providerId: SyncProviderId, spaceId?: string): SyncProviderV2 {
+    switch (providerId) {
+      case 'cloud':
+        return new CloudSyncProvider(this.context, spaceId);
+      case 'postgres':
+        return new PostgresSyncProvider(this.context);
+      default:
+        throw new Error(`Unknown sync provider: ${providerId}`);
+    }
+  }
+
+  private getProvider(config: SyncConfig): SyncProviderV2 {
+    if (!this.provider) {
+      this.provider = this.createProvider(config.providerId!, config.spaceId);
+    }
+    return this.provider;
+  }
+
+  // ── Status ──────────────────────────────────────────────────────────────────
+
   getStatus(): SyncStatus {
     return this.status;
   }
 
   getConflictCount(): number {
     return this.conflictCount;
-  }
-
-  getConfig(): SyncConfig {
-    return this.context.globalState.get<SyncConfig>(SYNC_CONFIG_KEY, {
-      syncConnections: true,
-      syncQueries: true,
-      syncNotebooks: true,
-      syncPasswords: false,
-      paused: false,
-    });
-  }
-
-  async saveConfig(config: SyncConfig): Promise<void> {
-    await this.context.globalState.update(SYNC_CONFIG_KEY, config);
-    this.status = config.paused ? 'paused' : 'idle';
-    this.updateStatusBar();
-  }
-
-  private isAutoSyncEnabled(): boolean {
-    return vscode.workspace.getConfiguration().get<boolean>('postgresExplorer.sync.auto', true);
-  }
-
-  private getBaseManifest(): SyncItemMeta[] {
-    return this.context.globalState.get<SyncItemMeta[]>(SYNC_BASE_MANIFEST_KEY, []);
-  }
-
-  private async setBaseManifest(manifest: SyncItemMeta[]): Promise<void> {
-    await this.context.globalState.update(SYNC_BASE_MANIFEST_KEY, manifest);
-  }
-
-  createProvider(providerId: SyncProviderId): SyncProvider {
-    switch (providerId) {
-      case 'gist':
-        return new GistSyncProvider(this.context);
-      case 'onedrive':
-        return new OneDriveSyncProvider(this.context);
-      case 'gdrive':
-        return new GoogleDriveSyncProvider(this.context);
-      case 'cloud':
-        return new CloudSyncProvider(this.context);
-      case 'postgres':
-        return new PostgresSyncProvider(this.context);
-      default:
-        throw new Error(`Unknown provider: ${providerId}`);
-    }
-  }
-
-  schedulePush(): void {
-    const config = this.getConfig();
-    if (
-      !config.providerId ||
-      config.paused ||
-      !this.isAutoSyncEnabled() ||
-      !isProFeatureEnabled(ProFeature.CloudSync)
-    ) {
-      return;
-    }
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
-    }
-    this.debounceTimer = setTimeout(() => void this.runSync(), SYNC_DEBOUNCE_MS);
-  }
-
-  /** Immediate sync for structural changes (create / rename / delete). */
-  scheduleInstantSync(): void {
-    const config = this.getConfig();
-    if (!config.providerId || config.paused) {
-      return;
-    }
-    if (!isProFeatureEnabled(ProFeature.CloudBackup)) {
-      return;
-    }
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = undefined;
-    }
-    void this.runSync();
-  }
-
-  async runSync(options: SyncRunOptions = {}): Promise<SyncRunResult | SyncPreviewResult | undefined> {
-    const config = this.getConfig();
-    if (!config.providerId || config.paused) {
-      return undefined;
-    }
-
-    if (!isSyncProviderAllowed(config.providerId)) {
-      this.status = 'error';
-      this.updateStatusBar();
-      const tier = syncProviderMinTier(config.providerId);
-      void vscode.window.showWarningMessage(
-        `Your current plan does not include the "${config.providerId}" sync backend (requires NexQL ${TIER_DISPLAY[tier]}). `
-        + `NexQL Cloud data is kept for ${CLOUD_INACTIVE_RETENTION_DAYS} days while inactive, then deleted. Renew or switch to a free Postgres backup.`,
-        'View Plans',
-      ).then((c) => {
-        if (c === 'View Plans') {
-          void vscode.env.openExternal(vscode.Uri.parse('https://nexql.astrx.dev/#pricing'));
-        }
-      });
-      return undefined;
-    }
-
-    const vault = VaultService.getInstance();
-    if (!vault.isUnlocked()) {
-      const loaded = await vault.tryLoadCachedKey();
-      if (!loaded) {
-        this.status = 'locked';
-        this.updateStatusBar();
-        return undefined;
-      }
-    }
-
-    const run = () => this.runSyncLocked(options);
-    const outcome = this.syncTail.then(run, run);
-    this.syncTail = outcome.then(() => undefined, () => undefined);
-    return outcome as Promise<SyncRunResult | SyncPreviewResult | undefined>;
-  }
-
-  private async runSyncLocked(options: SyncRunOptions = {}): Promise<SyncRunResult | SyncPreviewResult | undefined> {
-    const config = this.getConfig();
-    const providerId = config.providerId;
-    if (!providerId) {
-      return undefined;
-    }
-    const direction = options.direction ?? 'both';
-    const dryRun = !!options.dryRun;
-    const vault = VaultService.getInstance();
-
-    this.syncInFlight = true;
-    this.status = 'syncing';
-    this.updateStatusBar();
-    const start = Date.now();
-    const deviceId = getOrCreateDeviceId(this.context);
-    const provider = this.createProvider(providerId);
-    const index = new SyncIndex(this.context);
-
-    try {
-      if (!isProFeatureEnabled(ProFeature.CloudSync)) {
-        const bound = await this.ensureDeviceBinding(provider, deviceId);
-        if (!bound) {
-          this.status = 'error';
-          this.updateStatusBar();
-          return undefined;
-        }
-      }
-
-      const baseManifest = this.getBaseManifest();
-      const excluded = new Set([
-        ...(config.excludedIds ?? []),
-        ...(options.transientExcludedIds ?? []),
-      ]);
-      const localItems = (await this.collectLocalItems(config, deviceId, index))
-        .filter((i) => !excluded.has(i.meta.id));
-      this.appendLocalTombstones(baseManifest, localItems, config, deviceId, index, excluded);
-
-      const remoteSnapshot = await provider.pull();
-      const remoteItems = remoteSnapshot.manifest
-        .filter((meta) => !excluded.has(meta.id))
-        .map((meta) => ({
-          meta,
-          getBlob: () => remoteSnapshot.getBlob(meta.id),
-        }));
-
-      const merge = await mergeSyncState(
-        baseManifest,
-        localItems,
-        remoteItems,
-        deviceId,
-        (blob) => vault.decrypt(blob),
-      );
-
-      let encryptedPush = attachEncryptedBlobs(merge.toPush, localItems, (p) => vault.encrypt(p));
-      let newBaseManifest = merge.newBaseManifest;
-      let toApply = merge.toApply;
-
-      if (excluded.size > 0) {
-        encryptedPush = encryptedPush.filter((i) => !excluded.has(i.meta.id));
-        toApply = merge.toApply.filter((i) => !excluded.has(i.meta.id));
-      }
-
-      const previewLists = buildPreviewFromMerge(
-        baseManifest,
-        localItems,
-        encryptedPush,
-        toApply,
-        merge.conflicts,
-        (id, kind) => this.resolveItemName(id, kind, index),
-      );
-
-      if (dryRun) {
-        const summary = buildSyncChangeSummary(baseManifest, localItems, encryptedPush, toApply);
-        const preview: SyncPreviewResult = {
-          pushed: encryptedPush.length,
-          pulled: toApply.length,
-          conflicts: merge.conflicts.length,
-          skipped: merge.skipped.length,
-          durationMs: Date.now() - start,
-          provider: providerId,
-          summary,
-          outgoing: previewLists.outgoing,
-          incoming: previewLists.incoming,
-          conflictItems: previewLists.conflictItems,
-        };
-        await this.context.globalState.update(SYNC_PREVIEW_CACHE_KEY, preview);
-        this.status = this.resolveIdleStatus(merge.conflicts.length);
-        this.updateStatusBar();
-        return preview;
-      }
-
-      let skipped = merge.skipped.length;
-      const doPush = direction === 'both' || direction === 'push';
-      const doPull = direction === 'both' || direction === 'pull';
-
-      if (doPush) {
-        const pushOptions = { manifest: newBaseManifest };
-        try {
-          await provider.push(encryptedPush, pushOptions);
-        } catch (e) {
-          if (e instanceof OversizedItemError) {
-            skipped += e.itemIds.length;
-            for (const id of e.itemIds) {
-              vscode.window.showWarningMessage(`Sync skipped oversized notebook: ${id}`);
-            }
-            const oversized = new Set(e.itemIds);
-            encryptedPush = encryptedPush.filter((i) => !oversized.has(i.meta.id));
-            const baseById = new Map(baseManifest.map((m) => [m.id, m]));
-            newBaseManifest = newBaseManifest
-              .map((m) => (oversized.has(m.id) ? baseById.get(m.id) : m))
-              .filter((m): m is SyncItemMeta => m !== undefined);
-            await provider.push(encryptedPush, { manifest: newBaseManifest });
-          } else {
-            throw e;
-          }
-        }
-      }
-
-      if (doPull) {
-        await this.applyRemoteItems(toApply, config, index);
-        this.logInboundApplied(toApply, index);
-      }
-
-      const syncedKeys = new Set<string>();
-      if (doPush) {
-        for (const item of encryptedPush) {
-          syncedKeys.add(metaKey(item.meta));
-        }
-      }
-      if (doPull) {
-        for (const item of toApply) {
-          syncedKeys.add(metaKey(item.meta));
-        }
-      }
-
-      const conflictIds = new Set(merge.conflicts.map((c) => c.id));
-      const ackKeys = this.buildAcknowledgeKeys(syncedKeys, localItems, newBaseManifest, conflictIds);
-      SyncActivityLog.getInstance(this.context).acknowledge(ackKeys);
-
-      const updatedBase = mergeBaseManifestPartial(baseManifest, newBaseManifest, syncedKeys);
-      await this.setBaseManifest(updatedBase);
-      index.markSynced(updatedBase);
-      this.purgeStaleNotebookIndex(index, updatedBase);
-      await index.flush();
-
-      await this.context.globalState.update(SYNC_LAST_CONFLICTS_KEY, merge.conflicts);
-      this.conflictCount = merge.conflicts.length + this.countConflictCopies();
-      this.status = this.conflictCount > 0 ? 'conflict' : 'synced';
-      this.backoffMs = SYNC_BACKOFF_INITIAL_MS;
-
-      await this.context.globalState.update(SYNC_LAST_SYNC_AT_KEY, Date.now());
-      await this.context.globalState.update(SYNC_LAST_ERROR_KEY, undefined);
-
-      if (merge.conflicts.length > 0) {
-        const choice = await vscode.window.showWarningMessage(
-          `${merge.conflicts.length} sync conflict(s) — review and resolve.`,
-          'Resolve…',
-        );
-        if (choice === 'Resolve…') {
-          void vscode.commands.executeCommand('postgres-explorer.settingsHub', { section: 'sync', tab: 'conflicts' });
-        }
-      }
-
-      const summary = buildSyncChangeSummary(
-        baseManifest,
-        localItems,
-        doPush ? encryptedPush : [],
-        doPull ? toApply : [],
-      );
-
-      const result: SyncRunResult = {
-        pushed: doPush ? encryptedPush.length : 0,
-        pulled: doPull ? toApply.length : 0,
-        conflicts: merge.conflicts.length,
-        skipped,
-        durationMs: Date.now() - start,
-        provider: providerId,
-        summary,
-      };
-
-      this.outputChannel.appendLine(
-        `sync: dir=${direction} pushed=${result.pushed} pulled=${result.pulled} conflicts=${result.conflicts} skipped=${result.skipped} durationMs=${result.durationMs} provider=${result.provider} ` +
-        `push(+/~/-)=${formatCountsLine(summary.pushed)} pull(+/~/-)=${formatCountsLine(summary.pulled)}`,
-      );
-
-      TelemetryService.getInstance().trackEvent('sync_run', {
-        pushed: result.pushed,
-        pulled: result.pulled,
-        conflicts: result.conflicts,
-        skipped: result.skipped,
-        durationMs: result.durationMs,
-        provider: result.provider,
-        direction,
-      });
-
-      this.updateStatusBar();
-      return result;
-    } catch (e) {
-      const isNetwork = e instanceof Error && /timeout|ECONNREFUSED|ENOTFOUND|network/i.test(e.message);
-      this.status = isNetwork ? 'offline' : 'error';
-      this.backoffMs = Math.min(this.backoffMs * 2, SYNC_BACKOFF_MAX_MS);
-      await this.context.globalState.update(
-        SYNC_LAST_ERROR_KEY,
-        e instanceof Error ? e.message : String(e),
-      );
-      this.updateStatusBar();
-
-      TelemetryService.getInstance().trackEvent('sync_failure', {
-        failureClass: isNetwork ? 'network' : 'other',
-        provider: providerId,
-      });
-
-      this.outputChannel.appendLine(`sync: failed ${e instanceof Error ? e.message : String(e)}`);
-      setTimeout(() => void this.runSync(), this.backoffMs);
-      return undefined;
-    } finally {
-      this.syncInFlight = false;
-    }
-  }
-
-  async previewSync(transientExcludedIds?: string[]): Promise<SyncPreviewResult | undefined> {
-    return this.runSync({ dryRun: true, transientExcludedIds }) as Promise<SyncPreviewResult | undefined>;
-  }
-
-  async pullOnly(): Promise<SyncRunResult | undefined> {
-    return this.runSync({ direction: 'pull' });
-  }
-
-  async pushOnly(): Promise<SyncRunResult | undefined> {
-    return this.runSync({ direction: 'push' });
   }
 
   getLastSyncAt(): number | undefined {
@@ -555,741 +199,570 @@ export class SyncController implements vscode.Disposable {
     return this.context.globalState.get<string>(SYNC_LAST_ERROR_KEY);
   }
 
-  listInboundHistory(): InboundEntry[] {
-    return SyncActivityLog.getInstance(this.context).listInbound();
-  }
-
-  async getCloudQuota(): Promise<CloudQuotaView | undefined> {
-    const config = this.getConfig();
-    if (config.providerId !== 'cloud') {
-      return undefined;
-    }
-    const provider = this.createProvider('cloud') as CloudSyncProvider;
-    return provider.getQuota();
-  }
-
-  async listCloudDevices(): Promise<SyncDeviceView[]> {
-    const config = this.getConfig();
-    if (config.providerId !== 'cloud') {
-      return [];
-    }
-    const provider = this.createProvider('cloud') as CloudSyncProvider;
-    return provider.listDevices();
-  }
-
-  async revokeCloudDevice(deviceId: string): Promise<boolean> {
-    const config = this.getConfig();
-    if (config.providerId !== 'cloud') {
-      return false;
-    }
-    const provider = this.createProvider('cloud') as CloudSyncProvider;
-    return provider.revokeDevice(deviceId);
-  }
-
-  async replaceLocalWithCloud(): Promise<boolean> {
-    const config = this.getConfig();
-    if (!config.providerId) {
-      return false;
-    }
-    const vault = VaultService.getInstance();
-    if (!vault.isUnlocked() && !(await vault.tryLoadCachedKey())) {
-      return false;
-    }
-    const provider = this.createProvider(config.providerId);
-    const index = new SyncIndex(this.context);
-    const remoteSnapshot = await provider.pull();
-    const toApply: Array<{ meta: SyncItemMeta; plaintext: Buffer }> = [];
-    for (const meta of remoteSnapshot.manifest.filter((m) => !m.deleted)) {
-      const blob = await remoteSnapshot.getBlob(meta.id);
-      if (!blob) {
-        continue;
-      }
-      toApply.push({ meta, plaintext: vault.decrypt(blob) });
-    }
-    await this.applyRemoteItems(toApply, config, index);
-    await this.setBaseManifest(remoteSnapshot.manifest);
-    index.markSynced(remoteSnapshot.manifest);
-    await index.flush();
-    await this.context.globalState.update(SYNC_LAST_SYNC_AT_KEY, Date.now());
-    this.status = 'synced';
+  private setStatus(status: SyncStatus): void {
+    this.status = status;
     this.updateStatusBar();
-    return true;
-  }
-
-  async replaceCloudWithLocal(): Promise<boolean> {
-    const config = this.getConfig();
-    if (!config.providerId) {
-      return false;
-    }
-    const vault = VaultService.getInstance();
-    if (!vault.isUnlocked() && !(await vault.tryLoadCachedKey())) {
-      return false;
-    }
-    const deviceId = getOrCreateDeviceId(this.context);
-    const index = new SyncIndex(this.context);
-    const localItems = await this.collectLocalItems(config, deviceId, index);
-    const pushItems = localItems.map((i) => ({
-      meta: i.meta,
-      blob: vault.encrypt(i.plaintext),
-    }));
-    const manifest = localItems.map((i) => i.meta);
-    const provider = this.createProvider(config.providerId);
-    await provider.push(pushItems, { manifest });
-    await this.setBaseManifest(manifest);
-    index.markSynced(manifest);
-    await index.flush();
-    await this.context.globalState.update(SYNC_LAST_SYNC_AT_KEY, Date.now());
-    this.status = 'synced';
-    this.updateStatusBar();
-    return true;
-  }
-
-  async rebuildSyncIndex(): Promise<number> {
-    const config = this.getConfig();
-    const deviceId = getOrCreateDeviceId(this.context);
-    const index = new SyncIndex(this.context);
-    for (const id of Object.keys(index.getAll())) {
-      index.remove(id);
-    }
-    const items = await this.collectLocalItems(config, deviceId, index);
-    for (const item of items) {
-      index.update(item.meta.id, {
-        kind: item.meta.kind,
-        name: this.resolveItemName(item.meta.id, item.meta.kind, index),
-        modifiedAt: item.meta.updatedAt,
-        syncedRevision: item.meta.revision,
-        lastObservedHash: item.meta.contentHash,
-      });
-    }
-    await index.flush();
-    return items.length;
-  }
-
-  async runDiagnostics(): Promise<void> {
-    const config = this.getConfig();
-    const lines: string[] = ['PgStudio Sync Diagnostics', '========================'];
-    lines.push(`Status: ${this.status}`);
-    lines.push(`Provider: ${config.providerId ?? 'none'}`);
-    lines.push(`Vault unlocked: ${VaultService.getInstance().isUnlocked()}`);
-    lines.push(`Device id: ${getOrCreateDeviceId(this.context)}`);
-    lines.push(`Device name: ${getDeviceName(this.context) ?? '(unset)'}`);
-    lines.push(`Base manifest items: ${this.getBaseManifest().length}`);
-    lines.push(`Index items: ${Object.keys(new SyncIndex(this.context).getAll()).length}`);
-    lines.push(`Conflicts (last run): ${this.context.globalState.get(SYNC_LAST_CONFLICTS_KEY, []).length}`);
-    lines.push(`Conflict copies: ${this.countConflictCopies()}`);
-    lines.push(`Pending outbound: ${this.listPendingActivities().length}`);
-    lines.push(`Inbound history: ${this.listInboundHistory().length}`);
-    if (config.providerId) {
-      try {
-        const test = await this.createProvider(config.providerId).testConnection();
-        lines.push(`Provider reachable: ${test.ok}${test.error ? ` (${test.error})` : ''}`);
-      } catch (e) {
-        lines.push(`Provider reachable: false (${e instanceof Error ? e.message : String(e)})`);
-      }
-    }
-    if (config.providerId === 'cloud') {
-      const quota = await this.getCloudQuota();
-      if (quota) {
-        lines.push(`Cloud quota: ${quota.bytesUsed}/${quota.bytesLimit} bytes, ${quota.itemCount} items`);
-      }
-    }
-    const lastErr = this.getLastError();
-    if (lastErr) {
-      lines.push(`Last error: ${lastErr}`);
-    }
-    this.outputChannel.appendLine(lines.join('\n'));
-    this.outputChannel.show(true);
-  }
-
-  async getItemPlaintext(id: string): Promise<string | undefined> {
-    const config = this.getConfig();
-    const deviceId = getOrCreateDeviceId(this.context);
-    const index = new SyncIndex(this.context);
-    const entry = index.get(id);
-    if (!entry) {
-      return undefined;
-    }
-    try {
-      if (entry.kind === 'query') {
-        const q = SavedQueriesService.getInstance().getQueries().find((x) => x.id === id);
-        return q ? JSON.stringify(q, null, 2) : undefined;
-      }
-      if (entry.kind === 'notebook') {
-        const items = await new NotebookSyncService(this.context, index).collectLocalNotebooks(deviceId);
-        const match = items.find((i) => i.meta.id === id);
-        return match ? match.plaintext.toString() : undefined;
-      }
-    } catch {
-      return undefined;
-    }
-    return undefined;
-  }
-
-  schedulePushAfterConflict(): void {
-    this.schedulePush();
-  }
-
-  private resolveItemName(id: string, kind: SyncItemMeta['kind'], index: SyncIndex): string | undefined {
-    const entry = index.get(id);
-    if (entry?.name) {
-      return entry.name;
-    }
-    if (kind === 'query') {
-      try {
-        const q = SavedQueriesService.getInstance().getQueries().find((x) => x.id === id);
-        return q?.title;
-      } catch {
-        return undefined;
-      }
-    }
-    if (kind === 'connection') {
-      const connections = vscode.workspace.getConfiguration().get<any[]>('postgresExplorer.connections') || [];
-      const conn = connections.find((c) => String(c.id) === id);
-      return conn?.name ?? `${conn?.host}:${conn?.port}`;
-    }
-    return undefined;
-  }
-
-  private logInboundApplied(
-    items: Array<{ meta: SyncItemMeta; plaintext: Buffer }>,
-    index: SyncIndex,
-  ): void {
-    const log = SyncActivityLog.getInstance(this.context);
-    for (const { meta } of items) {
-      if (meta.deleted) {
-        continue;
-      }
-      log.recordInbound({
-        itemId: meta.id,
-        kind: meta.kind,
-        name: this.resolveItemName(meta.id, meta.kind, index),
-        deviceId: meta.deviceId,
-        deviceName: undefined,
-      });
-    }
-  }
-
-  private countConflictCopies(): number {
-    return this.listSyncedItems().filter((i) => /-conflict-\d+$/.test(i.id)).length;
-  }
-
-  /**
-   * Free-tier single-device enforcement. First device claims the backup;
-   * a different device must explicitly take it over (metered to 1/week so
-   * rebinding cannot be used as manual multi-device sync).
-   */
-  private async ensureDeviceBinding(provider: SyncProvider, deviceId: string): Promise<boolean> {
-    if (!provider.getBoundDeviceId || !provider.setBoundDeviceId) {
-      return true;
-    }
-    const bound = await provider.getBoundDeviceId();
-    if (!bound) {
-      await provider.setBoundDeviceId(deviceId);
-      return true;
-    }
-    if (bound === deviceId) {
-      return true;
-    }
-    const choice = await vscode.window.showWarningMessage(
-      'This backup belongs to another device. The free plan keeps backups bound to a single device — upgrade for multi-device sync, or claim the backup on this device (the other device will stop syncing).',
-      'Claim Backup Here',
-      'View Plans',
-    );
-    if (choice === 'Claim Backup Here') {
-      if (!(await requirePro(ProFeature.SyncDeviceRebind))) {
-        return false;
-      }
-      await provider.setBoundDeviceId(deviceId);
-      return true;
-    }
-    if (choice === 'View Plans') {
-      void vscode.env.openExternal(vscode.Uri.parse('https://nexql.astrx.dev/#pricing'));
-    }
-    return false;
-  }
-
-  private async collectLocalItems(
-    config: SyncConfig,
-    deviceId: string,
-    index: SyncIndex,
-  ): Promise<Array<{ meta: SyncItemMeta; plaintext: Buffer }>> {
-    const items: Array<{ meta: SyncItemMeta; plaintext: Buffer }> = [];
-
-    if (config.syncConnections) {
-      items.push(...new ConnectionSyncService(this.context, index).collectLocalConnections(deviceId));
-    }
-
-    if (config.syncQueries) {
-      const queries = SavedQueriesService.getInstance().getAllQueriesForSync();
-      for (const q of queries) {
-        const plaintext = Buffer.from(JSON.stringify(q));
-        items.push({
-          meta: {
-            id: q.id,
-            kind: 'query',
-            contentHash: contentHash(plaintext),
-            revision: q.revision ?? 1,
-            updatedAt: q.updatedAt ?? q.createdAt,
-            deviceId,
-            deleted: !!q.deleted,
-          },
-          plaintext,
-        });
-      }
-    }
-
-    if (config.syncNotebooks) {
-      items.push(...await new NotebookSyncService(this.context, index).collectLocalNotebooks(deviceId));
-    }
-
-    return items;
-  }
-
-  /**
-   * Items present in the base manifest but missing from local collection were
-   * deleted on this device — synthesize tombstones so the deletion propagates.
-   * Queries manage their own tombstones; notebooks need on-disk evidence so a
-   * notebook that is merely outside the sync folder is not deleted remotely.
-   */
-  private appendLocalTombstones(
-    baseManifest: SyncItemMeta[],
-    localItems: Array<{ meta: SyncItemMeta; plaintext: Buffer }>,
-    config: SyncConfig,
-    deviceId: string,
-    index: SyncIndex,
-    excluded: ReadonlySet<string> = new Set(),
-  ): void {
-    const localIds = new Set(localItems.map((i) => `${i.meta.kind}:${i.meta.id}`));
-    const nbSvc = new NotebookSyncService(this.context, index);
-
-    for (const base of baseManifest) {
-      if (base.deleted || excluded.has(base.id) || localIds.has(`${base.kind}:${base.id}`)) {
-        continue;
-      }
-      if (base.kind === 'connection' && config.syncConnections) {
-        localItems.push({ meta: tombstoneMeta(base, deviceId), plaintext: Buffer.from('{}') });
-      } else if (base.kind === 'notebook' && config.syncNotebooks && !nbSvc.isPresentOnDisk(base.id)) {
-        localItems.push({ meta: tombstoneMeta(base, deviceId), plaintext: Buffer.from('{}') });
-      }
-    }
-  }
-
-  private async applyRemoteItems(
-    items: Array<{ meta: SyncItemMeta; plaintext: Buffer }>,
-    config: SyncConfig,
-    index: SyncIndex,
-  ): Promise<void> {
-    const connSvc = new ConnectionSyncService(this.context, index);
-    const nbSvc = new NotebookSyncService(this.context, index);
-    const sqSvc = SavedQueriesService.getInstance();
-
-    for (const { meta, plaintext } of items) {
-      if (meta.deleted) {
-        switch (meta.kind) {
-          case 'query':
-            await sqSvc.deleteQuery(meta.id);
-            break;
-          case 'connection':
-            if (config.syncConnections) {
-              await connSvc.removeConnection(meta);
-            }
-            break;
-          case 'notebook':
-            if (config.syncNotebooks) {
-              await nbSvc.deleteNotebook(meta);
-            }
-            break;
-        }
-        continue;
-      }
-
-      const data = JSON.parse(plaintext.toString());
-
-      switch (meta.kind) {
-        case 'connection':
-          if (config.syncConnections) {
-            await connSvc.applyConnection(data, meta);
-          }
-          break;
-        case 'query': {
-          if (config.syncQueries) {
-            // Conflict copies arrive under a derived id; keep payload id in step.
-            const query = data.id === meta.id
-              ? data
-              : { ...data, id: meta.id, title: `${data.title ?? meta.id} (conflict from ${meta.deviceId})` };
-            await sqSvc.saveQuery({ ...query, revision: meta.revision, updatedAt: meta.updatedAt });
-          }
-          break;
-        }
-
-        case 'notebook':
-          if (config.syncNotebooks) {
-            await nbSvc.applyNotebook(data, meta);
-          }
-          break;
-        case 'secrets':
-          if (config.syncPasswords) {
-            const { SecretStorageService } = await import('../../services/SecretStorageService');
-            const secrets = SecretStorageService.getInstance();
-            for (const [connId, password] of Object.entries(data.passwords ?? {})) {
-              await secrets.setPassword(connId, String(password));
-            }
-          }
-          break;
-      }
-    }
   }
 
   private updateStatusBar(): void {
-    const configured = !!this.getConfig().providerId;
-    this.statusBar?.updateSyncStatus(this.status, this.conflictCount, configured, {
+    this.statusBar?.updateSyncStatus(this.status, this.conflictCount, !!this.getConfig().providerId, {
       lastSyncAt: this.getLastSyncAt(),
       pendingCount: this.listPendingActivities().length,
     });
   }
 
-  /** Restore a non-in-progress status after preview or when sync cannot start. */
-  private resolveIdleStatus(newConflictsInRun: number): SyncStatus {
+  private isAutoSyncEnabled(): boolean {
+    return vscode.workspace.getConfiguration().get<boolean>('postgresExplorer.sync.auto', true);
+  }
+
+  // ── Scheduling ────────────────────────────────────────────────────────────────
+
+  schedulePush(): void {
     const config = this.getConfig();
-    if (config.paused) {
-      return 'paused';
+    if (!config.providerId || config.paused || !this.isAutoSyncEnabled()) {
+      return;
     }
-    if (newConflictsInRun > 0 || this.conflictCount > 0) {
-      return 'conflict';
+    if (!isProFeatureEnabled(ProFeature.CloudSync)) {
+      return;
     }
-    return this.getLastSyncAt() ? 'synced' : 'idle';
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
+    this.debounceTimer = setTimeout(() => void this.runSync().catch(() => undefined), SYNC_DEBOUNCE_MS);
   }
 
-  /**
-   * Clear pending activities for items reconciled this run — including those
-   * already up-to-date (no push/pull transfer needed).
-   */
-  private buildAcknowledgeKeys(
-    transferredKeys: Set<string>,
-    localItems: Array<{ meta: SyncItemMeta }>,
-    newBaseManifest: SyncItemMeta[],
-    conflictIds: ReadonlySet<string>,
-  ): Set<string> {
-    const keys = new Set(transferredKeys);
-    const index = new SyncIndex(this.context);
+  scheduleInstantSync(): void {
+    const config = this.getConfig();
+    if (!config.providerId || config.paused || !this.isAutoSyncEnabled()) {
+      return;
+    }
+    if (!isProFeatureEnabled(ProFeature.CloudBackup)) {
+      return;
+    }
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
+    this.debounceTimer = setTimeout(() => void this.runSync().catch(() => undefined), 750);
+  }
 
-    for (const key of transferredKeys) {
-      const parts = key.split(':');
-      if (parts.length >= 2) {
-        const kind = parts[0];
-        const id = parts.slice(1).join(':');
-        const entry = index.get(id);
-        if (entry?.filePath) {
-          keys.add(`${kind}:${entry.filePath}`);
-        }
+  private startPeriodicPull(): void {
+    this.stopPeriodicPull();
+    this.periodicTimer = setInterval(() => {
+      if (isProFeatureEnabled(ProFeature.CloudSync)) {
+        void this.runSync({ direction: 'pull' }).catch(() => undefined);
       }
+    }, SYNC_PERIODIC_MS);
+  }
+
+  private stopPeriodicPull(): void {
+    if (this.periodicTimer) {
+      clearInterval(this.periodicTimer);
+      this.periodicTimer = undefined;
     }
-
-    const activeBase = new Set(
-      newBaseManifest.filter((m) => !m.deleted).map((m) => metaKey(m)),
-    );
-    for (const { meta } of localItems) {
-      if (meta.deleted || conflictIds.has(meta.id)) {
-        continue;
-      }
-      const key = metaKey(meta);
-      if (activeBase.has(key)) {
-        keys.add(key);
-        const entry = index.get(meta.id);
-        if (entry?.filePath) {
-          keys.add(`${meta.kind}:${entry.filePath}`);
-        }
-      }
-    }
-    return keys;
   }
 
-  /**
-   * Items known to sync on this device: base manifest (synced) plus local
-   * index (not yet pushed). Names come from local sources only — the remote
-   * manifest is zero-knowledge.
-   */
-  listPendingActivities(): SyncActivityView[] {
-    return SyncActivityLog.getInstance(this.context).listPending();
-  }
+  // ── Sync run ──────────────────────────────────────────────────────────────────
 
-  private seedConnectionSnapshot(): void {
-    const connections = vscode.workspace.getConfiguration().get<Record<string, unknown>[]>(
-      'postgresExplorer.connections',
-      [],
-    );
-    this.connectionSnapshot = new Map(
-      connections.map((c) => [String(c.id), SyncController.connectionFingerprint(c)]),
-    );
-  }
-
-  private static connectionFingerprint(conn: Record<string, unknown>): string {
-    const copy = { ...conn };
-    delete copy.password;
-    return JSON.stringify(copy);
-  }
-
-  private static connectionNameFromFingerprint(fingerprint: string): string | undefined {
-    try {
-      const parsed = JSON.parse(fingerprint) as { name?: string };
-      return parsed.name;
-    } catch {
+  async runSync(options: SyncRunOptions = {}): Promise<SyncRunResult | SyncPreviewResult | undefined> {
+    const config = this.getConfig();
+    if (!config.providerId || config.paused) {
       return undefined;
     }
+    if (!isSyncProviderAllowed(config.providerId)) {
+      this.setStatus('error');
+      return undefined;
+    }
+    if (options.dryRun) {
+      return this.preview(config, options.transientExcludedIds);
+    }
+
+    const release = await this.mutex.acquire();
+    const started = Date.now();
+    try {
+      this.setStatus('syncing');
+      const result = await this.runLocked(config, options);
+      this.conflictCount = result.conflicts;
+      await this.context.globalState.update(SYNC_LAST_SYNC_AT_KEY, Date.now());
+      await this.context.globalState.update(SYNC_LAST_ERROR_KEY, undefined);
+      this.setStatus(result.conflicts > 0 ? 'conflict' : 'synced');
+      result.durationMs = Date.now() - started;
+      return result;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      await this.context.globalState.update(SYNC_LAST_ERROR_KEY, message);
+      this.output.appendLine(`[sync] run failed: ${message}`);
+      this.setStatus('error');
+      return undefined;
+    } finally {
+      release();
+    }
   }
 
-  private recordOpenNotebookActivity(
-    doc: vscode.NotebookDocument,
-    action: 'create' | 'update',
+  async pullOnly(): Promise<SyncRunResult | undefined> {
+    return this.runSync({ direction: 'pull' }) as Promise<SyncRunResult | undefined>;
+  }
+
+  async pushOnly(): Promise<SyncRunResult | undefined> {
+    return this.runSync({ direction: 'push' }) as Promise<SyncRunResult | undefined>;
+  }
+
+  async previewSync(transientExcludedIds?: string[]): Promise<SyncPreviewResult | undefined> {
+    return this.runSync({ dryRun: true, transientExcludedIds }) as Promise<SyncPreviewResult | undefined>;
+  }
+
+  /** The atomic heart: pull → apply → push (with one pull/re-push on conflict). */
+  private async runLocked(config: SyncConfig, options: SyncRunOptions): Promise<SyncRunResult> {
+    const provider = this.getProvider(config);
+    const index = new SyncIndex(this.context);
+    const excluded = new Set([...(config.excludedIds ?? []), ...(options.transientExcludedIds ?? [])]);
+    const direction = options.direction ?? 'both';
+    let cursor = this.getCursor(config);
+    let pulled = 0;
+    let pushed = 0;
+    let conflicts = 0;
+
+    // Phase 1 — pull + apply (atomic per item; cursor only advances after apply).
+    if (direction !== 'push') {
+      const delta = await provider.pullDelta(cursor);
+      pulled = await this.applyDelta(delta, config, index, excluded);
+      cursor = delta.cursor;
+      await this.setCursor(config, cursor);
+    }
+
+    // Phase 2 — push dirty + deletions.
+    if (direction !== 'pull') {
+      const ops = await this.buildOps(config, index, excluded);
+      if (ops.length) {
+        const result = await provider.pushBatch(ops);
+        this.recordAccepted(result.accepted, ops, index);
+        pushed = result.accepted.length;
+        cursor = result.cursor;
+        await this.setCursor(config, cursor);
+
+        if (result.rejected.length) {
+          // Concurrent writer — pull their changes, then re-push once (git-style).
+          const delta2 = await provider.pullDelta(cursor);
+          pulled += await this.applyDelta(delta2, config, index, excluded);
+          cursor = delta2.cursor;
+          await this.setCursor(config, cursor);
+
+          const ops2 = await this.buildOps(config, index, excluded);
+          if (ops2.length) {
+            const retry = await provider.pushBatch(ops2);
+            this.recordAccepted(retry.accepted, ops2, index);
+            pushed += retry.accepted.length;
+            cursor = retry.cursor;
+            await this.setCursor(config, cursor);
+            conflicts = retry.rejected.length;
+          }
+        }
+      }
+    }
+
+    await index.flush();
+    this.acknowledgeActivities(index);
+
+    return {
+      pushed,
+      pulled,
+      conflicts,
+      skipped: 0,
+      durationMs: 0,
+      provider: config.providerId!,
+      summary: emptySummary(),
+    };
+  }
+
+  private async preview(config: SyncConfig, transientExcludedIds?: string[]): Promise<SyncPreviewResult> {
+    const provider = this.getProvider(config);
+    const index = new SyncIndex(this.context);
+    const excluded = new Set([...(config.excludedIds ?? []), ...(transientExcludedIds ?? [])]);
+    const delta = await provider.pullDelta(this.getCursor(config));
+    const localItems = await this.collectLocalItems(config, excluded, index);
+    const localById = new Map(localItems.map((i) => [i.meta.id, i]));
+
+    const incoming: SyncPreviewItem[] = [
+      ...delta.upserts
+        .filter((u) => !excluded.has(u.meta.id))
+        .map((u) => ({
+          id: u.meta.id,
+          kind: u.meta.kind,
+          changeType: (localById.has(u.meta.id) ? 'update' : 'create') as 'update' | 'create',
+          deviceId: u.meta.deviceId,
+        })),
+      ...delta.deletes
+        .filter((id) => !excluded.has(id))
+        .map((id) => ({ id, kind: (index.get(id)?.kind ?? 'query'), changeType: 'delete' as const })),
+    ];
+
+    const ops = await this.buildOps(config, index, excluded);
+    const outgoing: SyncPreviewItem[] = ops.map((op) => ({
+      id: op.itemId,
+      kind: op.kind,
+      name: index.get(op.itemId)?.name,
+      changeType: op.op === 'delete' ? 'delete' : (index.baseVersion(op.itemId) ? 'update' : 'create'),
+    }));
+
+    return {
+      pushed: 0,
+      pulled: 0,
+      conflicts: 0,
+      skipped: 0,
+      durationMs: 0,
+      provider: config.providerId!,
+      summary: emptySummary(),
+      outgoing,
+      incoming,
+      conflictItems: [],
+    };
+  }
+
+  // ── Collect / build ops ────────────────────────────────────────────────────────
+
+  private async collectLocalItems(
+    config: SyncConfig,
+    excluded: ReadonlySet<string>,
+    index: SyncIndex,
+  ): Promise<LocalItem[]> {
+    const deviceId = getOrCreateDeviceId(this.context);
+    const items: LocalItem[] = [];
+
+    if (config.syncConnections) {
+      items.push(...new ConnectionSyncService(this.context, index).collectLocalConnections(deviceId));
+    }
+    if (config.syncQueries) {
+      for (const q of SavedQueriesService.getInstance().getQueries()) {
+        const plaintext = Buffer.from(JSON.stringify(q));
+        const hash = contentHash(plaintext);
+        const { updatedAt } = index.observe(q.id, 'query', hash, { name: q.title });
+        items.push({
+          meta: { id: q.id, kind: 'query', contentHash: hash, revision: 0, updatedAt, deviceId, deleted: false },
+          plaintext,
+        });
+      }
+    }
+    if (config.syncNotebooks) {
+      items.push(...(await new NotebookSyncService(this.context, index).collectLocalNotebooks(deviceId)));
+    }
+    return items.filter((i) => !excluded.has(i.meta.id));
+  }
+
+  /** Upserts for dirty local items + deletes for items removed since last sync. */
+  private async buildOps(config: SyncConfig, index: SyncIndex, excluded: ReadonlySet<string>): Promise<SyncOp[]> {
+    const localItems = await this.collectLocalItems(config, excluded, index);
+    const presentIds = new Set(localItems.map((i) => i.meta.id));
+    const ops: SyncOp[] = [];
+
+    for (const { meta, plaintext } of localItems) {
+      if (index.isDirty(meta.id, meta.contentHash)) {
+        ops.push({
+          op: 'upsert',
+          itemId: meta.id,
+          kind: meta.kind,
+          baseVersion: index.baseVersion(meta.id),
+          contentHash: meta.contentHash,
+          blob: this.codec.encode(plaintext),
+        });
+      }
+    }
+
+    // Deletions: synced before, gone locally now.
+    const kindEnabled = (k: string) =>
+      (k === 'connection' && config.syncConnections) ||
+      (k === 'query' && config.syncQueries) ||
+      (k === 'notebook' && config.syncNotebooks);
+    for (const id of index.syncedIds()) {
+      const entry = index.get(id);
+      if (!entry || excluded.has(id) || presentIds.has(id) || !kindEnabled(entry.kind)) {
+        continue;
+      }
+      ops.push({ op: 'delete', itemId: id, kind: entry.kind, baseVersion: index.baseVersion(id) });
+    }
+    return ops;
+  }
+
+  private recordAccepted(
+    accepted: Array<{ itemId: string; version: number }>,
+    ops: SyncOp[],
+    index: SyncIndex,
   ): void {
-    if (doc.notebookType !== 'postgres-notebook' && doc.notebookType !== 'postgres-query') {
-      return;
+    const opById = new Map(ops.map((o) => [o.itemId, o]));
+    for (const { itemId, version } of accepted) {
+      const op = opById.get(itemId);
+      if (!op) {
+        continue;
+      }
+      if (op.op === 'delete') {
+        index.remove(itemId);
+      } else {
+        index.markSynced(itemId, { kind: op.kind, contentHash: op.contentHash!, version });
+      }
     }
-    if (doc.isUntitled || doc.uri.scheme !== 'file') {
-      return;
+  }
+
+  // ── Apply incoming delta ───────────────────────────────────────────────────────
+
+  private async applyDelta(
+    delta: SyncDelta,
+    config: SyncConfig,
+    index: SyncIndex,
+    excluded: ReadonlySet<string>,
+  ): Promise<number> {
+    const connSvc = new ConnectionSyncService(this.context, index);
+    const nbSvc = new NotebookSyncService(this.context, index);
+    const sqSvc = SavedQueriesService.getInstance();
+    const localItems = await this.collectLocalItems(config, excluded, index);
+    const localById = new Map(localItems.map((i) => [i.meta.id, i]));
+    let applied = 0;
+
+    // Permanent deletes — never resurrected.
+    for (const id of delta.deletes) {
+      if (excluded.has(id)) {
+        continue;
+      }
+      const kind = index.get(id)?.kind ?? localById.get(id)?.meta.kind;
+      const metaStub: SyncItemMeta = { id, kind: kind ?? 'query', contentHash: '', revision: 0, updatedAt: 0, deviceId: '', deleted: true };
+      try {
+        if (kind === 'connection' && config.syncConnections) {
+          await connSvc.removeConnection(metaStub);
+        } else if (kind === 'notebook' && config.syncNotebooks) {
+          await nbSvc.deleteNotebook(metaStub);
+        } else if (kind === 'query' && config.syncQueries) {
+          await sqSvc.deleteQuery(id);
+        }
+      } catch (e) {
+        this.output.appendLine(`[sync] delete ${id} failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      index.remove(id);
+      applied += 1;
     }
-    const metadata = doc.metadata as Record<string, unknown>;
-    const syncId = typeof metadata.syncId === 'string' ? metadata.syncId : undefined;
-    if (!syncId) {
-      return;
+
+    // Upserts — last-writer-wins, loser backed up locally.
+    for (const { meta, blob } of delta.upserts) {
+      if (excluded.has(meta.id)) {
+        continue;
+      }
+      const local = localById.get(meta.id);
+      const decision = decideIncoming(
+        !!local,
+        local ? index.isDirty(meta.id, local.meta.contentHash) : false,
+        local ? local.meta.contentHash === meta.contentHash : false,
+        local?.meta.updatedAt ?? 0,
+        meta.updatedAt,
+      );
+
+      if (decision.applyRemote) {
+        if (decision.backupLocal && local) {
+          this.backupLocal(local, meta.kind);
+        }
+        const plaintext = this.codec.decode(blob);
+        try {
+          await this.applyOne(meta, plaintext, config, connSvc, nbSvc, sqSvc);
+          applied += 1;
+        } catch (e) {
+          this.output.appendLine(`[sync] apply ${meta.id} failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      // Always adopt the server version so we push the correct CAS base next.
+      index.markSynced(meta.id, {
+        kind: meta.kind,
+        contentHash: meta.contentHash,
+        version: meta.version,
+        updatedAt: meta.updatedAt,
+      });
     }
-    recordSyncActivity({
-      kind: 'notebook',
-      action,
-      itemId: syncId,
-      name: doc.uri.path.split('/').pop()?.replace(/\.pgsql$/i, ''),
+
+    return applied;
+  }
+
+  private async applyOne(
+    meta: RemoteItemMeta,
+    plaintext: Buffer,
+    config: SyncConfig,
+    connSvc: ConnectionSyncService,
+    nbSvc: NotebookSyncService,
+    sqSvc: SavedQueriesService,
+  ): Promise<void> {
+    const data = JSON.parse(plaintext.toString());
+    // Disk-mapping services predate v2; adapt the remote meta to their shape.
+    const shim: SyncItemMeta = {
+      id: meta.id,
+      kind: meta.kind,
+      contentHash: meta.contentHash,
+      revision: meta.version,
+      updatedAt: meta.updatedAt,
+      deviceId: meta.deviceId,
+      deleted: false,
+    };
+    switch (meta.kind) {
+      case 'connection':
+        if (config.syncConnections) {
+          await connSvc.applyConnection(data, shim);
+        }
+        break;
+      case 'query':
+        if (config.syncQueries) {
+          await sqSvc.saveQuery({ ...data, id: meta.id });
+        }
+        break;
+      case 'notebook':
+        if (config.syncNotebooks) {
+          await nbSvc.applyNotebook(data, shim);
+        }
+        break;
+    }
+    SyncActivityLog.getInstance(this.context).recordInbound({
+      itemId: meta.id,
+      kind: meta.kind,
+      deviceId: meta.deviceId,
     });
   }
 
-  private recordConnectionConfigChanges(): boolean {
-    const connections = vscode.workspace.getConfiguration().get<Record<string, unknown>[]>(
-      'postgresExplorer.connections',
-      [],
-    );
-    if (!this.connectionSnapshot) {
-      this.connectionSnapshot = new Map(
-        connections.map((c) => [String(c.id), SyncController.connectionFingerprint(c)]),
-      );
+  /** Preserve a local copy that lost a conflict so nothing is silently dropped. */
+  private backupLocal(local: LocalItem, kind: string): void {
+    try {
+      if (kind === 'notebook') {
+        const entry = new SyncIndex(this.context).get(local.meta.id);
+        const filePath = entry?.filePath;
+        if (filePath && fs.existsSync(filePath)) {
+          fs.copyFileSync(filePath, `${filePath}.backup-${Date.now()}`);
+          return;
+        }
+      }
+      if (kind === 'query') {
+        const data = JSON.parse(local.plaintext.toString());
+        void SavedQueriesService.getInstance().saveQuery({
+          ...data,
+          id: `${local.meta.id}-backup-${Date.now()}`,
+          title: `${data.title ?? 'Query'} (local backup)`,
+        });
+      }
+    } catch (e) {
+      this.output.appendLine(`[sync] backup ${local.meta.id} failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  private acknowledgeActivities(index: SyncIndex): void {
+    // Clear pending entries whose local content matches what was last synced.
+    const log = SyncActivityLog.getInstance(this.context);
+    const acked: string[] = [];
+    for (const p of log.listPending()) {
+      const entry = index.get(p.itemId);
+      if (p.action === 'delete' && !entry) {
+        acked.push(`${p.kind}:${p.itemId}`);
+      } else if (entry && entry.syncedHash && entry.syncedHash === entry.lastObservedHash) {
+        acked.push(`${p.kind}:${p.itemId}`);
+      }
+    }
+    if (acked.length) {
+      log.acknowledge(acked);
+    }
+  }
+
+  // ── Clear & re-sync (git-style hard reset) ────────────────────────────────────
+
+  /** Wipe local synced state and pull everything fresh from the cloud. */
+  async replaceLocalWithCloud(): Promise<boolean> {
+    const config = this.getConfig();
+    if (!config.providerId) {
       return false;
     }
-    let changed = false;
-    const next = new Map(
-      connections.map((c) => [String(c.id), SyncController.connectionFingerprint(c)]),
-    );
-    for (const conn of connections) {
-      const id = String(conn.id);
-      const fp = next.get(id)!;
-      const prev = this.connectionSnapshot.get(id);
-      const name = typeof conn.name === 'string' ? conn.name : undefined;
-      if (!prev) {
-        recordSyncActivity({ kind: 'connection', action: 'create', itemId: id, name });
-        changed = true;
-      } else if (prev !== fp) {
-        const prevName = SyncController.connectionNameFromFingerprint(prev);
-        recordSyncActivity({
-          kind: 'connection',
-          action: prevName !== name ? 'rename' : 'update',
-          itemId: id,
-          name,
-          previousName: prevName !== name ? prevName : undefined,
-        });
-        changed = true;
-      }
-    }
-    for (const [id, fp] of this.connectionSnapshot) {
-      if (!next.has(id)) {
-        recordSyncActivity({
-          kind: 'connection',
-          action: 'delete',
-          itemId: id,
-          name: SyncController.connectionNameFromFingerprint(fp),
-        });
-        changed = true;
-      }
-    }
-    this.connectionSnapshot = next;
-    return changed;
-  }
-
-  private connectionSnapshot: Map<string, string> | undefined;
-
-  private async recordNotebookFileActivity(
-    uri: vscode.Uri,
-    action: 'create' | 'update',
-  ): Promise<void> {
+    const release = await this.mutex.acquire();
     try {
-      const raw = await vscode.workspace.fs.readFile(uri);
-      const parsed = JSON.parse(Buffer.from(raw).toString()) as Record<string, unknown>;
-      const syncId = readNotebookSyncId(parsed);
-      if (!syncId) {
-        return;
+      this.setStatus('syncing');
+      const index = new SyncIndex(this.context);
+      for (const id of Object.keys(index.getAll())) {
+        index.remove(id);
       }
-      const name = uri.path.split('/').pop()?.replace(/\.pgsql$/i, '');
-      recordSyncActivity({
-        kind: 'notebook',
-        action,
-        itemId: syncId,
-        name,
-      });
-    } catch {
-      /* unreadable notebook file */
+      await index.flush();
+      await this.setCursor(config, 0);
+      await this.runLocked(config, { direction: 'pull' });
+      await this.context.globalState.update(SYNC_LAST_SYNC_AT_KEY, Date.now());
+      this.setStatus('synced');
+      return true;
+    } catch (e) {
+      this.output.appendLine(`[sync] replaceLocalWithCloud failed: ${e instanceof Error ? e.message : String(e)}`);
+      this.setStatus('error');
+      return false;
+    } finally {
+      release();
     }
   }
 
-  private recordNotebookFileDelete(uri: vscode.Uri): void {
-    const index = new SyncIndex(this.context);
-    const match = index.findByPath(uri.fsPath);
-    if (match) {
-      recordSyncActivity({
-        kind: 'notebook',
-        action: 'delete',
-        itemId: match.id,
-        name: match.entry.name ?? uri.path.split('/').pop()?.replace(/\.pgsql$/i, ''),
-      });
-      return;
+  /** Wipe cloud state and push everything from this device. */
+  async replaceCloudWithLocal(): Promise<boolean> {
+    const config = this.getConfig();
+    if (!config.providerId) {
+      return false;
     }
-    const name = uri.path.split('/').pop()?.replace(/\.pgsql$/i, '');
-    if (name) {
-      recordSyncActivity({
-        kind: 'notebook',
-        action: 'delete',
-        itemId: uri.fsPath,
-        name,
-      });
+    const release = await this.mutex.acquire();
+    try {
+      this.setStatus('syncing');
+      const provider = this.getProvider(config);
+      await provider.resetSpace();
+      const index = new SyncIndex(this.context);
+      for (const id of Object.keys(index.getAll())) {
+        index.update(id, { kind: index.get(id)!.kind, syncedHash: undefined, syncedVersion: undefined });
+      }
+      await index.flush();
+      await this.setCursor(config, 0);
+      await this.runLocked(config, { direction: 'push' });
+      await this.context.globalState.update(SYNC_LAST_SYNC_AT_KEY, Date.now());
+      this.setStatus('synced');
+      return true;
+    } catch (e) {
+      this.output.appendLine(`[sync] replaceCloudWithLocal failed: ${e instanceof Error ? e.message : String(e)}`);
+      this.setStatus('error');
+      return false;
+    } finally {
+      release();
     }
+  }
+
+  // ── Settings-hub queries ───────────────────────────────────────────────────────
+
+  listPendingActivities() {
+    return SyncActivityLog.getInstance(this.context).listPending();
+  }
+
+  listInboundHistory(): InboundEntry[] {
+    return SyncActivityLog.getInstance(this.context).listInbound();
   }
 
   listSyncedItems(): SyncedItemView[] {
     const config = this.getConfig();
-    const excluded = new Set(config.excludedIds ?? []);
     const index = new SyncIndex(this.context);
-    const indexEntries = index.getAll();
-    const baseManifest = this.getBaseManifest();
-    const baseActiveIds = new Set(baseManifest.filter((m) => !m.deleted).map((m) => m.id));
-    const pendingIds = new Set(this.listPendingActivities().map((p) => p.itemId));
-    const nbSvc = new NotebookSyncService(this.context, index);
-    const byId = new Map<string, SyncedItemView>();
+    const excluded = new Set(config.excludedIds ?? []);
+    const entries = index.getAll();
+    const views: SyncedItemView[] = [];
 
-    const resolveItemStatus = (id: string, isExcluded: boolean): SyncedItemView['itemStatus'] => {
-      if (isExcluded) {
-        return 'excluded';
+    const present = new Set<string>();
+    if (config.syncConnections) {
+      for (const c of vscode.workspace.getConfiguration().get<any[]>('postgresExplorer.connections') || []) {
+        present.add(String(c.id));
       }
-      if (pendingIds.has(id)) {
-        return 'pending';
+    }
+    if (config.syncQueries) {
+      for (const q of SavedQueriesService.getInstance().getQueries()) {
+        present.add(q.id);
       }
-      if (baseActiveIds.has(id)) {
-        return 'synced';
-      }
-      return 'local';
-    };
+    }
 
-    for (const meta of baseManifest) {
-      const isExcluded = excluded.has(meta.id);
-      byId.set(meta.id, {
-        id: meta.id,
-        kind: meta.kind,
-        name: indexEntries[meta.id]?.name,
-        updatedAt: meta.updatedAt,
-        deviceId: meta.deviceId,
-        revision: meta.revision,
-        excluded: isExcluded,
-        deleted: meta.deleted,
-        itemStatus: resolveItemStatus(meta.id, isExcluded),
+    for (const [id, entry] of Object.entries(entries)) {
+      const synced = entry.syncedVersion != null;
+      const dirty = entry.lastObservedHash != null && entry.lastObservedHash !== entry.syncedHash;
+      views.push({
+        id,
+        kind: entry.kind,
+        name: entry.name,
+        updatedAt: entry.modifiedAt ?? entry.syncedAt,
+        excluded: excluded.has(id),
+        itemStatus: excluded.has(id) ? 'excluded' : dirty ? 'pending' : synced ? 'synced' : 'local',
       });
     }
-    for (const [id, entry] of Object.entries(indexEntries)) {
-      if (!byId.has(id)) {
-        const isExcluded = excluded.has(id);
-        byId.set(id, {
-          id,
-          kind: entry.kind,
-          name: entry.name,
-          updatedAt: entry.modifiedAt ?? entry.syncedAt,
-          revision: entry.syncedRevision || undefined,
-          excluded: isExcluded,
-          deleted: false,
-          itemStatus: resolveItemStatus(id, isExcluded),
-        });
-      }
-    }
-
-    try {
-      for (const q of SavedQueriesService.getInstance().getQueries()) {
-        const view = byId.get(q.id);
-        if (view && !view.name) {
-          view.name = q.title;
-        }
-      }
-    } catch {
-      /* saved queries unavailable — ids shown instead */
-    }
-    const connections = vscode.workspace.getConfiguration().get<any[]>('postgresExplorer.connections') || [];
-    for (const conn of connections) {
-      const view = byId.get(String(conn.id));
-      if (view && !view.name) {
-        view.name = conn.name ?? `${conn.host}:${conn.port}`;
-      }
-    }
-
-    return [...byId.values()]
-      .filter((v) => {
-        if (v.deleted) {
-          return false;
-        }
-        if (v.kind === 'notebook' && !baseActiveIds.has(v.id) && !nbSvc.isPresentOnDisk(v.id)) {
-          return false;
-        }
-        return true;
-      })
-      .sort((a, b) => a.kind.localeCompare(b.kind) || (a.name ?? a.id).localeCompare(b.name ?? b.id));
+    return views;
   }
 
-  /** Drop index rows for notebooks that are gone locally and no longer active in sync. */
-  private purgeStaleNotebookIndex(index: SyncIndex, manifest: SyncItemMeta[]): void {
-    const activeIds = new Set(
-      manifest.filter((m) => !m.deleted && m.kind === 'notebook').map((m) => m.id),
-    );
-    const nbSvc = new NotebookSyncService(this.context, index);
-    for (const id of Object.keys(index.getAll())) {
-      const entry = index.get(id);
-      if (entry?.kind !== 'notebook') {
-        continue;
-      }
-      if (activeIds.has(id) || nbSvc.isPresentOnDisk(id)) {
-        continue;
-      }
-      index.remove(id);
-    }
-  }
-
-  /**
-   * Resolve a local shareable item (query or notebook) to its raw payload for
-   * sharing. Connections and secrets are never shareable and return undefined.
-   */
-  async getShareableItem(id: string): Promise<{ kind: 'query' | 'notebook'; raw: Record<string, unknown>; name: string } | undefined> {
-    try {
-      const query = SavedQueriesService.getInstance().getQueries().find((q) => q.id === id);
-      if (query) {
-        return { kind: 'query', raw: query as unknown as Record<string, unknown>, name: query.title };
-      }
-    } catch {
-      /* saved queries unavailable */
-    }
-    const index = new SyncIndex(this.context);
-    const entry = index.get(id);
-    if (entry?.kind === 'notebook') {
-      const deviceId = getOrCreateDeviceId(this.context);
-      const items = await new NotebookSyncService(this.context, index).collectLocalNotebooks(deviceId);
-      const match = items.find((i) => i.meta.id === id);
-      if (match) {
-        const raw = JSON.parse(match.plaintext.toString()) as Record<string, unknown>;
-        return { kind: 'notebook', raw, name: (raw.name as string) ?? entry.name ?? 'Notebook' };
-      }
-    }
-    return undefined;
-  }
-
-  /** Exclude/re-include an item from sync on this device. */
   async setItemExcluded(id: string, excludedFlag: boolean): Promise<void> {
     const config = this.getConfig();
     const set = new Set(config.excludedIds ?? []);
@@ -1301,66 +774,138 @@ export class SyncController implements vscode.Disposable {
     await this.saveConfig({ ...config, excludedIds: [...set] });
   }
 
-  /**
-   * Delete the remote copy (tombstone — other devices remove theirs on next
-   * pull) while keeping the local copy and excluding it from future sync.
-   */
+  /** Stop syncing an item and delete it from the cloud (and other devices). */
   async removeFromCloud(id: string): Promise<boolean> {
     const config = this.getConfig();
     if (!config.providerId) {
       return false;
     }
-    const vault = VaultService.getInstance();
-    if (!vault.isUnlocked() && !(await vault.tryLoadCachedKey())) {
+    const release = await this.mutex.acquire();
+    try {
+      const index = new SyncIndex(this.context);
+      const entry = index.get(id);
+      if (!entry) {
+        return false;
+      }
+      const provider = this.getProvider(config);
+      const result = await provider.pushBatch([
+        { op: 'delete', itemId: id, kind: entry.kind, baseVersion: index.baseVersion(id) },
+      ]);
+      if (result.accepted.length) {
+        index.remove(id);
+        await index.flush();
+        await this.setCursor(config, result.cursor);
+        await this.setItemExcluded(id, true);
+        return true;
+      }
       return false;
-    }
-    const base = this.getBaseManifest();
-    const meta = base.find((m) => m.id === id && !m.deleted);
-    if (!meta) {
+    } catch (e) {
+      this.output.appendLine(`[sync] removeFromCloud failed: ${e instanceof Error ? e.message : String(e)}`);
       return false;
+    } finally {
+      release();
     }
-    const deviceId = getOrCreateDeviceId(this.context);
-    const tombstone = tombstoneMeta(meta, deviceId);
-    const newBase = base.map((m) => (m.id === id ? tombstone : m));
-    const provider = this.createProvider(config.providerId);
-    await provider.push(
-      [{ meta: tombstone, blob: vault.encrypt(Buffer.from('{}')) }],
-      { manifest: newBase },
-    );
-    await this.setBaseManifest(newBase);
+  }
+
+  async rebuildSyncIndex(): Promise<number> {
     const index = new SyncIndex(this.context);
-    index.remove(id);
+    for (const id of Object.keys(index.getAll())) {
+      index.remove(id);
+    }
     await index.flush();
-    await this.setItemExcluded(id, true);
-    return true;
+    const config = this.getConfig();
+    await this.setCursor(config, 0);
+    const items = await this.collectLocalItems(config, new Set(config.excludedIds ?? []), index);
+    return items.length;
+  }
+
+  async runDiagnostics(): Promise<void> {
+    const config = this.getConfig();
+    this.output.show(true);
+    this.output.appendLine('── PgStudio Sync diagnostics ──');
+    this.output.appendLine(`provider: ${config.providerId ?? 'none'}`);
+    this.output.appendLine(`status: ${this.status} | conflicts: ${this.conflictCount}`);
+    this.output.appendLine(`cursor: ${this.getCursor(config)}`);
+    this.output.appendLine(`lastSyncAt: ${this.getLastSyncAt() ?? 'never'}`);
+    this.output.appendLine(`lastError: ${this.getLastError() ?? 'none'}`);
+    if (config.providerId) {
+      try {
+        const test = await this.getProvider(config).testConnection();
+        this.output.appendLine(`connection: ${test.ok ? 'ok' : `failed — ${test.error}`}`);
+      } catch (e) {
+        this.output.appendLine(`connection: error — ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
+
+  // ── Cloud-only helpers ──────────────────────────────────────────────────────────
+
+  async getCloudQuota(): Promise<CloudQuotaView | undefined> {
+    const config = this.getConfig();
+    if (config.providerId !== 'cloud') {
+      return undefined;
+    }
+    return (this.getProvider(config) as CloudSyncProvider).getQuota();
+  }
+
+  async listCloudDevices(): Promise<SyncDeviceView[]> {
+    const config = this.getConfig();
+    if (config.providerId !== 'cloud') {
+      return [];
+    }
+    return (this.getProvider(config) as CloudSyncProvider).listDevices();
+  }
+
+  async revokeCloudDevice(deviceId: string): Promise<boolean> {
+    const config = this.getConfig();
+    if (config.providerId !== 'cloud') {
+      return false;
+    }
+    return (this.getProvider(config) as CloudSyncProvider).revokeDevice(deviceId);
+  }
+
+  // ── Sharing support (read item content for workspace sharing) ────────────────────
+
+  async getShareableItem(id: string): Promise<{ kind: 'query' | 'notebook'; raw: Record<string, unknown>; name: string } | undefined> {
+    const query = SavedQueriesService.getInstance().getQuery(id);
+    if (query) {
+      return { kind: 'query', raw: query as unknown as Record<string, unknown>, name: query.title };
+    }
+    const entry = new SyncIndex(this.context).get(id);
+    if (entry?.kind === 'notebook' && entry.filePath && fs.existsSync(entry.filePath)) {
+      const parsed = JSON.parse(fs.readFileSync(entry.filePath).toString());
+      return {
+        kind: 'notebook',
+        raw: { name: entry.name ?? id, cells: parsed.cells ?? [], databaseName: parsed.metadata?.databaseName },
+        name: entry.name ?? id,
+      };
+    }
+    return undefined;
+  }
+
+  async getItemPlaintext(id: string): Promise<string | undefined> {
+    const item = await this.getShareableItem(id);
+    return item ? JSON.stringify(item.raw, null, 2) : undefined;
   }
 
   async signOut(): Promise<void> {
-    await VaultService.getInstance().signOut();
-    await AccountService.getInstance().signOut();
-    if (this.getConfig().providerId === 'gist') {
-      const { GistSyncProvider } = await import('./providers/GistSyncProvider');
-      await GistSyncProvider.clearStoredGistId(this.context);
+    const config = this.getConfig();
+    if (config.providerId === 'cloud') {
+      await (await import('./AccountService')).AccountService.getInstance(this.context).signOut();
     }
-    await this.saveConfig({
-      ...this.getConfig(),
-      providerId: undefined,
-      gistId: undefined,
-      paused: false,
-    });
-    SyncActivityLog.getInstance(this.context).clearAll();
-    this.connectionSnapshot = undefined;
-    this.status = 'not_configured';
-    this.updateStatusBar();
+    await this.saveConfig({ ...config, providerId: undefined, paused: false });
+    this.stopPeriodicPull();
+    this.setStatus('not_configured');
   }
 
   dispose(): void {
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
     }
-    if (this.periodicTimer) {
-      clearInterval(this.periodicTimer);
+    this.stopPeriodicPull();
+    for (const d of this.disposables) {
+      d.dispose();
     }
-    this.disposables.forEach((d) => d.dispose());
+    this.disposables = [];
   }
 }

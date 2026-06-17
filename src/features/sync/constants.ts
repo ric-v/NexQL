@@ -1,4 +1,6 @@
 export const SYNC_BASE_MANIFEST_KEY = 'postgres-explorer.sync.baseManifest';
+/** Last server cursor confirmed for the active space (git-like delta sync). */
+export const SYNC_CURSOR_KEY = 'postgres-explorer.sync.cursor';
 export const SYNC_DEVICE_ID_KEY = 'postgres-explorer.sync.deviceId';
 export const SYNC_CONFIG_KEY = 'postgres-explorer.sync.config';
 export const SYNC_PATH_OVERRIDES_KEY = 'postgres-explorer.sync.pathOverrides';
