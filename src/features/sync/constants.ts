@@ -37,7 +37,8 @@ export const GIST_DESCRIPTION = 'PgStudio E2E Sync Vault';
 export const GIST_META_FILE = 'pgstudio-meta.json';
 
 export const SYNC_DEBOUNCE_MS = 5000;
-export const SYNC_PERIODIC_MS = 5 * 60 * 1000;
+export const SYNC_PERIODIC_MS = 60 * 60 * 1000;
+export const SYNC_OPEN_CHECK_DEBOUNCE_MS = 1500;
 export const SYNC_BACKOFF_INITIAL_MS = 30_000;
 export const SYNC_BACKOFF_MAX_MS = 5 * 60 * 1000;
 

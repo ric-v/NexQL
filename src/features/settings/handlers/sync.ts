@@ -135,7 +135,7 @@ export class SyncSectionHandler implements SettingsSectionHandler {
         this.sendItems();
         break;
       case 'share':
-        await vscode.commands.executeCommand('postgres-explorer.sync.share');
+        await vscode.commands.executeCommand('postgres-explorer.sync.inviteMember');
         break;
       case 'importShares':
         await vscode.commands.executeCommand('postgres-explorer.sync.importShares');
@@ -218,8 +218,19 @@ export class SyncSectionHandler implements SettingsSectionHandler {
 
   private async sendShares(): Promise<void> {
     try {
+      const controller = SyncController.getInstance();
       const workspaces = await new WorkspaceSharingService(this.host.extensionContext).listWorkspaces();
-      this.host.post({ type: 'sync/shares', incoming: [], outgoing: [], workspaces });
+      const incoming = controller
+        .listSyncedItems()
+        .filter((i) => i.spaceId?.startsWith('ws_'))
+        .map((i) => ({
+          id: i.id,
+          name: i.name ?? i.id,
+          kind: i.kind,
+          workspaceName: i.workspaceName,
+          role: i.role,
+        }));
+      this.host.post({ type: 'sync/shares', incoming, outgoing: [], workspaces });
     } catch (e) {
       this.host.post({
         type: 'sync/shares',

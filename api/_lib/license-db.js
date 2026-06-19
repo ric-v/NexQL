@@ -4,8 +4,8 @@
 const { neon } = require('@neondatabase/serverless');
 const { resolveDatabaseUrl, isDatabaseConfigured } = require('./db-url');
 
-const DEVICE_LIMITS = { sponsor: 3, singularity: 25 };
-const DEFAULT_DEVICE_LIMIT = 3;
+const DEVICE_LIMITS = { sponsor: 4, singularity: 4 };
+const DEFAULT_DEVICE_LIMIT = 4;
 const VALIDATED_OK_SAMPLE_MS = 12 * 60 * 60 * 1000;
 
 let sql = null;

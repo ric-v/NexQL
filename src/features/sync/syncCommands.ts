@@ -1,6 +1,9 @@
+import * as crypto from 'crypto';
 import * as vscode from 'vscode';
 import { SyncController } from './SyncController';
 import { WorkspaceSharingService } from './WorkspaceSharingService';
+import { scrubForShare, materializeShared } from './shareScrub';
+import { SavedQueriesService } from '../savedQueries/SavedQueriesService';
 import {
   allowedSyncProviders,
   ProFeature,
@@ -76,10 +79,7 @@ async function pickOrCreateWorkspace(service: WorkspaceSharingService): Promise<
 }
 
 /** Create/select a team workspace and invite a member. */
-export async function cmdSyncShare(
-  context: vscode.ExtensionContext,
-  _treeItem?: SyncContextTreeItem,
-): Promise<void> {
+export async function cmdSyncInviteMember(context: vscode.ExtensionContext): Promise<void> {
   if (!(await requirePro(ProFeature.SyncSharing))) {
     return;
   }
@@ -119,7 +119,125 @@ export async function cmdSyncShare(
     await service.addMember(workspace.spaceId, email.trim(), role.id);
     await vscode.window.showInformationMessage(`Invited ${email.trim()} to "${workspace.name}" as ${role.id}.`);
   } catch (e) {
-    await vscode.window.showErrorMessage(`Share failed: ${e instanceof Error ? e.message : String(e)}`);
+    await vscode.window.showErrorMessage(`Invite failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+/** @deprecated Use cmdSyncInviteMember — kept for settings-hub delegate. */
+export const cmdSyncShare = cmdSyncInviteMember;
+
+/** Share a notebook or saved query into a team workspace (scrubbed, edit-in-place). */
+export async function cmdSyncShareWithTeam(
+  context: vscode.ExtensionContext,
+  treeItem?: SyncContextTreeItem,
+): Promise<void> {
+  if (!(await requirePro(ProFeature.SyncSharing))) {
+    return;
+  }
+  if (SyncController.getInstance().getConfig().providerId !== 'cloud') {
+    await vscode.window.showWarningMessage(
+      'Team sharing requires the NexQL Cloud sync backend. Set it up under NexQL Sync: Set Up Sync.',
+    );
+    return;
+  }
+
+  const itemId = await resolveSyncItemIdFromTreeItem(treeItem);
+  if (!itemId) {
+    await vscode.window.showWarningMessage('Could not resolve this item for team sharing.');
+    return;
+  }
+
+  const controller = SyncController.getInstance();
+  const item = await controller.getShareableItem(itemId);
+  if (!item) {
+    await vscode.window.showWarningMessage('Only saved queries and notebooks can be shared with a team.');
+    return;
+  }
+
+  let shared;
+  try {
+    shared = scrubForShare(item.kind, item.raw);
+  } catch (e) {
+    await vscode.window.showErrorMessage(e instanceof Error ? e.message : String(e));
+    return;
+  }
+
+  const service = new WorkspaceSharingService(context);
+  let workspace: WorkspaceView | undefined;
+  try {
+    workspace = await pickOrCreateWorkspace(service);
+  } catch (e) {
+    await vscode.window.showErrorMessage(`Could not load workspaces: ${e instanceof Error ? e.message : String(e)}`);
+    return;
+  }
+  if (!workspace) {
+    return;
+  }
+
+  const choice = await vscode.window.showWarningMessage(
+    `Share "${item.name}" with team workspace "${workspace.name}"? The team copy becomes canonical.`,
+    { modal: true },
+    'Move to team',
+    'Keep personal copy',
+  );
+  if (!choice) {
+    return;
+  }
+
+  const keepPersonal = choice === 'Keep personal copy';
+  const moveOnly = !keepPersonal;
+
+  try {
+    if (keepPersonal) {
+      const newId = crypto.randomUUID();
+      const connectionId =
+        item.kind === 'query' && typeof item.raw.connectionId === 'string' ? item.raw.connectionId : undefined;
+      const materialized = materializeShared(shared, newId, connectionId, Date.now());
+      if (item.kind === 'query') {
+        await SavedQueriesService.getInstance().saveQuery(materialized as unknown as import('../savedQueries/SavedQueriesService').SavedQuery);
+      } else {
+        const { NotebookSyncService } = await import('./NotebookSyncService');
+        const index = new (await import('./SyncIndex')).SyncIndex(context);
+        const nbSvc = new NotebookSyncService(context, index);
+        const shim = {
+          id: newId,
+          kind: 'notebook' as const,
+          contentHash: '',
+          revision: 0,
+          updatedAt: Date.now(),
+          deviceId: '',
+          deleted: false,
+        };
+        await nbSvc.applyNotebook(materialized as unknown as import('./types').NotebookSyncPayload, shim);
+        await index.flush();
+      }
+      const ok = await controller.pushItemToTeamSpace(
+        newId,
+        workspace.spaceId,
+        item.kind,
+        Buffer.from(JSON.stringify(materialized)),
+      );
+      if (!ok) {
+        await vscode.window.showErrorMessage('Failed to push shared copy to the team workspace.');
+        return;
+      }
+    } else {
+      const plaintext = Buffer.from(JSON.stringify(shared.payload));
+      const ok = await controller.pushItemToTeamSpace(itemId, workspace.spaceId, item.kind, plaintext, {
+        removeFromPersonal: moveOnly,
+      });
+      if (!ok) {
+        await vscode.window.showErrorMessage('Failed to share item with the team workspace.');
+        return;
+      }
+    }
+
+    await controller.runSync();
+    await vscode.window.showInformationMessage(`"${item.name}" is now shared in "${workspace.name}".`);
+    void vscode.commands.executeCommand('postgres-explorer.notebooks.refresh');
+    void vscode.commands.executeCommand('postgresExplorer.savedQueries.refresh');
+  } catch (e) {
+    await vscode.window.showErrorMessage(`Share with team failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
@@ -322,7 +440,7 @@ export async function cmdSyncStatusMenu(context?: vscode.ExtensionContext): Prom
   const configured = !!config.providerId;
   const shareItems = config.providerId === 'cloud'
     ? [
-        { label: '$(person-add) Share to Workspace…', id: 'share' },
+        { label: '$(person-add) Invite to Workspace…', id: 'inviteMember' },
         { label: '$(organization) Manage Workspaces…', id: 'importShares' },
       ]
     : [];
@@ -371,9 +489,9 @@ export async function cmdSyncStatusMenu(context?: vscode.ExtensionContext): Prom
     case 'preview':
       await cmdSyncPreview();
       break;
-    case 'share':
+    case 'inviteMember':
       if (context) {
-        await cmdSyncShare(context);
+        await cmdSyncInviteMember(context);
       }
       break;
     case 'importShares':

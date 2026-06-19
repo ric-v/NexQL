@@ -101,6 +101,8 @@ import {
   cmdSyncNow,
   cmdSyncPause,
   cmdSyncSetup,
+  cmdSyncInviteMember,
+  cmdSyncShareWithTeam,
   cmdSyncShare,
   cmdSyncImportShares,
   cmdSyncShowSecretKey,
@@ -158,9 +160,17 @@ export function getCommandSpecs(
       callback: () => cmdSyncSignOut(),
     },
     {
-      command: 'postgres-explorer.sync.share',
+      command: 'postgres-explorer.sync.inviteMember',
+      callback: () => cmdSyncInviteMember(context),
+    },
+    {
+      command: 'postgres-explorer.sync.shareWithTeam',
       callback: (treeItem?: { id?: string; query?: { id?: string }; uri?: vscode.Uri }) =>
-        cmdSyncShare(context, treeItem),
+        cmdSyncShareWithTeam(context, treeItem),
+    },
+    {
+      command: 'postgres-explorer.sync.share',
+      callback: () => cmdSyncInviteMember(context),
     },
     {
       command: 'postgres-explorer.sync.importShares',
