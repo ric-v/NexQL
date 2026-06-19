@@ -57,6 +57,8 @@ export interface LicenseHistoryEvent {
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+const RETRY_INTERVALS_MS = [15 * 60_000, 30 * 60_000, 60 * 60_000] as const;
+const FOCUS_ATTEMPT_THROTTLE_MS = 60_000;
 const DEFAULT_ENDPOINT = 'https://nexql.astrx.dev/api';
 
 /**
@@ -72,6 +74,8 @@ export class LicenseService {
   private cache: LicenseCache | null = null;
   private revalidating = false;
   private lastAttemptAt = 0;
+  private retryTimer: ReturnType<typeof setInterval> | undefined;
+  private consecutiveFailures = 0;
 
   private readonly _onDidChangeLicense = new vscode.EventEmitter<LicenseTier>();
   public readonly onDidChangeLicense = this._onDidChangeLicense.event;
@@ -100,15 +104,25 @@ export class LicenseService {
     if (this.cache && this.isStale()) {
       void this.revalidate();
     }
+    this.ensureBackgroundRetry();
     this._onDidChangeLicense.fire(this.getTier());
   }
 
   public getTier(): LicenseTier {
     const tier = this.entitledTier();
+    if (tier !== 'free' && this.isStale()) {
+      this.ensureBackgroundRetry();
+    }
     if (tier !== 'free' && this.shouldAttempt()) {
       void this.revalidate();
     }
     return tier;
+  }
+
+  public onWindowFocused(): void {
+    if (this.cache && this.entitledTier() !== 'free' && this.shouldAttempt()) {
+      void this.revalidate();
+    }
   }
 
   private entitledTier(): LicenseTier {
@@ -116,7 +130,49 @@ export class LicenseService {
   }
 
   private shouldAttempt(): boolean {
-    return this.isStale() && !this.revalidating && Date.now() - this.lastAttemptAt > 60_000;
+    return this.isStale() && !this.revalidating && Date.now() - this.lastAttemptAt > FOCUS_ATTEMPT_THROTTLE_MS;
+  }
+
+  private needsBackgroundRetry(): boolean {
+    return !!this.cache && this.isStale();
+  }
+
+  private retryIntervalMs(): number {
+    return RETRY_INTERVALS_MS[Math.min(this.consecutiveFailures, RETRY_INTERVALS_MS.length - 1)];
+  }
+
+  private stopBackgroundRetry(): void {
+    if (this.retryTimer) {
+      clearInterval(this.retryTimer);
+      this.retryTimer = undefined;
+    }
+  }
+
+  private scheduleBackgroundRetry(): void {
+    this.stopBackgroundRetry();
+    if (!this.needsBackgroundRetry()) {
+      return;
+    }
+    this.retryTimer = setInterval(() => this.tickBackgroundRetry(), this.retryIntervalMs());
+    this.retryTimer.unref?.();
+  }
+
+  private ensureBackgroundRetry(): void {
+    if (this.needsBackgroundRetry()) {
+      this.scheduleBackgroundRetry();
+    } else {
+      this.stopBackgroundRetry();
+    }
+  }
+
+  private tickBackgroundRetry(): void {
+    if (!this.needsBackgroundRetry()) {
+      this.stopBackgroundRetry();
+      return;
+    }
+    if (!this.revalidating) {
+      void this.revalidate();
+    }
   }
 
   public isPaid(): boolean {
@@ -197,10 +253,12 @@ export class LicenseService {
       void import('../features/sync/syncBootstrap').then((m) => m.maybePromptSyncBootstrap(this.context));
     }
 
+    this.ensureBackgroundRetry();
     return { ok: true, message: `Activated NexQL ${this.tierLabel(res.tier)}.`, tier: res.tier };
   }
 
   public async deactivate(): Promise<void> {
+    this.stopBackgroundRetry();
     this.cache = null;
     await SecretStorageService.getInstance().deleteLicenseCache();
     this._onDidChangeLicense.fire('free');
@@ -271,6 +329,7 @@ export class LicenseService {
     try {
       const res = await this.callValidate(this.cache.licenseKey);
       if (res.valid && res.tier) {
+        this.consecutiveFailures = 0;
         this.cache = {
           ...this.cache,
           tier: res.tier,
@@ -288,6 +347,7 @@ export class LicenseService {
         await SecretStorageService.getInstance().deleteLicenseCache();
       }
     } catch {
+      this.consecutiveFailures++;
       if (this.cache && !this.cache.gracePeriodStartedAt) {
         this.cache.gracePeriodStartedAt = Date.now();
         await this.persist();
@@ -298,6 +358,7 @@ export class LicenseService {
       if (after !== before) {
         this._onDidChangeLicense.fire(after);
       }
+      this.ensureBackgroundRetry();
     }
   }
 
@@ -381,6 +442,7 @@ export class LicenseService {
   }
 
   public dispose(): void {
+    this.stopBackgroundRetry();
     this._onDidChangeLicense.dispose();
   }
 }

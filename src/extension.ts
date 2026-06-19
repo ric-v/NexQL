@@ -566,6 +566,12 @@ export async function activate(context: vscode.ExtensionContext) {
   reflectTier();
   context.subscriptions.push(
     license.onDidChangeLicense(() => reflectTier()),
+    vscode.window.onDidChangeWindowState((e) => {
+      if (e.focused) {
+        license.onWindowFocused();
+      }
+    }),
+    { dispose: () => license.dispose() },
     vscode.window.registerUriHandler({
       handleUri: async (uri: vscode.Uri) => {
         if (uri.path === '/activate') {
