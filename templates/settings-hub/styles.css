@@ -1,14 +1,12 @@
 /* ── Settings Hub layout ── */
 :root {
   --hub-nav-width: 220px;
-  --env-dev: #22c55e;
-  --env-staging: #f59e0b;
-  --env-prod: #ef4444;
   --danger: var(--vscode-errorForeground);
   --success: var(--vscode-testing-iconPassed, #22c55e);
-  --hub-accent: var(--vscode-textLink-foreground);
-  --hub-accent-muted: color-mix(in srgb, var(--hub-accent) 14%, transparent);
-  --hub-shadow: 0 1px 2px color-mix(in srgb, #000 18%, transparent);
+  /* Aliased to shared --pg-* tokens (single source of truth) */
+  --hub-accent: var(--pg-brand-accent);
+  --hub-accent-muted: color-mix(in srgb, var(--pg-brand-accent) 14%, transparent);
+  --hub-shadow: var(--pg-elevation-1);
 }
 
 [hidden] {
@@ -1091,9 +1089,9 @@ body {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: color-mix(in srgb, var(--vscode-editor-background) 62%, transparent);
-  backdrop-filter: blur(12px) saturate(1.15);
-  -webkit-backdrop-filter: blur(12px) saturate(1.15);
+  background: var(--pg-glass-bg);
+  backdrop-filter: var(--pg-glass-blur);
+  -webkit-backdrop-filter: var(--pg-glass-blur);
 }
 
 .hub-modal.conn-editor {
@@ -1106,7 +1104,7 @@ body {
   background: var(--vscode-editor-background);
   padding: 20px 22px 22px;
   box-shadow:
-    0 24px 48px color-mix(in srgb, #000 45%, transparent),
+    var(--pg-elevation-3),
     0 0 0 1px color-mix(in srgb, var(--hub-accent) 14%, transparent);
   animation: hub-modal-in 0.18s ease;
   isolation: isolate;

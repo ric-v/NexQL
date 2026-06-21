@@ -1,0 +1,48 @@
+body {
+  padding: 0;
+  margin: 0;
+  font-family: var(--vscode-font-family);
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+}
+
+.pg-properties-header {
+  padding: 16px 20px 0;
+}
+
+.pg-properties-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.pg-tab-panel h3 {
+  color: var(--vscode-foreground);
+  font-size: 13px;
+  margin: 20px 0 10px;
+  font-weight: 600;
+}
+
+.pg-list-container {
+  margin-top: 10px;
+}
+
+.pg-list-item {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--pg-ui-border);
+  background: var(--pg-ui-surface-muted);
+  margin-bottom: 2px;
+  border-radius: var(--pg-radius-sm);
+  font-size: 12px;
+}
+
+.pg-sql-block .keyword {
+  color: var(--vscode-symbolIcon-keywordForeground);
+  font-weight: 600;
+}
+
+em {
+  color: var(--pg-text-muted);
+  font-style: italic;
+}

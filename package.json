@@ -62,6 +62,44 @@
         "configuration": "./language-configuration.json"
       }
     ],
+    "colors": [
+      {
+        "id": "postgres.accent",
+        "description": "NexQL brand accent for tree icons and highlights",
+        "defaults": {
+          "dark": "#3794ff",
+          "light": "#0066bf",
+          "highContrast": "#1aebff"
+        }
+      },
+      {
+        "id": "postgres.envProd",
+        "description": "Production environment indicator",
+        "defaults": {
+          "dark": "#ef4444",
+          "light": "#dc2626",
+          "highContrast": "#ff6b6b"
+        }
+      },
+      {
+        "id": "postgres.envStaging",
+        "description": "Staging environment indicator",
+        "defaults": {
+          "dark": "#f59e0b",
+          "light": "#d97706",
+          "highContrast": "#ffd43b"
+        }
+      },
+      {
+        "id": "postgres.envDev",
+        "description": "Development environment indicator",
+        "defaults": {
+          "dark": "#22c55e",
+          "light": "#16a34a",
+          "highContrast": "#69db7c"
+        }
+      }
+    ],
     "commands": [
       {
         "command": "postgres-explorer.license.activate",

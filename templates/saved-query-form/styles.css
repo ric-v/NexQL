@@ -1,0 +1,19 @@
+body {
+  padding: 0;
+  margin: 0;
+  font-family: var(--vscode-font-family);
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+}
+
+.pg-panel-page {
+  max-width: 760px;
+}
+
+.required {
+  color: var(--vscode-errorForeground);
+}
+
+.pg-field {
+  margin-bottom: 14px;
+}

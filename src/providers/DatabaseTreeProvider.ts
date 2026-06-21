@@ -7,6 +7,7 @@ import { getSchemaCache, SchemaCache } from '../lib/schema-cache';
 import { Debouncer } from '../lib/debounce';
 import { AutoRefreshService } from '../services/AutoRefreshService';
 import { buildTreeItemKey, buildTreeItemKeyFromParts } from './tree/treeItemKey';
+import { formatConnectionEnvBadge, getDatabaseTreeIcon } from './tree/treeIconTheme';
 import { PlatformConnectionService } from '../services/PlatformConnectionService';
 import { profileDisplayLabel } from '../lib/platform/PlatformProfile';
 import {
@@ -643,46 +644,10 @@ export class DatabaseTreeItem extends vscode.TreeItem {
     }
     this.tooltip = this.getTooltip(type, comment, roleAttributes, environment, readOnlyMode);
     this.description = this.getDescription(type, isInstalled, installedVersion, roleAttributes, isFavorite, count, rowCount, size, environment, readOnlyMode);
-    this.iconPath = {
-      connection: new vscode.ThemeIcon('plug', isDisconnected ? new vscode.ThemeColor('disabledForeground') : new vscode.ThemeColor('charts.blue')),
-      database: new vscode.ThemeIcon('database', new vscode.ThemeColor('charts.purple')),
-      'databases-group': new vscode.ThemeIcon('database', new vscode.ThemeColor('charts.purple')),
-      'system-databases-group': new vscode.ThemeIcon('folder-library', new vscode.ThemeColor('charts.gray')),
-      'favorites-group': new vscode.ThemeIcon('star-full', new vscode.ThemeColor('charts.yellow')),
-      'recent-group': new vscode.ThemeIcon('history', new vscode.ThemeColor('charts.green')),
-      schema: new vscode.ThemeIcon('symbol-namespace', new vscode.ThemeColor('charts.yellow')),
-      table: new vscode.ThemeIcon('table', new vscode.ThemeColor('charts.blue')),
-      view: new vscode.ThemeIcon('eye', new vscode.ThemeColor('charts.green')),
-      function: new vscode.ThemeIcon('symbol-method', new vscode.ThemeColor('charts.orange')),
-      procedure: new vscode.ThemeIcon('symbol-method', new vscode.ThemeColor('charts.red')),
-      column: new vscode.ThemeIcon('symbol-field', new vscode.ThemeColor('charts.blue')),
-      category: new vscode.ThemeIcon('list-tree'),
-      'materialized-view': new vscode.ThemeIcon('symbol-structure', new vscode.ThemeColor('charts.green')),
-      type: new vscode.ThemeIcon('symbol-type-parameter', new vscode.ThemeColor('charts.red')),
-      'foreign-table': new vscode.ThemeIcon('symbol-interface', new vscode.ThemeColor('charts.blue')),
-      extension: new vscode.ThemeIcon(isInstalled ? 'extensions-installed' : 'extensions', isInstalled ? new vscode.ThemeColor('charts.green') : undefined),
-      role: new vscode.ThemeIcon('person', new vscode.ThemeColor('charts.yellow')),
-      constraint: new vscode.ThemeIcon('lock', new vscode.ThemeColor('charts.orange')),
-      index: new vscode.ThemeIcon('search', new vscode.ThemeColor('charts.purple')),
-      'foreign-data-wrapper': new vscode.ThemeIcon('extensions', new vscode.ThemeColor('charts.blue')),
-      'foreign-server': new vscode.ThemeIcon('server', new vscode.ThemeColor('charts.green')),
-      'user-mapping': new vscode.ThemeIcon('account', new vscode.ThemeColor('charts.yellow')),
-      'connection-group': new vscode.ThemeIcon('folder', new vscode.ThemeColor('charts.blue')),
-      'trigger': new vscode.ThemeIcon('zap', new vscode.ThemeColor('charts.orange')),
-      'sequence': new vscode.ThemeIcon('list-ordered', new vscode.ThemeColor('charts.blue')),
-      'partition': new vscode.ThemeIcon('symbol-array', new vscode.ThemeColor('charts.purple')),
-      'domain': new vscode.ThemeIcon('symbol-namespace', new vscode.ThemeColor('charts.red')),
-      'aggregate': new vscode.ThemeIcon('symbol-operator', new vscode.ThemeColor('charts.green')),
-      'event-trigger': new vscode.ThemeIcon('broadcast', new vscode.ThemeColor('charts.orange')),
-      'rule': new vscode.ThemeIcon('law', new vscode.ThemeColor('charts.yellow')),
-      'tablespace': new vscode.ThemeIcon('folder-library', new vscode.ThemeColor('charts.blue')),
-      'publication': new vscode.ThemeIcon('rss', new vscode.ThemeColor('charts.green')),
-      'subscription': new vscode.ThemeIcon('inbox', new vscode.ThemeColor('charts.purple')),
-      'cron-job': new vscode.ThemeIcon('clock', new vscode.ThemeColor('charts.orange')),
-      policy: new vscode.ThemeIcon('shield', new vscode.ThemeColor('charts.green')),
-      'sponsor-badge': new vscode.ThemeIcon('heart', new vscode.ThemeColor('charts.green')),
-      'team-badge': new vscode.ThemeIcon('verified', new vscode.ThemeColor('charts.purple')),
-    }[type];
+    this.iconPath = getDatabaseTreeIcon(type, {
+      isDisconnected,
+      isInstalled,
+    });
   }
 
   private getTooltip(type: string, comment?: string, roleAttributes?: { [key: string]: boolean }, environment?: string, readOnlyMode?: boolean): string {
@@ -721,18 +686,10 @@ export class DatabaseTreeItem extends vscode.TreeItem {
     }
 
     if (type === 'connection') {
-      const badges = [];
-      if (environment === 'production') {
-        badges.push('🔴 PROD');
-      } else if (environment === 'staging') {
-        badges.push('🟡 STAGING');
-      } else if (environment === 'development') {
-        badges.push('🟢 DEV');
-      }
-      if (readOnlyMode) {
-        badges.push('🔒');
-      }
-      return badges.length > 0 ? badges.join(' ') : undefined;
+      return formatConnectionEnvBadge(
+        environment as 'production' | 'staging' | 'development' | undefined,
+        readOnlyMode,
+      );
     } else if (type === 'extension' && isInstalled) {
       desc = `v${installedVersion} (installed)`;
     } else if (type === 'role' && roleAttributes) {

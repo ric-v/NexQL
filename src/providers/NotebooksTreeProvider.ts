@@ -9,6 +9,7 @@ import {
   isViewerForSpace,
   workspaceDisplayName,
 } from '../features/sync/SharedTeamTree';
+import { getNotebookTreeIcon } from './tree/treeIconTheme';
 
 export type NotebookTreeItemType =
   | 'folder'
@@ -34,36 +35,14 @@ export class NotebookTreeItem extends vscode.TreeItem {
     this.tooltip = tooltip ?? label;
     this.contextValue = itemType;
 
-    switch (itemType) {
-      case 'folder':
-        this.iconPath = folderDepth === 1
-          ? new vscode.ThemeIcon('server', new vscode.ThemeColor('charts.blue'))
-          : folderDepth === 2
-            ? new vscode.ThemeIcon('database', new vscode.ThemeColor('charts.purple'))
-            : new vscode.ThemeIcon('folder');
-        break;
-      case 'notebook-file':
-        this.iconPath = new vscode.ThemeIcon('notebook', new vscode.ThemeColor('charts.yellow'));
-        this.command = {
-          command: 'postgres-explorer.notebooks.open',
-          title: 'Open Notebook',
-          arguments: [this],
-        };
-        break;
-      case 'shared-team-root':
-        this.iconPath = new vscode.ThemeIcon('organization');
-        break;
-      case 'workspace-folder':
-        this.iconPath = new vscode.ThemeIcon('folder-library');
-        break;
-      case 'shared-notebook-file':
-        this.iconPath = new vscode.ThemeIcon('notebook', new vscode.ThemeColor('charts.orange'));
-        this.command = {
-          command: 'postgres-explorer.notebooks.open',
-          title: 'Open Notebook',
-          arguments: [this],
-        };
-        break;
+    this.iconPath = getNotebookTreeIcon(itemType, folderDepth);
+
+    if (itemType === 'notebook-file' || itemType === 'shared-notebook-file') {
+      this.command = {
+        command: 'postgres-explorer.notebooks.open',
+        title: 'Open Notebook',
+        arguments: [this],
+      };
     }
   }
 }

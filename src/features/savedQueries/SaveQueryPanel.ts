@@ -3,6 +3,8 @@ import { SqlParser } from '../../providers/kernel/SqlParser';
 import { SavedQueriesService, SavedQuery } from './SavedQueriesService';
 import { QueryAnalyzer } from '../../services/QueryAnalyzer';
 import { AiService } from '../../providers/chat/AiService';
+import { loadPanelTemplate } from '../../lib/template-loader';
+import { highlightSql } from '../../lib/sqlHighlight';
 
 export class SaveQueryPanel {
   public static currentPanel: SaveQueryPanel | undefined;
@@ -46,7 +48,7 @@ export class SaveQueryPanel {
         enableScripts: true,
         enableFindWidget: true,
         retainContextWhenHidden: true,
-        localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'resources')]
+        localResourceRoots: [extensionUri]
       }
     );
 
@@ -84,7 +86,7 @@ export class SaveQueryPanel {
         enableScripts: true,
         enableFindWidget: true,
         retainContextWhenHidden: true,
-        localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'resources')]
+        localResourceRoots: [extensionUri]
       }
     );
 
@@ -137,7 +139,7 @@ export class SaveQueryPanel {
     this._aiService = new AiService();
 
     // Set the webview's initial html content
-    this._update();
+    void this._update();
 
     // Listen for when the panel is disposed
     // This happens when the user closes the panel or when the panel is closed programmatically
@@ -350,13 +352,13 @@ export class SaveQueryPanel {
     vscode.commands.executeCommand('postgresExplorer.savedQueries.refresh');
   }
 
-  private _update() {
-    this._panel.webview.html = this._getHtmlForWebview(this._panel.webview);
+  private async _update() {
+    this._panel.webview.html = await this._getHtmlForWebview(this._panel.webview);
   }
 
-  private _updateForEdit(query: SavedQuery) {
+  private async _updateForEdit(query: SavedQuery) {
     this._panel.title = `Edit Query: ${query.title}`;
-    const html = this._getHtmlForWebview(this._panel.webview);
+    const html = await this._getHtmlForWebview(this._panel.webview);
     this._panel.webview.html = html;
     // Pass edit mode data to webview
     this._panel.webview.postMessage({
@@ -370,200 +372,22 @@ export class SaveQueryPanel {
     });
   }
 
-  private _highlightSql(sql: string): string {
-    const escaped = sql.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    const keywords = /\b(SELECT|FROM|WHERE|JOIN|LEFT|RIGHT|INNER|OUTER|ON|AND|OR|NOT|IN|EXISTS|LIKE|BETWEEN|ORDER|GROUP|BY|HAVING|LIMIT|OFFSET|AS|DISTINCT|UNION|ALL|CREATE|DROP|ALTER|TABLE|VIEW|INDEX|INSERT|UPDATE|DELETE|INTO|VALUES|SET|CASE|WHEN|THEN|ELSE|END|WITH|RECURSIVE|EXPLAIN|ANALYZE)\b/gi;
-    const strings = /('([^'\\]|\\.)*')/g;
-    const numbers = /\b(\d+(\.\d+)?|\.\d+)\b/g;
-    const comments = /(--.*)|(\/\*[\s\S]*?\*\/)/g;
-    const functions = /\b([a-z_]\w*)\s*\(/gi;
-    
-    return escaped
-      .replace(comments, '<span class="sql-comment">$&</span>')
-      .replace(strings, '<span class="sql-string">$&</span>')
-      .replace(keywords, '<span class="sql-keyword">$&</span>')
-      .replace(functions, (match, funcName) => `<span class="sql-function">${funcName}</span>(`);
-  }
-
-  private _getHtmlForWebview(webview: vscode.Webview): string {
+  private async _getHtmlForWebview(webview: vscode.Webview): Promise<string> {
     const styleUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(this._extensionUri, 'resources', 'highlight.css')
+      vscode.Uri.joinPath(this._extensionUri, 'resources', 'highlight.css'),
     );
+    const highlightedQuery = highlightSql(this._queryText);
+    const isEdit = this._editMode;
 
-    // Highlight query for preview
-    const highlightedQuery = this._highlightSql(this._queryText);
-
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Save Query</title>
-    <link rel="stylesheet" href="${styleUri}">
-    <style>
-      :root { --pg-container-max: 760px; }
-      body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: var(--vscode-editor-background); color: var(--vscode-foreground); padding: 20px; }
-      .container { max-width: var(--pg-container-max); margin: 0 auto; background: var(--pg-ui-surface-raised, color-mix(in srgb, var(--vscode-input-background) 88%, var(--vscode-editor-background) 12%)); border: 1px solid var(--pg-ui-border, color-mix(in srgb, var(--vscode-widget-border) 65%, transparent)); border-radius: 10px; padding: 20px; box-shadow: 0 6px 18px rgba(0,0,0,0.04); }
-      h1 { font-size: 20px; margin-bottom: 6px; }
-      .subtitle { color: var(--pg-text-muted, var(--vscode-descriptionForeground)); margin-bottom: 16px; font-size: 13px; }
-      .section { margin-bottom: 16px; }
-      .pg-field-label { display:block; margin-bottom:6px; font-size:12px; font-weight:600; color:var(--vscode-foreground); }
-      .pg-field-hint { font-size:12px; color:var(--pg-text-muted); margin-top:6px; }
-      .pg-field-control { width:100%; padding:10px 12px; border-radius:8px; border:1px solid var(--vscode-input-border); background:var(--vscode-input-background); color:var(--vscode-input-foreground); font-size:13px; }
-      .pg-field-control:focus { outline:none; border-color:var(--vscode-focusBorder); }
-      .btn-row { display:flex; gap:12px; margin-top:18px; justify-content:flex-end; }
-      .pg-btn { display:inline-flex; align-items:center; gap:8px; padding:8px 14px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; border:none; }
-      .pg-btn--primary { background:var(--vscode-button-background); color:var(--vscode-button-foreground); }
-      .pg-btn--primary:hover { background:var(--vscode-button-hoverBackground); }
-      .pg-btn--secondary { background:var(--vscode-button-secondaryBackground); color:var(--vscode-button-secondaryForeground); }
-      .pg-btn--ghost { background:transparent; border:1px solid var(--pg-ui-border); color:var(--vscode-descriptionForeground); }
-      .ai-row { margin-bottom:12px; display:flex; }
-      .btn-ai-all { width:100%; justify-content:center; }
-      .ai-loading { display:inline-block; width:14px; height:14px; border:2px solid currentColor; border-top-color:transparent; border-radius:50%; animation:spin 0.8s linear infinite; }
-      @keyframes spin { to { transform:rotate(360deg); } }
-      .query-preview { font-family: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace); font-size:13px; border-radius:8px; padding:12px; background:var(--pg-ui-surface); border:1px solid var(--vscode-input-border); max-height:260px; overflow:auto; white-space:pre; }
-      .info-box { padding:10px 12px; border-radius:8px; background:var(--pg-semantic-info-bg); border:1px solid var(--pg-semantic-info-border); color:var(--vscode-foreground); margin-bottom:12px; }
-      @media (max-width:720px) { .container { padding:12px; } }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>💾 Save Query</h1>
-        <p class="subtitle">Save your query to the library for easy reuse</p>
-
-        <div class="info-box">
-            📌 Make your queries discoverable by adding meaningful titles, descriptions, and tags
-        </div>
-
-        <div class="ai-row">
-          <button type="button" class="pg-btn pg-btn--primary btn-ai-all" onclick="generateAll()" id="btnAiAll">
-            ✨ Auto-Generate All Fields with AI
-          </button>
-        </div>
-
-        <form id="saveForm">
-            <div class="form-group section">
-              <label class="pg-field-label">
-                Query Title <span class="required">*</span>
-              </label>
-              <input 
-                class="pg-field-control"
-                type="text" 
-                id="title" 
-                placeholder="e.g., Active Users by Department"
-                required
-              />
-              <div class="pg-field-hint">A memorable name for this query</div>
-            </div>
-
-            <div class="form-group section">
-              <label class="pg-field-label">Description</label>
-              <input 
-                class="pg-field-control"
-                type="text" 
-                id="description" 
-                placeholder="What does this query do? e.g., Returns all active users grouped by department with their activity counts"
-              />
-              <div class="pg-field-hint">Optional: Help your team understand the purpose of this query</div>
-            </div>
-
-            <div class="form-group section">
-              <label class="pg-field-label">Tags</label>
-              <input 
-                class="pg-field-control"
-                type="text" 
-                id="tags" 
-                placeholder="e.g., users, active, department, reports"
-              />
-              <div class="pg-field-hint">Comma-separated tags for easy filtering and discovery</div>
-            </div>
-
-            <div class="form-group">
-                <label>SQL Query</label>
-                <div class="query-preview">${highlightedQuery}</div>
-            </div>
-
-            <div class="btn-row">
-              <button type="button" class="pg-btn pg-btn--secondary" onclick="cancel()">Cancel</button>
-              <button type="submit" class="pg-btn pg-btn--primary">💾 Save Query</button>
-            </div>
-        </form>
-    </div>
-
-    <script>
-        const vscode = acquireVsCodeApi();
-        let isGenerating = false;
-
-        function cancel() {
-            vscode.postMessage({ command: 'cancel' });
-        }
-
-        function setButtonLoading(loading) {
-            const button = document.getElementById('btnAiAll');
-            if (loading) {
-                button.disabled = true;
-                const originalText = button.innerHTML;
-                button.setAttribute('data-original-text', originalText);
-                button.innerHTML = '<span class="ai-loading"></span> Generating...';
-            } else {
-                button.disabled = false;
-                const originalText = button.getAttribute('data-original-text');
-                if (originalText) {
-                    button.innerHTML = originalText;
-                }
-            }
-        }
-
-        function generateAll() {
-            if (isGenerating) return;
-            isGenerating = true;
-            setButtonLoading(true);
-            vscode.postMessage({ command: 'generateAI', field: 'all' });
-        }
-
-        // Listen for messages from extension
-        window.addEventListener('message', (event) => {
-            const message = event.data;
-            
-            switch (message.command) {
-                case 'aiGenerated':
-                    isGenerating = false;
-                    document.getElementById('title').value = message.values.title;
-                    document.getElementById('description').value = message.values.description;
-                    document.getElementById('tags').value = message.values.tags;
-                    setButtonLoading(false);
-                    break;
-                    
-                case 'aiError':
-                    isGenerating = false;
-                    setButtonLoading(false);
-                    alert(message.message);
-                    break;
-                    
-                case 'aiGenerating':
-                    // Optional: could show which field is being generated
-                    break;
-            }
-        });
-
-        document.getElementById('saveForm').addEventListener('submit', (e) => {
-            e.preventDefault();
-            
-            const title = document.getElementById('title').value;
-            const description = document.getElementById('description').value;
-            const tags = document.getElementById('tags').value;
-            const query = document.querySelector('.query-preview').textContent;
-
-            vscode.postMessage({
-                command: 'save',
-                title,
-                description,
-                tags,
-                query
-            });
-        });
-    </script>
-</body>
-</html>`;
+    return loadPanelTemplate(webview, this._extensionUri, 'saved-query-form', {
+      HIGHLIGHT_CSS_URI: styleUri.toString(),
+      PAGE_TITLE: isEdit ? 'Edit Query' : 'Save Query',
+      HEADING: isEdit ? '✏️ Edit Query' : '💾 Save Query',
+      SUBTITLE: isEdit
+        ? 'Update your saved query metadata and content'
+        : 'Save your query to the library for easy reuse',
+      HIGHLIGHTED_QUERY: highlightedQuery,
+      SAVE_LABEL: isEdit ? '💾 Update Query' : '💾 Save Query',
+    });
   }
 }
