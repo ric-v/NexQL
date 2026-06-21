@@ -3,7 +3,7 @@ import { loadPanelTemplate } from '../../../lib/template-loader';
 import { IndexStore } from '../IndexStore';
 import { IndexBuilder } from '../IndexBuilder';
 import { ConnectionUtils } from '../../../utils/connectionUtils';
-import { ObjectEntry } from '../types';
+import { ObjectEntry, JoinEdge, JoinGraph } from '../types';
 
 export class DbIndexPanel {
   public static currentPanel: DbIndexPanel | undefined;
@@ -72,6 +72,12 @@ export class DbIndexPanel {
             return;
           case 'clear':
             await this._handleClear(message.connectionId, message.database);
+            return;
+          case 'requestDetails':
+            await this._handleRequestDetails(message.connectionId, message.database);
+            return;
+          case 'saveOverrides':
+            await this._handleSaveOverrides(message.connectionId, message.database, message.overrides);
             return;
         }
       },
@@ -174,7 +180,8 @@ export class DbIndexPanel {
             manifest.buildDepth,
             manifest.buildMode,
             manifest.environment,
-            token
+            token,
+            progress
           );
           vscode.window.showInformationMessage(`Index rebuilt successfully for "${database}"!`);
           await this._postState();
@@ -269,5 +276,93 @@ export class DbIndexPanel {
         vscode.window.showInformationMessage('Data Dictionary exported successfully.');
       }
     );
+  }
+
+  private async _handleRequestDetails(connectionId: string, database: string) {
+    const baseDir = this._store.getBaseDir(connectionId, database);
+    const manifest = await this._store.readManifest(baseDir);
+    if (!manifest) {
+      await this._panel.webview.postMessage({
+        command: 'detailsError',
+        error: 'Manifest not found.',
+      });
+      return;
+    }
+
+    try {
+      const objects: any[] = [];
+      const overrides = await this._store.readOverrides(baseDir) || {};
+
+      for (const shard of manifest.shards) {
+        const shardUri = vscode.Uri.joinPath(baseDir, shard.file);
+        try {
+          const data = await vscode.workspace.fs.readFile(shardUri);
+          const entries = JSON.parse(Buffer.from(data).toString('utf-8')) as Record<string, ObjectEntry>;
+          for (const [ref, entry] of Object.entries(entries)) {
+            const objOverride = overrides.objects?.[ref];
+            const columns = entry.columns.map(col => {
+              const colOverride = objOverride?.columns?.[col.name];
+              return {
+                name: col.name,
+                type: col.type,
+                comment: colOverride?.comment !== undefined ? colOverride.comment : col.comment,
+                pii: colOverride?.pii !== undefined ? colOverride.pii : false,
+              };
+            });
+
+            objects.push({
+              ref,
+              kind: entry.kind,
+              comment: objOverride?.comment !== undefined ? objOverride.comment : entry.comment,
+              excluded: objOverride?.excluded !== undefined ? objOverride.excluded : false,
+              columns,
+            });
+          }
+        } catch {
+          // ignore shard read failures
+        }
+      }
+
+      // Read synonyms and joins
+      const tokensIndex = await this._store.readTokens(baseDir, manifest);
+      const minedSynonyms = tokensIndex?.synonyms || {};
+
+      let baseJoins: JoinEdge[] = [];
+      const jgUri = vscode.Uri.joinPath(baseDir, manifest.derived.joinGraph);
+      try {
+        const data = await vscode.workspace.fs.readFile(jgUri);
+        const graph = JSON.parse(Buffer.from(data).toString('utf-8')) as JoinGraph;
+        baseJoins = graph.edges;
+      } catch {}
+
+      await this._panel.webview.postMessage({
+        command: 'details',
+        connectionId,
+        database,
+        objects,
+        minedSynonyms,
+        baseJoins,
+        overrides,
+      });
+    } catch (err: any) {
+      await this._panel.webview.postMessage({
+        command: 'detailsError',
+        error: err.message || String(err),
+      });
+    }
+  }
+
+  private async _handleSaveOverrides(connectionId: string, database: string, overrides: any) {
+    try {
+      const baseDir = this._store.getBaseDir(connectionId, database);
+      await this._store.writeOverrides(baseDir, overrides);
+      vscode.window.showInformationMessage(`Overrides saved successfully for "${database}".`);
+      
+      // Post updated state and updated details
+      await this._postState();
+      await this._handleRequestDetails(connectionId, database);
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Failed to save overrides: ${err.message || err}`);
+    }
   }
 }

@@ -74,6 +74,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private _activeWebview?: vscode.Webview;
   private _messages: ChatMessage[] = [];
   private _isProcessing = false;
+  private _cancellationTokenSource: vscode.CancellationTokenSource | null = null;
 
   // Phase C: Track current connection/database context for session metadata
   private _currentConnectionId: string | undefined;
@@ -242,6 +243,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           await this.handleOptimizeQuery(data.query, data.executionTime);
           break;
         case 'cancelRequest':
+          if (this._cancellationTokenSource) {
+            this._cancellationTokenSource.cancel();
+            this._cancellationTokenSource.dispose();
+            this._cancellationTokenSource = null;
+          }
           this._aiService.cancel();
           this._setTypingIndicator(false);
           this._isProcessing = false;
@@ -661,14 +667,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
       vscode.window.setStatusBarMessage(`$(sparkle) AI: ${modelInfo}`, 3000);
 
-      this._aiService.setMessages(this._messages);
-      let responseText: string;
-      let usageInfo: string | undefined;
-      const aiStartTime = Date.now();
-
-      debugLog('[ChatView] Calling AI provider:', provider);
-      // Reuse the existing customSystemPrompt channel: ChatViewProvider selects the
-      // capability-specific prompt; AiService provider methods stay prompt-agnostic.
       const customSystem =
         this._chatSystemPromptMode === 'backup_tools'
           ? buildBackupToolsSystemPrompt({
@@ -679,9 +677,51 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             })
           : this._aiService.buildSystemPrompt(capability);
 
-      const result = await this._aiService.callProvider(provider, aiMessage, config, customSystem, 'chat');
-      responseText = result.text;
-      usageInfo = result.usage;
+      // Check if we should use agentic tool loop
+      let useAgentic = false;
+      if (this._currentConnectionId && this._currentDatabase && this._chatSystemPromptMode !== 'backup_tools') {
+        useAgentic = await requirePro(ProFeature.AgenticModes);
+      }
+
+      this._cancellationTokenSource = new vscode.CancellationTokenSource();
+      const cancellationToken = this._cancellationTokenSource.token;
+
+      let responseText: string;
+      let usageInfo: string | undefined;
+      const aiStartTime = Date.now();
+
+      if (useAgentic) {
+        debugLog('[ChatView] Executing agentic tool loop...');
+        const { ToolOrchestrator } = await import('./chat/tools/ToolOrchestrator');
+        const orchestrator = new ToolOrchestrator(
+          this._extensionContext,
+          this._aiService,
+          this._currentConnectionId!,
+          this._currentDatabase!
+        );
+
+        const result = await orchestrator.run(
+          provider,
+          this._messages,
+          config,
+          customSystem,
+          'chat',
+          cancellationToken
+        );
+
+        this._messages = result.messages;
+        responseText = result.text;
+        usageInfo = result.usage;
+      } else {
+        debugLog('[ChatView] Falling back to standard chat (one-shot retrieve grounding)...');
+        this._aiService.setMessages(this._messages);
+        const result = await this._aiService.callProvider(provider, aiMessage, config, customSystem, 'chat');
+        responseText = result.text;
+        usageInfo = result.usage;
+
+        responseText = this._sanitizeResponse(responseText);
+        this._messages.push({ role: 'assistant', content: responseText, usage: usageInfo });
+      }
 
       const aiElapsed = ((Date.now() - aiStartTime) / 1000).toFixed(1);
       if (usageInfo) {
@@ -690,11 +730,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         usageInfo = `${aiElapsed}s`;
       }
 
-      debugLog('[ChatView] AI response received, length:', responseText.length);
-
-      responseText = this._sanitizeResponse(responseText);
-
-      this._messages.push({ role: 'assistant', content: responseText, usage: usageInfo });
+      // Update usage label on the last assistant message
+      if (this._messages.length > 0) {
+        const lastMsg = this._messages[this._messages.length - 1];
+        if (lastMsg.role === 'assistant') {
+          lastMsg.usage = usageInfo;
+        }
+      }
 
       await this._saveCurrentSession();
     } catch (error) {
@@ -703,6 +745,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         role: 'assistant',
         content: `❌ Error: ${errorMessage}\n\nPlease check your AI provider settings in the extension configuration.`
       });
+    } finally {
+      if (this._cancellationTokenSource) {
+        this._cancellationTokenSource.dispose();
+        this._cancellationTokenSource = null;
+      }
     }
   }
 
@@ -720,6 +767,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const last = this._messages[this._messages.length - 1]!;
       if (last.role === 'assistant') {
         this._messages.pop();
+      }
+
+      // Pop any preceding tool calls/results from the last agent turn
+      while (this._messages.length > 0) {
+        const top = this._messages[this._messages.length - 1];
+        if (top.role === 'tool' || (top.role === 'assistant' && top.toolCalls)) {
+          this._messages.pop();
+        } else {
+          break;
+        }
       }
 
       const user = this._messages[this._messages.length - 1];
@@ -1084,9 +1141,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   // ==================== UI Helpers ====================
 
   private _updateChatHistory(): void {
+    const uiMessages = this._messages.filter(msg => msg.role !== 'tool' && !(msg.role === 'assistant' && msg.toolCalls));
     this._getTargetWebview()?.postMessage({
       type: 'updateMessages',
-      messages: this._messages
+      messages: uiMessages
     });
   }
 

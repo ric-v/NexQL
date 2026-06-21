@@ -4,6 +4,7 @@ import * as pg from 'pg';
 import * as vscode from 'vscode';
 
 import * as pgPassUtils from '../../utils/pgPassUtils';
+import * as localDeletePrompt from '../../features/sync/localDeletePrompt';
 import { ConnectionManager } from '../../services/ConnectionManager';
 import { SecretStorageService } from '../../services/SecretStorageService';
 import { ErrorHandlers } from '../../commands/helper';
@@ -108,7 +109,7 @@ describe('Connection commands', () => {
     const item = new DatabaseTreeItem('Primary', vscode.TreeItemCollapsibleState.Collapsed, 'connection', 'conn-1');
     const closeAll = sandbox.stub().resolves();
     sandbox.stub(ConnectionManager, 'getInstance').returns({ closeAllConnectionsById: closeAll } as any);
-    sandbox.stub(vscode.window, 'withProgress').callsFake(async (_options, callback) => callback({ report: sandbox.stub() } as any));
+    sandbox.stub(vscode.window, 'withProgress').callsFake(async (_options, callback) => (callback as any)({ report: sandbox.stub() } as any));
     const showInfo = sandbox.stub(vscode.window, 'showInformationMessage').resolves(undefined);
 
     await cmdDisconnectConnection(item, context, provider);
@@ -144,6 +145,8 @@ describe('Connection commands', () => {
 
     sandbox.stub(SecretStorageService, 'getInstance').returns({ deletePassword } as any);
     sandbox.stub(ConnectionManager, 'getInstance').returns({ closeConnection } as any);
+    sandbox.stub(localDeletePrompt, 'resolveDeleteCloudChoice').resolves('keep-cloud');
+    sandbox.stub(localDeletePrompt, 'applyLocalDeleteCloudChoice').resolves();
 
     await cmdDisconnectDatabase(item, context, provider);
 

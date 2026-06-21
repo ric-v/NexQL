@@ -36,6 +36,7 @@ export interface IndexManifest {
   derived: {
     tokens: string;
     joinGraph: string;
+    values?: string;
     embeddings?: string;
     embeddingsMeta?: string;
   };
@@ -63,6 +64,7 @@ export interface ColumnEntry {
   ordinal: number;
   isPk?: boolean;
   profile?: ColumnProfile;
+  pii?: boolean;
 }
 
 export interface ForeignKeyEntry {
@@ -71,6 +73,7 @@ export interface ForeignKeyEntry {
   refColumns: string[];
   name: string;
   onDelete?: string;
+  inferred?: boolean;
 }
 
 export interface IndexEntry {
@@ -100,6 +103,7 @@ export interface ObjectEntry {
   foreignKeys?: ForeignKeyEntry[];
   indexes?: IndexEntry[];
   checks?: CheckEntry[];
+  excluded?: boolean;
 
   // views / matviews
   definition?: string;
@@ -128,6 +132,8 @@ export interface JoinEdge {
   to: string;
   via: string;
   cols: [string, string][];
+  inferred?: boolean;
+  disabled?: boolean;
 }
 
 export interface JoinGraph {
@@ -139,4 +145,17 @@ export interface EmbeddingMetaEntry {
   objectHash: string;
   model: string;
   dim: number;
+}
+
+export interface IndexOverrides {
+  joins?: JoinEdge[];
+  synonyms?: Record<string, string[]>;
+  objects?: Record<string, {
+    comment?: string | null;
+    excluded?: boolean;
+    columns?: Record<string, {
+      comment?: string | null;
+      pii?: boolean;
+    }>;
+  }>;
 }

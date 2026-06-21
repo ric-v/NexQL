@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
 import { IndexStore } from './IndexStore';
 import { IndexManifest, ObjectEntry, TokenIndex, JoinGraph, EmbeddingMetaEntry } from './types';
-import { tokenize, scoreObject } from './lexical';
+import { tokenize, scoreObject, candidateRefsFromPostings } from './lexical';
 import { findShortestJoinPath } from './joinPath';
+import { ProFeature, isProFeatureEnabled } from '../../services/featureGates';
 import { buildContextPack } from './contextPack';
 import { cosineSimilarity, deserializeEmbedding } from './embeddings';
 import { generateEmbedding } from './embeddings';
@@ -25,6 +26,9 @@ export interface RankedContext {
 }
 
 export class IndexQueryService {
+  private lastQuery: string = '';
+  private lastEmbedVector: number[] | null = null;
+
   constructor(private readonly store: IndexStore) {}
 
   /**
@@ -54,24 +58,45 @@ export class IndexQueryService {
     const queryTokens = tokenize(question);
     const lexicalScores: Record<string, number> = {};
 
-    // Collect all object refs from manifest/shards
-    const allRefs: string[] = [];
-    for (const shard of manifest.shards) {
-      // Find refs mapped to this schema
-      const shardUri = vscode.Uri.joinPath(baseDir, shard.file);
-      try {
-        const data = await vscode.workspace.fs.readFile(shardUri);
-        const entries = JSON.parse(Buffer.from(data).toString('utf-8')) as Record<string, ObjectEntry>;
-        allRefs.push(...Object.keys(entries));
-      } catch {
-        // ignore shard load errors during scoring
+    const overrides = await this.store.readOverrides(baseDir);
+    const excludedRefs = new Set<string>();
+    if (overrides?.objects) {
+      for (const [ref, obj] of Object.entries(overrides.objects)) {
+        if (obj.excluded) {
+          excludedRefs.add(ref);
+        }
       }
     }
 
-    for (const ref of allRefs) {
+    // Get candidate refs from postings (direct and synonyms)
+    const candidates = candidateRefsFromPostings(queryTokens, tokensIndex);
+
+    for (const ref of candidates) {
+      if (excludedRefs.has(ref)) {
+        continue;
+      }
       const score = scoreObject(ref, queryTokens, tokensIndex, manifest.counts);
       if (score > 0) {
         lexicalScores[ref] = score;
+      }
+    }
+
+    // Read values.json if it exists and apply value token hits boost
+    const valueIndex = await this.store.readValues(baseDir, manifest);
+    if (valueIndex) {
+      for (const token of queryTokens) {
+        const valHits = valueIndex[token];
+        if (valHits) {
+          for (const hit of valHits) {
+            if (excludedRefs.has(hit.ref)) {
+              continue;
+            }
+            if (overrides?.objects?.[hit.ref]?.columns?.[hit.col]?.pii) {
+              continue;
+            }
+            lexicalScores[hit.ref] = (lexicalScores[hit.ref] || 0) + 2.0;
+          }
+        }
       }
     }
 
@@ -94,13 +119,40 @@ export class IndexQueryService {
 
         const binData = await vscode.workspace.fs.readFile(embeddingsBinUri);
 
-        // Generate query embedding vector
-        const { vector: queryVec } = await generateEmbedding(question, config);
+        const firstMeta = metaEntries[0];
+        let queryVec: number[] | null = null;
+
+        if (this.lastQuery === question && this.lastEmbedVector) {
+          queryVec = this.lastEmbedVector;
+        } else {
+          if (firstMeta?.model === 'Xenova/all-MiniLM-L6-v2') {
+            const { generateLocalEmbedding } = require('./localEmbedder');
+            queryVec = await generateLocalEmbedding(question, this.store.globalStorageUri);
+          } else {
+            const allowed = isProFeatureEnabled(ProFeature.DbIndexEmbed);
+            if (allowed) {
+              const { generateEmbedding } = require('./embeddings');
+              const res = await generateEmbedding(question, config);
+              queryVec = res.vector;
+            }
+          }
+          if (queryVec) {
+            this.lastQuery = question;
+            this.lastEmbedVector = queryVec;
+          }
+        }
+
+        if (!queryVec) {
+          throw new Error('No query embedding generated');
+        }
 
         const semanticHits: { ref: string; score: number }[] = [];
         for (let i = 0; i < metaEntries.length; i++) {
           const meta = metaEntries[i];
           if (meta) {
+            if (excludedRefs.has(meta.ref)) {
+              continue;
+            }
             const docVec = deserializeEmbedding(binData, i, meta.dim);
             const sim = cosineSimilarity(queryVec, docVec);
             if (sim > 0) {
@@ -248,23 +300,63 @@ export class IndexQueryService {
     }
 
     const queryTokens = tokenize(query);
-    const hits: RankedHit[] = [];
+    const candidates = candidateRefsFromPostings(queryTokens, tokensIndex);
+    const scoresMap: Record<string, number> = {};
 
-    // Enumerate shards and collect entries to score
-    for (const shard of manifest.shards) {
-      const shardUri = vscode.Uri.joinPath(baseDir, shard.file);
-      try {
-        const data = await vscode.workspace.fs.readFile(shardUri);
-        const entries = JSON.parse(Buffer.from(data).toString('utf-8')) as Record<string, ObjectEntry>;
-        for (const [ref, entry] of Object.entries(entries)) {
-          const score = scoreObject(ref, queryTokens, tokensIndex, manifest.counts);
-          if (score > 0) {
-            hits.push({ ref, score, kind: entry.kind });
+    const overrides = await this.store.readOverrides(baseDir);
+    const excludedRefs = new Set<string>();
+    if (overrides?.objects) {
+      for (const [ref, obj] of Object.entries(overrides.objects)) {
+        if (obj.excluded) {
+          excludedRefs.add(ref);
+        }
+      }
+    }
+
+    for (const ref of candidates) {
+      if (excludedRefs.has(ref)) {
+        continue;
+      }
+      const score = scoreObject(ref, queryTokens, tokensIndex, manifest.counts);
+      if (score > 0) {
+        scoresMap[ref] = score;
+      }
+    }
+
+    const valueIndex = await this.store.readValues(baseDir, manifest);
+    if (valueIndex) {
+      for (const token of queryTokens) {
+        const valHits = valueIndex[token];
+        if (valHits) {
+          for (const hit of valHits) {
+            if (excludedRefs.has(hit.ref)) {
+              continue;
+            }
+            if (overrides?.objects?.[hit.ref]?.columns?.[hit.col]?.pii) {
+              continue;
+            }
+            scoresMap[hit.ref] = (scoresMap[hit.ref] || 0) + 2.0;
           }
         }
-      } catch {
-        // ignore
       }
+    }
+
+    const sortedCandidates = Object.entries(scoresMap)
+      .map(([ref, score]) => ({ ref, score }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+
+    const hits: RankedHit[] = [];
+    for (const item of sortedCandidates) {
+      const parts = item.ref.split('.');
+      const schema = parts[0] || 'public';
+      const name = parts[1] || '';
+      const entry = await this.store.getObjectEntry(baseDir, manifest, schema, name);
+      hits.push({
+        ref: item.ref,
+        score: item.score,
+        kind: entry ? entry.kind : 'table'
+      });
     }
 
     return hits.sort((a, b) => b.score - a.score).slice(0, limit);
@@ -284,7 +376,11 @@ export class IndexQueryService {
     const schema = parts[0] || 'public';
     const name = parts[1] || '';
 
-    return await this.store.getObjectEntry(baseDir, manifest, schema, name);
+    const entry = await this.store.getObjectEntry(baseDir, manifest, schema, name);
+    if (!entry || entry.excluded) {
+      return null;
+    }
+    return entry;
   }
 
   private estimateContextTokens(

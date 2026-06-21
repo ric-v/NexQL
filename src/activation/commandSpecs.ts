@@ -7,7 +7,7 @@ import { ChatViewProvider } from '../providers/ChatViewProvider';
 import { cmdAiAssist } from '../commands/aiAssist';
 import { showColumnProperties, copyColumnName, copyColumnNameQuoted, generateSelectStatement, generateWhereClause, generateAlterColumnScript, generateDropColumnScript, generateRenameColumnScript, addColumnComment, generateIndexOnColumn, viewColumnStatistics, cmdAddColumn } from '../commands/columns';
 import { showConstraintProperties, copyConstraintName, generateDropConstraintScript, generateAlterConstraintScript, validateConstraint, generateAddConstraintScript, viewConstraintDependencies, cmdConstraintOperations, cmdAddConstraint } from '../commands/constraints';
-import { cmdConnectDatabase, cmdDisconnectConnection, cmdDisconnectDatabase, cmdReconnectConnection, cmdDuplicateConnection, showConnectionSafety, revealInExplorer } from '../commands/connection';
+import { cmdConnectDatabase, cmdDisconnectConnection, cmdDisconnectDatabase, cmdReconnectConnection, cmdDuplicateConnection, showConnectionSafety, revealInExplorer, cmdAssignConnectionColor, cmdSetConnectionGroup, cmdPinConnection, cmdUnpinConnection } from '../commands/connection';
 import { cmdImportConnectionFromDatabaseUrl } from '../commands/importConnectionFromDatabaseUrl';
 import { cmdSmartPasteConnection } from '../commands/smartPasteConnection';
 import { showIndexProperties, copyIndexName, generateDropIndexScript, generateReindexScript, generateScriptCreate, analyzeIndexUsage, generateAlterIndexScript, addIndexComment, cmdIndexOperations, cmdAddIndex } from '../commands/indexes';
@@ -18,7 +18,7 @@ import { cmdForeignDataWrapperOperations, cmdShowForeignDataWrapperProperties, c
 import { cmdCallFunction, cmdCreateFunction, cmdDropFunction, cmdEditFunction, cmdFunctionOperations, cmdRefreshFunction, cmdShowFunctionProperties } from '../commands/functions';
 import { cmdCallProcedure, cmdCreateProcedure, cmdDropProcedure, cmdEditProcedure, cmdProcedureOperations, cmdRefreshProcedure, cmdShowProcedureProperties } from '../commands/procedures';
 import { cmdCreateMaterializedView, cmdDropMatView, cmdEditMatView, cmdMatViewOperations, cmdRefreshMatView, cmdViewMatViewData, cmdViewMatViewProperties } from '../commands/materializedViews';
-import { cmdNewNotebook, cmdExplainQuery, cmdJumpToSection } from '../commands/notebook';
+import { cmdNewNotebook, cmdExplainQuery, cmdJumpToSection, cmdSwitchNotebookConnection, cmdQuickOpenNotebook } from '../commands/notebook';
 import { toggleFullDatasetForCell, toggleFullDatasetFromCell } from '../commands/fullDataset';
 import { cmdExportNotebook } from '../commands/notebookExport';
 import { cmdCreateObjectInSchema, cmdCreateSchema, cmdSchemaOperations, cmdShowSchemaProperties, cmdPasteTable } from '../commands/schema';
@@ -584,6 +584,30 @@ export function getCommandSpecs(
     {
       command: 'postgres-explorer.connect',
       callback: async (item: any) => await cmdConnectDatabase(item, context, databaseTreeProvider)
+    },
+    {
+      command: 'postgres-explorer.assignConnectionColor',
+      callback: async (item: DatabaseTreeItem) => await cmdAssignConnectionColor(item, context, databaseTreeProvider)
+    },
+    {
+      command: 'postgres-explorer.setConnectionGroup',
+      callback: async (item: DatabaseTreeItem) => await cmdSetConnectionGroup(item, context, databaseTreeProvider)
+    },
+    {
+      command: 'postgres-explorer.pinConnection',
+      callback: async (item: DatabaseTreeItem) => await cmdPinConnection(item, context, databaseTreeProvider)
+    },
+    {
+      command: 'postgres-explorer.unpinConnection',
+      callback: async (item: DatabaseTreeItem) => await cmdUnpinConnection(item, context, databaseTreeProvider)
+    },
+    {
+      command: 'postgres-explorer.switchNotebookConnection',
+      callback: async () => await cmdSwitchNotebookConnection()
+    },
+    {
+      command: 'postgres-explorer.quickOpenNotebook',
+      callback: async () => await cmdQuickOpenNotebook(context)
     },
     {
       command: 'postgres-explorer.disconnect',

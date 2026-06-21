@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
-import { IndexManifest, ObjectEntry, TokenIndex, JoinGraph } from './types';
+import { IndexManifest, ObjectEntry, TokenIndex, JoinGraph, IndexOverrides, JoinEdge, ForeignKeyEntry } from './types';
 import { migrateManifest } from './indexFormat';
+import { tokenize } from './lexical';
 
 export function safeSegment(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -9,8 +10,9 @@ export function safeSegment(name: string): string {
 export class IndexStore {
   private readonly shardCache = new Map<string, { entries: Record<string, ObjectEntry>; timestamp: number }>();
   private readonly MAX_CACHED_SHARDS = 16;
+  private readonly overridesCache = new Map<string, IndexOverrides | null>();
 
-  constructor(private readonly globalStorageUri: vscode.Uri) {}
+  constructor(public readonly globalStorageUri: vscode.Uri) {}
 
   public getBaseDir(connectionId: string, database: string): vscode.Uri {
     return vscode.Uri.joinPath(
@@ -74,7 +76,66 @@ export class IndexStore {
     const tokensUri = vscode.Uri.joinPath(baseDir, manifest.derived.tokens);
     try {
       const data = await vscode.workspace.fs.readFile(tokensUri);
-      return JSON.parse(Buffer.from(data).toString('utf-8')) as TokenIndex;
+      const tokenIndex = JSON.parse(Buffer.from(data).toString('utf-8')) as TokenIndex;
+      
+      const overrides = await this.readOverrides(baseDir);
+      if (overrides) {
+        // 1. Merge custom synonyms
+        if (overrides.synonyms) {
+          if (!tokenIndex.synonyms) {
+            tokenIndex.synonyms = {};
+          }
+          for (const [word, syns] of Object.entries(overrides.synonyms)) {
+            const baseSyns = tokenIndex.synonyms[word] || [];
+            tokenIndex.synonyms[word] = Array.from(new Set([...baseSyns, ...syns]));
+          }
+        }
+
+        // 2. Tokenize and inject override descriptions into postings
+        if (overrides.objects) {
+          for (const [ref, obj] of Object.entries(overrides.objects)) {
+            if (obj.comment) {
+              const tokens = tokenize(obj.comment);
+              for (const token of tokens) {
+                if (!tokenIndex.postings[token]) {
+                  tokenIndex.postings[token] = [];
+                }
+                const postings = tokenIndex.postings[token];
+                const match = postings.find(p => p[0] === ref);
+                if (!match) {
+                  postings.push([ref, 1.5]); // Moderate weight for comment terms
+                }
+                if (!tokenIndex.df[token]) {
+                  tokenIndex.df[token] = 0;
+                }
+                tokenIndex.df[token]++;
+              }
+            }
+            if (obj.columns) {
+              for (const [colName, col] of Object.entries(obj.columns)) {
+                if (col.comment) {
+                  const tokens = tokenize(col.comment);
+                  for (const token of tokens) {
+                    if (!tokenIndex.postings[token]) {
+                      tokenIndex.postings[token] = [];
+                    }
+                    const postings = tokenIndex.postings[token];
+                    const match = postings.find(p => p[0] === ref);
+                    if (!match) {
+                      postings.push([ref, 1.0]); // Standard weight for column comment terms
+                    }
+                    if (!tokenIndex.df[token]) {
+                      tokenIndex.df[token] = 0;
+                    }
+                    tokenIndex.df[token]++;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      return tokenIndex;
     } catch {
       return null;
     }
@@ -84,7 +145,55 @@ export class IndexStore {
     const jgUri = vscode.Uri.joinPath(baseDir, manifest.derived.joinGraph);
     try {
       const data = await vscode.workspace.fs.readFile(jgUri);
-      return JSON.parse(Buffer.from(data).toString('utf-8')) as JoinGraph;
+      const graph = JSON.parse(Buffer.from(data).toString('utf-8')) as JoinGraph;
+      
+      const overrides = await this.readOverrides(baseDir);
+      if (overrides?.joins && overrides.joins.length > 0) {
+        const overrideMap = new Map<string, JoinEdge>();
+        for (const edge of overrides.joins) {
+          const key = `${edge.from}->${edge.to}:${edge.via}`;
+          overrideMap.set(key, edge);
+        }
+
+        const mergedEdges: JoinEdge[] = [];
+        for (const baseEdge of graph.edges) {
+          const key = `${baseEdge.from}->${baseEdge.to}:${baseEdge.via}`;
+          if (overrideMap.has(key)) {
+            const override = overrideMap.get(key)!;
+            if (!override.disabled) {
+              mergedEdges.push(override);
+            }
+            overrideMap.delete(key);
+          } else {
+            mergedEdges.push(baseEdge);
+          }
+        }
+
+        for (const edge of overrideMap.values()) {
+          if (!edge.disabled) {
+            mergedEdges.push(edge);
+          }
+        }
+
+        graph.edges = mergedEdges;
+      }
+      return graph;
+    } catch {
+      return null;
+    }
+  }
+
+  public async readValues(
+    baseDir: vscode.Uri,
+    manifest: IndexManifest
+  ): Promise<Record<string, { ref: string; col: string }[]> | null> {
+    if (!manifest.derived.values) {
+      return null;
+    }
+    const valuesUri = vscode.Uri.joinPath(baseDir, manifest.derived.values);
+    try {
+      const data = await vscode.workspace.fs.readFile(valuesUri);
+      return JSON.parse(Buffer.from(data).toString('utf-8'));
     } catch {
       return null;
     }
@@ -140,7 +249,75 @@ export class IndexStore {
       cached.timestamp = Date.now();
     }
 
-    return cached.entries[ref] || null;
+    const entry = cached.entries[ref];
+    if (!entry) {
+      return null;
+    }
+
+    const overrides = await this.readOverrides(baseDir);
+    if (!overrides) {
+      return entry;
+    }
+
+    // Clone to prevent mutating cached entries directly
+    const cloned: ObjectEntry = JSON.parse(JSON.stringify(entry));
+
+    const objOverride = overrides.objects?.[ref];
+    if (objOverride) {
+      if (objOverride.comment !== undefined) {
+        cloned.comment = objOverride.comment;
+      }
+      if (objOverride.excluded !== undefined) {
+        cloned.excluded = objOverride.excluded;
+      }
+      if (objOverride.columns) {
+        for (const col of cloned.columns) {
+          const colOverride = objOverride.columns[col.name];
+          if (colOverride) {
+            if (colOverride.comment !== undefined) {
+              col.comment = colOverride.comment;
+            }
+            if (colOverride.pii !== undefined) {
+              col.pii = colOverride.pii;
+            }
+          }
+        }
+      }
+    }
+
+    // Merge custom/disabled joins into cloned.foreignKeys
+    if (overrides.joins) {
+      if (!cloned.foreignKeys) {
+        cloned.foreignKeys = [];
+      }
+      for (const edge of overrides.joins) {
+        if (edge.disabled) {
+          cloned.foreignKeys = cloned.foreignKeys.filter(fk => {
+            const matches = fk.columns[0] === edge.cols[0]?.[0] && fk.refTable === edge.to;
+            return !matches;
+          });
+          continue;
+        }
+
+        if (edge.from === ref) {
+          const existingIdx = cloned.foreignKeys.findIndex(fk => fk.refTable === edge.to && fk.columns[0] === edge.cols[0]?.[0]);
+          const newFk: ForeignKeyEntry = {
+            columns: edge.cols.map(c => c[0]),
+            refTable: edge.to,
+            refColumns: edge.cols.map(c => c[1]),
+            name: edge.via,
+            inferred: edge.inferred
+          };
+          if (existingIdx >= 0) {
+            cloned.foreignKeys[existingIdx] = newFk;
+          } else {
+            cloned.foreignKeys.push(newFk);
+          }
+        }
+      }
+    }
+
+    return cloned;
   }
 
   /**
@@ -205,8 +382,44 @@ export class IndexStore {
           this.shardCache.delete(key);
         }
       }
+      this.overridesCache.delete(baseDir.toString());
     } catch {
       // ignore if folder doesn't exist
+    }
+  }
+
+  public async readOverrides(baseDir: vscode.Uri): Promise<IndexOverrides | null> {
+    const cacheKey = baseDir.toString();
+    if (this.overridesCache.has(cacheKey)) {
+      return this.overridesCache.get(cacheKey)!;
+    }
+
+    const overridesUri = vscode.Uri.joinPath(baseDir, 'overrides.json');
+    try {
+      const data = await vscode.workspace.fs.readFile(overridesUri);
+      const overrides = JSON.parse(Buffer.from(data).toString('utf-8')) as IndexOverrides;
+      this.overridesCache.set(cacheKey, overrides);
+      return overrides;
+    } catch {
+      this.overridesCache.set(cacheKey, null);
+      return null;
+    }
+  }
+
+  public async writeOverrides(baseDir: vscode.Uri, overrides: IndexOverrides): Promise<void> {
+    const overridesUri = vscode.Uri.joinPath(baseDir, 'overrides.json');
+    const content = Buffer.from(JSON.stringify(overrides, null, 2), 'utf-8');
+    await this.writeAtomic(overridesUri, content);
+    
+    // Invalidate caches
+    this.overridesCache.set(baseDir.toString(), overrides);
+    
+    // Clear shardCache as well to force reload of entries with new overrides
+    const prefix = baseDir.toString();
+    for (const key of this.shardCache.keys()) {
+      if (key.startsWith(prefix)) {
+        this.shardCache.delete(key);
+      }
     }
   }
 }

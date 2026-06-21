@@ -233,18 +233,51 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
       ]);
       const mtime = new Date(stat.mtime).toLocaleDateString();
       let sectionCount = 0;
+      let connectionId: string | undefined;
       try {
         const data = JSON.parse(Buffer.from(raw).toString());
+        if (data.metadata) {
+          connectionId = data.metadata.connectionId;
+        }
         if (Array.isArray(data.cells)) {
           sectionCount = data.cells.filter((c: { kind?: string; value?: string }) =>
             c.kind === 'markdown' && /^#{1,3}\s/.test(c.value ?? ''),
           ).length;
         }
       } catch { /* malformed file */ }
-      const desc = sectionCount > 0 ? `${sectionCount} section${sectionCount !== 1 ? 's' : ''} · ${mtime}` : mtime;
+      
+      let connBadge = '';
+      if (connectionId) {
+        const connections = vscode.workspace.getConfiguration().get<any[]>('postgresExplorer.connections') || [];
+        const conn = connections.find(c => c.id === connectionId);
+        if (conn) {
+          connBadge = `🔌 ${conn.name || conn.host} · `;
+        }
+      }
+
+      const desc = `${connBadge}${sectionCount > 0 ? `${sectionCount} section${sectionCount !== 1 ? 's' : ''} · ${mtime}` : mtime}`;
       return { description: desc, tooltip: `${filename}\nModified: ${mtime}\nSections: ${sectionCount}` };
     } catch {
       return { description: '', tooltip: filename };
+    }
+  }
+}
+
+export class NotebooksDragAndDropController implements vscode.TreeDragAndDropController<NotebookTreeItem | any> {
+  dragMimeTypes = ['application/vnd.code.tree.postgresExplorer.notebooks'];
+  dropMimeTypes = [];
+
+  handleDrag(
+    source: Array<NotebookTreeItem | any>,
+    dataTransfer: vscode.DataTransfer,
+    token: vscode.CancellationToken
+  ): void {
+    const uris = source
+      .filter(item => (item.itemType === 'notebook-file' || item.itemType === 'shared-notebook-file') && item.uri)
+      .map(item => item.uri!.toString());
+
+    if (uris.length > 0) {
+      dataTransfer.set('application/vnd.code.tree.postgresExplorer.notebooks', new vscode.DataTransferItem(uris));
     }
   }
 }

@@ -195,7 +195,8 @@ export async function runGuidedBuildWizard(
           selectedDepth.depth,
           'guided',
           connection.environment || 'development',
-          token
+          token,
+          progress
         );
 
         outputChannel.appendLine(`[IndexBuilder] Index built successfully in ${manifest.stats.buildMs}ms.`);

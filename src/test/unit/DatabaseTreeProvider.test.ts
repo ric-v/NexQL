@@ -3,6 +3,8 @@ import * as sinon from 'sinon';
 import * as vscode from 'vscode';
 import { DatabaseTreeProvider, DatabaseTreeItem } from '../../providers/DatabaseTreeProvider';
 import { ConnectionManager } from '../../services/ConnectionManager';
+import { LicenseService } from '../../services/LicenseService';
+import { NotebookIndexService } from '../../services/NotebookIndexService';
 
 describe('DatabaseTreeProvider', () => {
   let sandbox: sinon.SinonSandbox;
@@ -32,6 +34,15 @@ describe('DatabaseTreeProvider', () => {
       getPooledClient: sandbox.stub()
     };
     sandbox.stub(ConnectionManager, 'getInstance').returns(connectionManagerStub);
+
+    // Mock LicenseService
+    sandbox.stub(LicenseService, 'getInstance').returns({
+      getTier: () => 'free',
+      onDidChangeLicense: () => new vscode.Disposable()
+    } as any);
+
+    // Initialize NotebookIndexService
+    NotebookIndexService.initialize(vscode.Uri.file('/test/path/storage'));
   });
 
   afterEach(() => {
@@ -76,7 +87,7 @@ describe('DatabaseTreeProvider', () => {
         if (sql.includes('pg_roles')) {
           return Promise.resolve({ rows: [{ count: '1' }] });
         }
-        return Promise.resolve({ rows: [] });
+        return Promise.resolve({ rows: [{ count: '1' }] });
       }),
       on: sandbox.stub(),
       release: sandbox.stub()
@@ -86,10 +97,11 @@ describe('DatabaseTreeProvider', () => {
     const element = new DatabaseTreeItem('Conn 1', vscode.TreeItemCollapsibleState.Collapsed, 'connection', '1');
     const children = await provider.getChildren(element);
 
-    expect(children).to.have.lengthOf(3);
+    expect(children).to.have.lengthOf(4);
     expect(children[0].label).to.equal('Databases');
-    expect(children[1].label).to.equal('Users & Roles');
-    expect(children[2].label).to.equal('Tablespaces');
+    expect(children[1].label).to.equal('Notebooks');
+    expect(children[2].label).to.equal('Users & Roles');
+    expect(children[3].label).to.equal('Tablespaces');
   });
 
   it('should return databases list for databases-group', async () => {
@@ -126,13 +138,14 @@ describe('DatabaseTreeProvider', () => {
     const element = new DatabaseTreeItem('db1', vscode.TreeItemCollapsibleState.Collapsed, 'database', '1', 'db1');
     const children = await provider.getChildren(element);
 
-    expect(children).to.have.lengthOf(6);
+    expect(children).to.have.lengthOf(7);
     expect(children[0].label).to.equal('Schemas');
     expect(children[1].label).to.equal('Extensions');
-    expect(children[2].label).to.equal('Foreign Data Wrappers');
-    expect(children[3].label).to.equal('Event Triggers');
-    expect(children[4].label).to.equal('Publications');
-    expect(children[5].label).to.equal('Subscriptions');
+    expect(children[2].label).to.equal('Cron Jobs');
+    expect(children[3].label).to.equal('Foreign Data Wrappers');
+    expect(children[4].label).to.equal('Event Triggers');
+    expect(children[5].label).to.equal('Publications');
+    expect(children[6].label).to.equal('Subscriptions');
   });
 
   it('should return categories for schema', async () => {
@@ -142,7 +155,7 @@ describe('DatabaseTreeProvider', () => {
     ]);
 
     const clientStub = {
-      query: sandbox.stub().resolves({ rows: [{ schema_name: 'public' }] }),
+      query: sandbox.stub().resolves({ rows: [{ nspname: 'public' }] }),
       on: sandbox.stub(),
       release: sandbox.stub()
     };

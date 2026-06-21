@@ -172,12 +172,31 @@ export class AutoRefreshService implements vscode.Disposable {
       const onFileEvent = () => {
         this.debouncer.debounce('notebooks-refresh', () => {
           this.notebooksTreeProvider.refresh();
+          this.databaseTreeProvider.refresh();
         }, DEBOUNCE_WINDOW_MS);
       };
 
-      fileWatcher.onDidCreate(onFileEvent);
-      fileWatcher.onDidDelete(onFileEvent);
-      fileWatcher.onDidChange(onFileEvent);
+      fileWatcher.onDidCreate(async uri => {
+        try {
+          const { NotebookIndexService } = require('./NotebookIndexService');
+          await NotebookIndexService.getInstance().updateNotebook(uri);
+        } catch {}
+        onFileEvent();
+      });
+      fileWatcher.onDidDelete(uri => {
+        try {
+          const { NotebookIndexService } = require('./NotebookIndexService');
+          NotebookIndexService.getInstance().removeNotebook(uri);
+        } catch {}
+        onFileEvent();
+      });
+      fileWatcher.onDidChange(async uri => {
+        try {
+          const { NotebookIndexService } = require('./NotebookIndexService');
+          await NotebookIndexService.getInstance().updateNotebook(uri);
+        } catch {}
+        onFileEvent();
+      });
 
       this.disposables.push(fileWatcher);
     } catch (err: any) {

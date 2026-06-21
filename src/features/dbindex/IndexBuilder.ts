@@ -13,7 +13,9 @@ import {
   IndexEntry,
   CheckEntry,
   ObjectShard,
+  EmbeddingMetaEntry,
 } from './types';
+import { ProFeature, isProFeatureEnabled } from '../../services/featureGates';
 import {
   RELATIONS_QUERY,
   COLUMNS_QUERY,
@@ -35,8 +37,41 @@ import {
 } from './catalogQueries';
 import { computeObjectHash } from './objectHash';
 import { IndexStore } from './IndexStore';
-import { tokenize } from './lexical';
+import { tokenize, extractSynonymsFromComment } from './lexical';
 import { runValueProfiling } from './valueProfiler';
+
+function isNamingMatch(colPrefix: string, tableName: string): boolean {
+  const p = colPrefix.toLowerCase();
+  const t = tableName.toLowerCase();
+  if (p === t) return true;
+  if (t === p + 's') return true;
+  if (p === t + 's') return true;
+  if (p.endsWith('y') && t === p.slice(0, -1) + 'ies') return true;
+  if (t.endsWith('y') && p === t.slice(0, -1) + 'ies') return true;
+  if (p.endsWith('ey') && t === p + 's') return true;
+  if (p.endsWith('ss') && t === p + 'es') return true;
+  if (t.endsWith('ss') && p === t + 'es') return true;
+  return false;
+}
+
+function buildObjectDoc(ref: string, entry: ObjectEntry): string {
+  let doc = `${entry.kind.toUpperCase()}: ${ref}`;
+  if (entry.comment) {
+    doc += `\nDescription: ${entry.comment}`;
+  }
+  const colList = entry.columns.map(c => {
+    let colDesc = `${c.name} (${c.type})`;
+    if (c.comment) {
+      colDesc += ` - ${c.comment}`;
+    }
+    return colDesc;
+  }).join(', ');
+  doc += `\nColumns: ${colList}`;
+  if (entry.primaryKey && entry.primaryKey.length > 0) {
+    doc += `\nPrimary Key: ${entry.primaryKey.join(', ')}`;
+  }
+  return doc;
+}
 
 export class IndexBuilder {
   constructor(private readonly store: IndexStore) {}
@@ -48,7 +83,8 @@ export class IndexBuilder {
     depth: BuildDepth,
     buildMode: BuildMode,
     environment: string,
-    cancellationToken?: vscode.CancellationToken
+    cancellationToken?: vscode.CancellationToken,
+    progress?: vscode.Progress<{ message?: string }>
   ): Promise<IndexManifest> {
     const baseDir = this.store.getBaseDir(connectionId, database);
     const startBuild = Date.now();
@@ -472,6 +508,29 @@ export class IndexBuilder {
             objTokens.add(t);
             this.addPosting(tokenIndex, t, ref, 0.5);
           }
+
+          // Mine synonyms from relation comment
+          const relationSyns = extractSynonymsFromComment(entry.comment);
+          for (const synStr of relationSyns) {
+            const synTokens = tokenize(synStr);
+            const nameTokens = tokenize(namePart);
+            for (const st of synTokens) {
+              for (const nt of nameTokens) {
+                if (!tokenIndex.synonyms[st]) {
+                  tokenIndex.synonyms[st] = [];
+                }
+                if (!tokenIndex.synonyms[st].includes(nt)) {
+                  tokenIndex.synonyms[st].push(nt);
+                }
+                if (!tokenIndex.synonyms[nt]) {
+                  tokenIndex.synonyms[nt] = [];
+                }
+                if (!tokenIndex.synonyms[nt].includes(st)) {
+                  tokenIndex.synonyms[nt].push(st);
+                }
+              }
+            }
+          }
         }
 
         // Tokenize columns
@@ -486,6 +545,29 @@ export class IndexBuilder {
               objTokens.add(t);
               this.addPosting(tokenIndex, t, ref, 0.3);
             }
+
+            // Mine synonyms from column comment
+            const colSyns = extractSynonymsFromComment(col.comment);
+            for (const synStr of colSyns) {
+              const synTokens = tokenize(synStr);
+              const colTokens = tokenize(col.name);
+              for (const st of synTokens) {
+                for (const ct of colTokens) {
+                  if (!tokenIndex.synonyms[st]) {
+                    tokenIndex.synonyms[st] = [];
+                  }
+                  if (!tokenIndex.synonyms[st].includes(ct)) {
+                    tokenIndex.synonyms[st].push(ct);
+                  }
+                  if (!tokenIndex.synonyms[ct]) {
+                    tokenIndex.synonyms[ct] = [];
+                  }
+                  if (!tokenIndex.synonyms[ct].includes(st)) {
+                    tokenIndex.synonyms[ct].push(st);
+                  }
+                }
+              }
+            }
           }
         }
 
@@ -497,6 +579,33 @@ export class IndexBuilder {
 
       const tokensUri = vscode.Uri.joinPath(baseDir, 'tokens.json');
       await this.store.writeAtomic(tokensUri, Buffer.from(JSON.stringify(tokenIndex), 'utf-8'));
+
+      // 9.5 Derive value index (from low-cardinality, non-PII columns)
+      const valueIndex: Record<string, { ref: string; col: string }[]> = {};
+      for (const [ref, entry] of Object.entries(entriesMap)) {
+        for (const col of entry.columns) {
+          if (col.profile && col.profile.commonValues) {
+            // Check low cardinality
+            const isLowCardinality = col.profile.nDistinct > 0 && col.profile.nDistinct <= 20;
+            if (isLowCardinality) {
+              for (const val of col.profile.commonValues) {
+                const valTokens = tokenize(val);
+                for (const t of valTokens) {
+                  if (!valueIndex[t]) {
+                    valueIndex[t] = [];
+                  }
+                  if (!valueIndex[t].some(x => x.ref === ref && x.col === col.name)) {
+                    valueIndex[t].push({ ref, col: col.name });
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      const valuesUri = vscode.Uri.joinPath(baseDir, 'values.json');
+      await this.store.writeAtomic(valuesUri, Buffer.from(JSON.stringify(valueIndex), 'utf-8'));
 
       // 10. Derive join graph
       const joinGraph: JoinGraph = { edges: [] };
@@ -512,6 +621,60 @@ export class IndexBuilder {
                 via: fk.name,
                 cols: edgeCols,
               });
+            }
+          }
+        }
+      }
+
+      // Infer naming-convention joins when no FK exists
+      for (const [refA, entryA] of Object.entries(entriesMap)) {
+        if (entryA.kind !== 'table') continue;
+        const schemaA = refA.split('.')[0] || 'public';
+        const nameA = refA.split('.')[1] || '';
+
+        for (const col of entryA.columns) {
+          if (!col.name.toLowerCase().endsWith('_id')) continue;
+          const prefix = col.name.slice(0, -3);
+          if (!prefix) continue;
+
+          for (const [refB, entryB] of Object.entries(entriesMap)) {
+            if (entryB.kind !== 'table' || refA === refB) continue;
+            const schemaB = refB.split('.')[0] || 'public';
+            if (schemaA !== schemaB) continue; // same schema
+            const nameB = refB.split('.')[1] || '';
+
+            if (isNamingMatch(prefix, nameB)) {
+              const hasExplicit = entryA.foreignKeys?.some(fk =>
+                fk.refTable === refB && fk.columns.includes(col.name)
+              );
+              if (hasExplicit) continue;
+
+              let targetCol = '';
+              if (entryB.primaryKey && entryB.primaryKey.length === 1) {
+                targetCol = entryB.primaryKey[0];
+              } else if (entryB.columns.some(c => c.name.toLowerCase() === 'id')) {
+                targetCol = 'id';
+              } else {
+                const matchedCol = entryB.columns.find(c => c.name.toLowerCase() === `${nameB.toLowerCase()}_id`);
+                if (matchedCol) {
+                  targetCol = matchedCol.name;
+                }
+              }
+
+              if (targetCol) {
+                const alreadyAdded = joinGraph.edges.some(e =>
+                  e.from === refA && e.to === refB && e.cols.some(c => c[0] === col.name && c[1] === targetCol)
+                );
+                if (!alreadyAdded) {
+                  joinGraph.edges.push({
+                    from: refA,
+                    to: refB,
+                    via: `inferred:${nameA}.${col.name}->${nameB}.${targetCol}`,
+                    cols: [[col.name, targetCol]],
+                    inferred: true
+                  });
+                }
+              }
             }
           }
         }
@@ -535,6 +698,84 @@ export class IndexBuilder {
         else if (entry.kind === 'enum') counts.enums++;
       }
 
+      // Build embeddings if enableEmbeddings config is true
+      const config = vscode.workspace.getConfiguration();
+      const isEmbedEnabled = config.get<boolean>('postgresExplorer.dbIndex.enableEmbeddings', false);
+      let embeddingsRef: string | undefined;
+      let embeddingsMetaRef: string | undefined;
+
+      if (isEmbedEnabled) {
+        const embedCandidates: { ref: string; doc: string }[] = [];
+        for (const [ref, entry] of Object.entries(entriesMap)) {
+          if (entry.kind === 'table' || entry.kind === 'view' || entry.kind === 'matview') {
+            const doc = buildObjectDoc(ref, entry);
+            embedCandidates.push({ ref, doc });
+          }
+        }
+
+        if (embedCandidates.length > 0) {
+          try {
+            let vectors: number[][] = [];
+            let modelName = 'Xenova/all-MiniLM-L6-v2';
+            let dim = 384;
+
+            const provider = config.get<string>('postgresExplorer.aiProvider', 'vscode-lm');
+            const isEmbedPro = isProFeatureEnabled(ProFeature.DbIndexEmbed);
+            const hasProviderKeys = provider !== 'vscode-lm' && provider !== 'cursor' && provider !== 'opencode';
+
+            if (isEmbedPro && hasProviderKeys) {
+              // Use provider embeddings
+              progress?.report({ message: 'Generating provider-based embeddings...' });
+              const { generateEmbedding } = require('./embeddings');
+              for (let i = 0; i < embedCandidates.length; i++) {
+                this.checkCancelled(cancellationToken);
+                progress?.report({ message: `Generating provider embeddings: ${i + 1}/${embedCandidates.length}` });
+                const { vector, model } = await generateEmbedding(embedCandidates[i].doc, config);
+                vectors.push(vector);
+                modelName = model;
+                dim = vector.length;
+              }
+            } else {
+              // Use local embeddings (free)
+              progress?.report({ message: 'Generating local embeddings...' });
+              const { generateLocalEmbeddingsBatch } = require('./localEmbedder');
+              vectors = await generateLocalEmbeddingsBatch(
+                embedCandidates.map(c => c.doc),
+                this.store.globalStorageUri,
+                progress,
+                cancellationToken
+              );
+              modelName = 'Xenova/all-MiniLM-L6-v2';
+              dim = 384;
+            }
+
+            this.checkCancelled(cancellationToken);
+
+            // Serialize and write embeddings
+            const { serializeEmbeddings } = require('./embeddings');
+            const binBuffer = serializeEmbeddings(vectors, dim);
+            const embeddingsBinUri = vscode.Uri.joinPath(baseDir, 'embeddings.bin');
+            await this.store.writeAtomic(embeddingsBinUri, binBuffer);
+
+            // Write metadata
+            const metaEntries: EmbeddingMetaEntry[] = embedCandidates.map((c, idx) => ({
+              ref: c.ref,
+              objectHash: entriesMap[c.ref]?.objectHash || '',
+              model: modelName,
+              dim
+            }));
+            const embeddingsMetaUri = vscode.Uri.joinPath(baseDir, 'embeddings-meta.json');
+            await this.store.writeAtomic(embeddingsMetaUri, Buffer.from(JSON.stringify(metaEntries), 'utf-8'));
+
+            embeddingsRef = 'embeddings.bin';
+            embeddingsMetaRef = 'embeddings-meta.json';
+
+          } catch (err: any) {
+            warnings.push(`Generating embeddings failed: ${err.message || err}`);
+          }
+        }
+      }
+
       // 11. Compile and save manifest
       const buildMs = Date.now() - startBuild;
       const manifest: IndexManifest = {
@@ -553,6 +794,9 @@ export class IndexBuilder {
         derived: {
           tokens: 'tokens.json',
           joinGraph: 'joingraph.json',
+          values: 'values.json',
+          embeddings: embeddingsRef,
+          embeddingsMeta: embeddingsMetaRef,
         },
         stats: {
           buildMs,

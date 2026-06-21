@@ -1,9 +1,11 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { DatabaseTreeItem } from '../providers/DatabaseTreeProvider';
 import { getDatabaseConnection, NotebookBuilder, MarkdownUtils, ErrorHandlers, validateNotebookContextItem } from './helper';
 import { PostgresMetadata } from '../common/types';
 import { ConnectionUtils } from '../utils/connectionUtils';
 import { isProFeatureEnabled, ProFeature } from '../services/featureGates';
+import { NotebookIndexService } from '../services/NotebookIndexService';
 
 type NotebookCellSeed = {
   kind: 'markdown' | 'sql';
@@ -517,5 +519,141 @@ export async function cmdExplainQuery(cellUri: vscode.Uri, analyze: boolean) {
 
   } catch (error: any) {
     await ErrorHandlers.handleCommandError(error, 'create EXPLAIN query');
+  }
+}
+
+export async function cmdSwitchNotebookConnection(): Promise<void> {
+  const editor = vscode.window.activeNotebookEditor;
+  if (!editor || (editor.notebook.notebookType !== 'postgres-notebook' && editor.notebook.notebookType !== 'postgres-query')) {
+    vscode.window.showInformationMessage('Please focus an active PostgreSQL notebook to switch connections.');
+    return;
+  }
+
+  const notebook = editor.notebook;
+  const currentMeta = ConnectionUtils.getEffectiveMetadata(notebook.metadata);
+  const currentConnId = currentMeta?.connectionId;
+
+  const connection = await ConnectionUtils.showConnectionPicker(currentConnId, {
+    title: 'Switch Notebook Connection',
+    placeHolder: 'Select a connection for this notebook'
+  });
+
+  if (!connection) {
+    return;
+  }
+
+  const currentDb = currentMeta?.databaseName || connection.database;
+  const dbName = await ConnectionUtils.showDatabasePicker(connection, currentDb, {
+    title: 'Switch Notebook Database',
+    placeHolder: `Select a database (current: ${currentDb})`
+  });
+
+  if (!dbName) {
+    return;
+  }
+
+  const cleanMetadata = {
+    connectionId: connection.id,
+    host: connection.host,
+    port: connection.port,
+    username: connection.username,
+    database: dbName,
+    databaseName: dbName,
+    title: connection.name && dbName ? `${connection.name}-${dbName}` : dbName,
+  };
+
+  const newMetadata = {
+    ...notebook.metadata,
+    ...cleanMetadata,
+    custom: {
+      cells: (notebook.metadata as any)?.custom?.cells || [],
+      metadata: {
+        ...cleanMetadata,
+        enableScripts: true
+      }
+    }
+  };
+
+  const applied = await ConnectionUtils.updateNotebookMetadata(notebook, newMetadata);
+  if (applied) {
+    vscode.window.showInformationMessage(`Notebook switched to "${connection.name || connection.host}" (DB: ${dbName})`);
+    vscode.commands.executeCommand('postgres-explorer.notebooks.refresh');
+    vscode.commands.executeCommand('postgres-explorer.refresh');
+  }
+}
+
+export async function cmdQuickOpenNotebook(context: vscode.ExtensionContext): Promise<void> {
+  const mru = context.globalState.get<string[] | undefined>('postgresExplorer.mruNotebooks', []) || [];
+  const localNotebooks = NotebookIndexService.getInstance().getAllNotebooks();
+  const sharedNotebooks: Array<{ name: string; uri: vscode.Uri; isShared: boolean }> = [];
+  try {
+    const { SyncController } = await import('../features/sync/SyncController');
+    const teamItems = SyncController.getInstance().listTeamItems();
+    for (const { entry } of teamItems) {
+      if (entry.kind === 'notebook' && entry.filePath) {
+        sharedNotebooks.push({
+          name: entry.name || path.basename(entry.filePath, '.pgsql'),
+          uri: vscode.Uri.file(entry.filePath),
+          isShared: true
+        });
+      }
+    }
+  } catch {
+    // Ignore sync failures
+  }
+
+  const allItems: Array<{ label: string; description: string; detail: string; uri: vscode.Uri }> = [];
+  const addedPaths = new Set<string>();
+  const connections = vscode.workspace.getConfiguration().get<any[]>('postgresExplorer.connections') || [];
+  const getConnName = (id?: string) => {
+    if (!id) return '';
+    const c = connections.find(conn => conn.id === id);
+    return c ? `🔌 ${c.name || c.host}` : '';
+  };
+
+  for (const nb of localNotebooks) {
+    if (addedPaths.has(nb.uri.fsPath)) continue;
+    addedPaths.add(nb.uri.fsPath);
+    const connLabel = getConnName(nb.connectionId);
+    allItems.push({
+      label: nb.name,
+      description: connLabel || '(no connection)',
+      detail: nb.uri.fsPath,
+      uri: nb.uri
+    });
+  }
+
+  for (const snb of sharedNotebooks) {
+    if (addedPaths.has(snb.uri.fsPath)) continue;
+    addedPaths.add(snb.uri.fsPath);
+    allItems.push({
+      label: snb.name,
+      description: '👥 Shared / Team',
+      detail: snb.uri.fsPath,
+      uri: snb.uri
+    });
+  }
+
+  allItems.sort((a, b) => {
+    const idxA = mru.indexOf(a.uri.fsPath);
+    const idxB = mru.indexOf(b.uri.fsPath);
+    if (idxA !== -1 && idxB !== -1) {
+      return idxA - idxB;
+    }
+    if (idxA !== -1) return -1;
+    if (idxB !== -1) return 1;
+    return a.label.localeCompare(b.label);
+  });
+
+  const pick = await vscode.window.showQuickPick(allItems, {
+    placeHolder: 'Search notebooks by name or connection...',
+    title: 'Quick Open Notebook'
+  });
+
+  if (pick) {
+    const updatedMru = [pick.uri.fsPath, ...mru.filter(p => p !== pick.uri.fsPath)].slice(0, 50);
+    await context.globalState.update('postgresExplorer.mruNotebooks', updatedMru);
+    const doc = await vscode.workspace.openNotebookDocument(pick.uri);
+    await vscode.window.showNotebookDocument(doc);
   }
 }
