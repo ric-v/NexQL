@@ -59,7 +59,7 @@ export class ConnectionLoader extends BaseLoader {
           items.push(new DatabaseTreeItem('Recent', vscode.TreeItemCollapsibleState.Collapsed, 'recent-group', element.connectionId));
         }
 
-        const dbCountResult = await client.query('SELECT COUNT(*) FROM pg_database');
+        const dbCountResult = await client.query("SELECT COUNT(*) FROM pg_database WHERE has_database_privilege(datname, 'CONNECT')");
         items.push(new DatabaseTreeItem('Databases', vscode.TreeItemCollapsibleState.Collapsed, 'databases-group', element.connectionId, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, dbCountResult.rows[0].count));
 
         const notebooks = NotebookIndexService.getInstance().getNotebooksForConnection(element.connectionId);
@@ -95,8 +95,13 @@ export class ConnectionLoader extends BaseLoader {
         const cacheKey = SchemaCache.buildKey(element.connectionId!, dbName, undefined, 'databases');
         const dbResult = await (provider as any)._cache.getOrFetch(cacheKey, async () => {
           return await client.query(`
-            SELECT datname, pg_size_pretty(pg_database_size(datname)) as size 
+            SELECT datname,
+                   CASE WHEN has_database_privilege(datname, 'CONNECT')
+                        THEN pg_size_pretty(pg_database_size(datname))
+                        ELSE NULL
+                   END AS size 
             FROM pg_database 
+            WHERE has_database_privilege(datname, 'CONNECT')
             ORDER BY datname
           `);
         });
@@ -148,9 +153,13 @@ export class ConnectionLoader extends BaseLoader {
 
       case 'system-databases-group': {
         const systemDbResult = await client.query(
-          `SELECT datname, pg_size_pretty(pg_database_size(datname)) as size
+          `SELECT datname,
+                  CASE WHEN has_database_privilege(datname, 'CONNECT')
+                       THEN pg_size_pretty(pg_database_size(datname))
+                       ELSE NULL
+                  END AS size
            FROM pg_database
-           WHERE datname = ANY($1)
+           WHERE datname = ANY($1) AND has_database_privilege(datname, 'CONNECT')
            ORDER BY datname`,
           [Array.from(SYSTEM_DATABASES)]
         );

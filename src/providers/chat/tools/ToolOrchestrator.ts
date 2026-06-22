@@ -25,7 +25,8 @@ export class ToolOrchestrator {
     config: vscode.WorkspaceConfiguration,
     customSystemPrompt?: string,
     scope: any = 'chat',
-    cancellationToken?: vscode.CancellationToken
+    cancellationToken?: vscode.CancellationToken,
+    onTurnComplete?: (messages: ChatMessage[]) => Promise<void> | void
   ): Promise<{ messages: ChatMessage[]; text: string; usage?: string }> {
     const telemetry = TelemetryService.getInstance();
     telemetry.trackEvent('agentic_loop_started', { provider, database: this.databaseName });
@@ -74,6 +75,9 @@ export class ToolOrchestrator {
           toolCalls: response.toolCalls
         };
         currentMessages.push(assistantMsg);
+        if (onTurnComplete) {
+          await onTurnComplete(currentMessages);
+        }
 
         // Execute each tool call
         const toolResults: ChatMessage[] = [];
@@ -99,9 +103,16 @@ export class ToolOrchestrator {
         }
 
         currentMessages.push(...toolResults);
+        if (onTurnComplete) {
+          await onTurnComplete(currentMessages);
+        }
       } else {
         // No tool calls: the agent is finished and returned text response
         debugLog('[ToolOrchestrator] Model completed loop with text response.');
+        currentMessages.push({
+          role: 'assistant',
+          content: response.text || ''
+        });
         break;
       }
     }

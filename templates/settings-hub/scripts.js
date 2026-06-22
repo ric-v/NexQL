@@ -297,7 +297,7 @@ function enhanceAllSelects(root) {
 // Section navigation
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SECTIONS = ['connections', 'ai', 'prefs', 'sentinel', 'sync', 'license'];
+const SECTIONS = ['connections', 'ai', 'prefs', 'dbindex', 'sentinel', 'sync', 'license'];
 let activeSection = null;
 
 function loadSection(section) {
@@ -308,6 +308,7 @@ function loadSection(section) {
     case 'sentinel': vscode.postMessage({ command: 'sentinel/load' }); break;
     case 'sync': vscode.postMessage({ command: 'sync/load' }); break;
     case 'license': vscode.postMessage({ command: 'license/load' }); break;
+    case 'dbindex': vscode.postMessage({ command: 'dbindex/load' }); break;
   }
 }
 
@@ -3990,6 +3991,132 @@ function handleLicenseMessage(message) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Database Indexing section
+// ─────────────────────────────────────────────────────────────────────────────
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function handleDbIndexMessage(message) {
+  switch (message.type) {
+    case 'dbindex/state':
+      $('dbindexState').hidden = true;
+      $('dbindexListContainer').hidden = false;
+      $('dbindexEnableEmbeddings').checked = !!message.state.enableEmbeddings;
+      renderDbIndexes(message.state.indexes);
+      break;
+    case 'dbindex/error':
+      $('dbindexState').hidden = false;
+      $('dbindexState').classList.add('error');
+      $('dbindexState').textContent = message.error || 'Failed to update index';
+      break;
+  }
+}
+
+function renderDbIndexes(indexes) {
+  const cardsContainer = $('dbindexCards');
+  if (!cardsContainer) return;
+
+  if (!indexes || indexes.length === 0) {
+    cardsContainer.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon" aria-hidden="true">
+          <svg viewBox="0 0 48 48" fill="none"><rect x="8" y="14" width="32" height="22" rx="4" stroke="currentColor" stroke-width="2"/><path d="M16 24h16M24 20v8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </div>
+        <h2>No active database indexes</h2>
+        <p>Build a local index to enable conceptual search and offline grounding for AI tools.</p>
+        <button type="button" class="btn-primary" id="dbindexEmptyBuildBtn">⚡ Index Your First Database</button>
+      </div>
+    `;
+    $('dbindexEmptyBuildBtn')?.addEventListener('click', () => {
+      vscode.postMessage({ command: 'dbindex/build' });
+    });
+    return;
+  }
+
+  cardsContainer.textContent = '';
+  indexes.forEach(idx => {
+    const card = document.createElement('div');
+    card.className = 'hub-setting-card db-index-card';
+
+    const dateStr = idx.indexedAt ? new Date(idx.indexedAt).toLocaleString() : 'N/A';
+    const statusClass = idx.drift ? 'drift' : (idx.indexedAt ? 'fresh' : 'none');
+    const statusLabel = idx.drift ? 'Drifted' : (idx.indexedAt ? 'Fresh' : 'Not Indexed');
+
+    card.innerHTML = `
+      <div class="card-header">
+        <div class="card-title">
+          <span>💾</span>
+          <strong>${escapeHtml(idx.database)}</strong>
+          <span class="pg-text-meta">(${escapeHtml(idx.connectionName)})</span>
+        </div>
+        <span class="status-badge ${statusClass}">${statusLabel}</span>
+      </div>
+
+      <div class="stats-row">
+        <div class="stat-item">
+          <span class="pg-text-meta">Indexed Objects</span>
+          <span class="val">${idx.tables || 0} tables · ${idx.views || 0} views · ${idx.functions || 0} fns</span>
+        </div>
+        <div class="stat-item">
+          <span class="pg-text-meta">Last Updated</span>
+          <span class="val">${dateStr}</span>
+        </div>
+        <div class="stat-item">
+          <span class="pg-text-meta">Depth</span>
+          <span class="val">${idx.depth || 'N/A'}</span>
+        </div>
+      </div>
+
+      <div class="scope-details">
+        <strong>Scope:</strong> Schemas: <code>${escapeHtml(idx.schemas ? idx.schemas.join(', ') : 'none')}</code>
+        ${idx.piiCount > 0 ? ` · <span style="color:var(--danger, #f44336)">${idx.piiCount} PII columns excluded</span>` : ''}
+      </div>
+
+      <div class="card-actions">
+        <button type="button" class="btn-primary btn-curate" data-conn="${idx.connectionId}" data-db="${idx.database}">🔧 Curate</button>
+        <button type="button" class="btn-secondary btn-rebuild" data-conn="${idx.connectionId}" data-db="${idx.database}">Rebuild</button>
+        <button type="button" class="btn-secondary btn-export" data-conn="${idx.connectionId}" data-db="${idx.database}">Export Schema</button>
+        <button type="button" class="btn-secondary btn-danger-text btn-clear" data-conn="${idx.connectionId}" data-db="${idx.database}">Delete Index</button>
+      </div>
+    `;
+
+    card.querySelector('.btn-curate').addEventListener('click', () => {
+      vscode.postMessage({ command: 'dbindex/curate', connectionId: idx.connectionId, database: idx.database });
+    });
+
+    card.querySelector('.btn-rebuild').addEventListener('click', () => {
+      vscode.postMessage({ command: 'dbindex/rebuild', connectionId: idx.connectionId, database: idx.database });
+    });
+
+    card.querySelector('.btn-export').addEventListener('click', () => {
+      vscode.postMessage({ command: 'dbindex/export', connectionId: idx.connectionId, database: idx.database });
+    });
+
+    card.querySelector('.btn-clear').addEventListener('click', () => {
+      vscode.postMessage({ command: 'dbindex/clear', connectionId: idx.connectionId, database: idx.database });
+    });
+
+    cardsContainer.appendChild(card);
+  });
+}
+
+$('dbindexBuildBtn').addEventListener('click', () => {
+  vscode.postMessage({ command: 'dbindex/build' });
+});
+
+$('dbindexEnableEmbeddings').addEventListener('change', (e) => {
+  vscode.postMessage({ command: 'dbindex/setEmbeddings', enableEmbeddings: e.target.checked });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Message routing + boot
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -4018,6 +4145,7 @@ window.addEventListener('message', (event) => {
     case 'sentinel': handleSentinelMessage(message); break;
     case 'sync': handleSyncMessage(message); break;
     case 'license': handleLicenseMessage(message); break;
+    case 'dbindex': handleDbIndexMessage(message); break;
   }
 });
 

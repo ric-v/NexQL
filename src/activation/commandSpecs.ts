@@ -1842,6 +1842,20 @@ export function getCommandSpecs(
         if (confirm === 'Delete') {
           await store.clearIndex(connection.id, database);
           vscode.window.showInformationMessage(`Index cleared for "${database}".`);
+
+          // Refresh active panels
+          try {
+            const { SettingsHubPanel } = await import('../features/settings/SettingsHubPanel');
+            if (SettingsHubPanel.currentPanel) {
+              SettingsHubPanel.currentPanel.refreshSection('dbindex');
+            }
+          } catch {}
+          try {
+            const { DbIndexPanel } = await import('../features/dbindex/panel/DbIndexPanel');
+            if (DbIndexPanel.currentPanel) {
+              DbIndexPanel.currentPanel.refreshState();
+            }
+          } catch {}
         }
       }
     },

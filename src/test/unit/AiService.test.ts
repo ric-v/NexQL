@@ -115,6 +115,22 @@ describe('AiService', () => {
     expect((service as any)._abortController).to.equal(null);
   });
 
+  it('builds the agentic system prompt with exploration rules when useAgentic is true', () => {
+    const service = new AiService();
+    service.setConnectionContext({
+      environment: 'development',
+      readOnlyMode: false,
+      connectionName: 'TestConn',
+      databaseName: 'testdb',
+      useAgentic: true
+    });
+    const prompt = service.buildSystemPrompt();
+    expect(prompt).to.contain('PostgreSQL database assistant');
+    expect(prompt).to.contain('Connected to database: `testdb` via connection `TestConn`');
+    expect(prompt).to.contain('You have NO upfront schema context');
+    expect(prompt).to.not.contain('treat it as ground truth');
+  });
+
   it('generates titles from VS Code LM and falls back to a simple title', async () => {
     const service = new AiService();
     const titleModel = {

@@ -8,11 +8,12 @@ import { AiSectionHandler } from './handlers/ai';
 import { PreferencesSectionHandler } from './handlers/preferences';
 import { SyncSectionHandler } from './handlers/sync';
 import { LicenseSectionHandler } from './handlers/license';
+import { DbIndexSectionHandler } from './handlers/dbindex';
 import { SentinelSectionHandler } from '../sentinel/SentinelSectionHandler';
 import { SentinelThemeSwapService } from '../sentinel/SentinelThemeSwapService';
 import { CONNECTION_PLATFORM_PRESETS } from '../../lib/platform/connectionPresets';
 
-export type SettingsHubSection = 'connections' | 'ai' | 'prefs' | 'sentinel' | 'sync' | 'license';
+export type SettingsHubSection = 'connections' | 'ai' | 'prefs' | 'sentinel' | 'sync' | 'license' | 'dbindex';
 
 export interface SettingsHubShowOptions {
   section?: SettingsHubSection;
@@ -69,6 +70,7 @@ export class SettingsHubPanel {
         new SentinelSectionHandler(host, sentinelThemeSwap ?? new SentinelThemeSwapService(extensionContext)),
         new SyncSectionHandler(host),
         new LicenseSectionHandler(host),
+        new DbIndexSectionHandler(host),
       ].map((h) => [h.section, h]),
     );
 
@@ -228,6 +230,13 @@ export class SettingsHubPanel {
           <p>Error: ${error instanceof Error ? error.message : String(error)}</p>
         </body>
         </html>`;
+    }
+  }
+
+  public refreshSection(section: SettingsHubSection): void {
+    const handler = this._handlers.get(section);
+    if (handler) {
+      void handler.handle('load', { command: `${section}/load` });
     }
   }
 

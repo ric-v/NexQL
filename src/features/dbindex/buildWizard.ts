@@ -203,6 +203,24 @@ export async function runGuidedBuildWizard(
         vscode.window.showInformationMessage(
           `Index successfully built for "${database}"! (Count: ${manifest.counts.tables} tables, ${manifest.counts.views} views)`
         );
+
+        // Refresh SettingsHubPanel & DbIndexPanel
+        try {
+          const { SettingsHubPanel } = await import('../settings/SettingsHubPanel');
+          if (SettingsHubPanel.currentPanel) {
+            SettingsHubPanel.currentPanel.refreshSection('dbindex');
+          }
+        } catch (e) {
+          console.error('Failed to refresh SettingsHubPanel:', e);
+        }
+        try {
+          const { DbIndexPanel } = await import('./panel/DbIndexPanel');
+          if (DbIndexPanel.currentPanel) {
+            DbIndexPanel.currentPanel.refreshState();
+          }
+        } catch (e) {
+          console.error('Failed to refresh DbIndexPanel:', e);
+        }
       } catch (err: any) {
         if (err instanceof vscode.CancellationError) {
           vscode.window.showInformationMessage('Database indexing was cancelled.');

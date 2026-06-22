@@ -42,6 +42,7 @@ export class IndexQueryService {
     budgetTokens: number,
     config: vscode.WorkspaceConfiguration
   ): Promise<RankedContext | null> {
+    console.log(`[IndexQueryService] retrieve: Starting retrieval for question="${question}" in db="${database}"`);
     const baseDir = this.store.getBaseDir(connectionId, database);
     const manifest = await this.store.readManifest(baseDir);
     if (!manifest) {
@@ -70,6 +71,7 @@ export class IndexQueryService {
 
     // Get candidate refs from postings (direct and synonyms)
     const candidates = candidateRefsFromPostings(queryTokens, tokensIndex);
+    console.log(`[IndexQueryService] retrieve: Found ${candidates.length} lexical candidates. queryTokens:`, queryTokens);
 
     for (const ref of candidates) {
       if (excludedRefs.has(ref)) {
@@ -104,11 +106,13 @@ export class IndexQueryService {
     const lexicalHits = Object.entries(lexicalScores)
       .map(([ref, score]) => ({ ref, score }))
       .sort((a, b) => b.score - a.score);
+    console.log(`[IndexQueryService] retrieve: Top lexical hits:`, lexicalHits.slice(0, 5));
 
     let hits = lexicalHits.slice(0, 10);
 
     // 2. Premium: Semantic search if embeddings exist
     const isEmbedEnabled = config.get<boolean>('postgresExplorer.dbIndex.enableEmbeddings', false);
+    console.log(`[IndexQueryService] retrieve: Semantic search status: isEmbedEnabled=${isEmbedEnabled}, embeddings=${!!manifest.derived.embeddings}`);
     if (isEmbedEnabled && manifest.derived.embeddings && manifest.derived.embeddingsMeta) {
       try {
         const embeddingsMetaUri = vscode.Uri.joinPath(baseDir, manifest.derived.embeddingsMeta);
@@ -124,7 +128,9 @@ export class IndexQueryService {
 
         if (this.lastQuery === question && this.lastEmbedVector) {
           queryVec = this.lastEmbedVector;
+          console.log(`[IndexQueryService] retrieve: Reusing cached query embedding vector.`);
         } else {
+          console.log(`[IndexQueryService] retrieve: Generating embedding for model=${firstMeta?.model || 'unknown'}...`);
           if (firstMeta?.model === 'Xenova/all-MiniLM-L6-v2') {
             const { generateLocalEmbedding } = require('./localEmbedder');
             queryVec = await generateLocalEmbedding(question, this.store.globalStorageUri);
@@ -160,6 +166,7 @@ export class IndexQueryService {
             }
           }
         }
+        console.log(`[IndexQueryService] retrieve: Top semantic hits:`, semanticHits.sort((a, b) => b.score - a.score).slice(0, 5));
 
         // Merge using Reciprocal Rank Fusion (RRF)
         const lexicalRank = new Map(lexicalHits.map((h, idx) => [h.ref, idx]));
@@ -176,7 +183,9 @@ export class IndexQueryService {
         }
 
         hits = rrfScores.sort((a, b) => b.score - a.score).slice(0, 10);
-      } catch {
+        console.log(`[IndexQueryService] retrieve: RRF merged hits:`, hits.slice(0, 5));
+      } catch (err: any) {
+        console.warn(`[IndexQueryService] retrieve: Semantic search failed, falling back to lexical search.`, err);
         // Fall back to lexical hits on embedding failures
       }
     }
@@ -244,6 +253,7 @@ export class IndexQueryService {
       hitsList.pop();
       estimatedTokens = this.estimateContextTokens(hitsList, manifest);
     }
+    console.log(`[IndexQueryService] retrieve: Budget tokens = ${budgetTokens}, Estimated tokens after degradation = ${estimatedTokens}. Final selected objects:`, hitsList.map(h => `${h.ref} (${h.detail})`));
 
     // 5. Check fingerprint drift (rely on AutoRefreshService callback cache)
     let fingerprintMatch = true;

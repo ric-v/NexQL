@@ -628,3 +628,218 @@ input:checked + .slider:before {
   flex: 2 !important;
 }
 
+/* ── Visual Analyzer Tab ── */
+.visualizer-container {
+  display: flex;
+  gap: 16px;
+  background: var(--vscode-editor-background, #1e1e1e);
+  border: 1px solid var(--pg-ui-border);
+  border-radius: var(--pg-radius-md, 6px);
+  overflow: hidden;
+  height: 580px;
+  margin-top: 16px;
+}
+
+.visualizer-canvas-wrap {
+  flex: 1;
+  position: relative;
+  border-right: 1px solid var(--pg-ui-border);
+  background: #111111;
+  overflow: hidden;
+}
+
+#visualizer-svg {
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+
+#visualizer-svg:active {
+  cursor: grabbing;
+}
+
+/* SVG Elements styles */
+.vis-node-rect {
+  fill: var(--pg-ui-surface-raised, #252526);
+  stroke: var(--pg-ui-border, #3e3e3e);
+  stroke-width: 1.5px;
+  rx: 6px;
+  ry: 6px;
+  transition: stroke var(--pg-transition-fast), fill var(--pg-transition-fast);
+  cursor: pointer;
+}
+
+.vis-node-rect:hover {
+  stroke: var(--pg-ui-border-strong, #858585);
+}
+
+.vis-node-rect.selected {
+  stroke: var(--vscode-textLink-foreground, #3b82f6);
+  fill: color-mix(in srgb, var(--vscode-textLink-foreground, #3b82f6) 8%, var(--pg-ui-surface-raised, #252526));
+  stroke-width: 2.5px;
+}
+
+.vis-node-rect.highlighted {
+  stroke: var(--pg-brand-accent, #3b82f6);
+}
+
+.vis-node-header {
+  font-weight: bold;
+  font-size: 11px;
+  fill: var(--vscode-foreground, #cccccc);
+  pointer-events: none;
+}
+
+.vis-node-subheader {
+  font-size: 9px;
+  fill: var(--pg-text-muted, #858585);
+  pointer-events: none;
+}
+
+.vis-node-content {
+  font-size: 10px;
+  fill: var(--pg-text-muted, #858585);
+  pointer-events: none;
+}
+
+.vis-node-indicator {
+  font-size: 10px;
+  fill: var(--pg-brand-accent, #3b82f6);
+  pointer-events: none;
+}
+
+.vis-link-line {
+  stroke: var(--pg-ui-border, #3e3e3e);
+  stroke-width: 1.5px;
+  fill: none;
+  opacity: 0.6;
+  transition: stroke var(--pg-transition-fast), stroke-width var(--pg-transition-fast), opacity var(--pg-transition-fast);
+}
+
+.vis-link-line.active {
+  stroke: var(--vscode-textLink-foreground, #3b82f6);
+  stroke-width: 2px;
+  opacity: 1;
+}
+
+.vis-link-line.inferred {
+  stroke-dasharray: 4, 3;
+}
+
+.vis-link-line.disabled {
+  stroke: var(--pg-ui-surface-muted, #2d2d2d);
+  opacity: 0.25;
+}
+
+/* Toolbar & details panel */
+.visualizer-toolbar {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  display: flex;
+  gap: 6px;
+  background: rgba(30, 30, 30, 0.85);
+  padding: 4px;
+  border-radius: 4px;
+  border: 1px solid var(--pg-ui-border);
+}
+
+.visualizer-toolbar button {
+  height: 24px;
+  line-height: 24px;
+  padding: 0 8px;
+  font-size: 10.5px;
+  border-radius: 3px;
+}
+
+.visualizer-sidebar {
+  width: 320px;
+  padding: 16px;
+  overflow-y: auto;
+  background: var(--pg-ui-surface, #1e1e1e);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.visualizer-sidebar h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--vscode-foreground, #cccccc);
+}
+
+.visualizer-sidebar h5 {
+  margin: 0 0 6px 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--pg-text-muted, #858585);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.detail-placeholder {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--pg-text-muted);
+  font-size: 12px;
+  padding: 20px;
+}
+
+.vis-detail-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.vis-detail-section {
+  border-top: 1px solid var(--pg-ui-border);
+  padding-top: 12px;
+}
+
+.vis-detail-indexes, .vis-detail-columns {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vis-detail-index-item, .vis-detail-column-item {
+  background: var(--pg-ui-surface-muted, #2d2d2d);
+  border: 1px solid var(--pg-ui-border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+
+.vis-detail-index-item strong, .vis-detail-column-item strong {
+  font-family: var(--vscode-editor-font-family, monospace);
+  color: var(--vscode-foreground);
+}
+
+.vis-tag {
+  font-size: 8.5px;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+  margin-left: 4px;
+  text-transform: uppercase;
+}
+
+.vis-tag.pk {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+.vis-tag.pii {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--vscode-errorForeground, #ef4444);
+}
+

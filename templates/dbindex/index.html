@@ -78,6 +78,7 @@
         <button class="tab-btn active" data-tab="tab-objects">Objects & Columns</button>
         <button class="tab-btn" data-tab="tab-joins">Relationships / Joins</button>
         <button class="tab-btn" data-tab="tab-synonyms">Synonyms</button>
+        <button class="tab-btn" data-tab="tab-visualizer">Visual Analyzer</button>
       </div>
 
       <!-- Tab Content: Objects & Columns -->
@@ -145,7 +146,7 @@
           <div id="synonyms-list" class="synonyms-list">
             <!-- Loaded dynamically -->
           </div>
-
+ 
           <div class="pg-card add-synonym-card">
             <h4>➕ Add Custom Synonym Mapping</h4>
             <div class="synonym-form-row">
@@ -158,6 +159,38 @@
                 <input type="text" id="txt-syn-list" class="pg-input" placeholder="e.g. quantity, count, amount">
               </div>
               <button id="btn-add-synonym" class="pg-btn pg-btn--primary">Add Mapping</button>
+            </div>
+          </div>
+        </div>
+      </div>
+ 
+      <!-- Tab Content: Visual Analyzer -->
+      <div id="tab-visualizer" class="tab-content">
+        <div class="visualizer-container">
+          <div class="visualizer-canvas-wrap">
+            <svg id="visualizer-svg" width="100%" height="550px">
+              <defs>
+                <marker id="vis-arrow" viewBox="0 0 10 10" refX="28" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--pg-text-muted, #858585)"></path>
+                </marker>
+                <marker id="vis-arrow-active" viewBox="0 0 10 10" refX="28" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--vscode-textLink-foreground, #3b82f6)"></path>
+                </marker>
+              </defs>
+              <g id="vis-zoom-group">
+                <g id="vis-links-group"></g>
+                <g id="vis-nodes-group"></g>
+              </g>
+            </svg>
+            <div class="visualizer-toolbar">
+              <button type="button" id="btn-vis-fit" class="pg-btn pg-btn--ghost" title="Fit to Screen">🔍 Fit View</button>
+              <button type="button" id="btn-vis-reset" class="pg-btn pg-btn--ghost" title="Reset Zoom">↺ Reset</button>
+              <button type="button" id="btn-vis-refresh" class="pg-btn pg-btn--ghost" title="Re-run Layout">⚡ Recalculate Layout</button>
+            </div>
+          </div>
+          <div class="visualizer-sidebar" id="visualizer-details">
+            <div class="detail-placeholder">
+              <p>Click a table or object node in the graph to visualize and inspect its indexes, column schema, and active relations.</p>
             </div>
           </div>
         </div>

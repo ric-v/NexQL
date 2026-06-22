@@ -48,6 +48,17 @@
           </button>
         </li>
         <li>
+          <button type="button" role="tab" class="nav-item" data-section="dbindex" aria-controls="section-dbindex">
+            <span class="nav-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" fill="none">
+                <path d="M2 4.5A2.5 2.5 0 0 1 4.5 2h7A2.5 2.5 0 0 1 14 4.5v7a2.5 2.5 0 0 1-2.5 2.5h-7A2.5 2.5 0 0 1 2 11.5v-7z" stroke="currentColor" stroke-width="1.4"/>
+                <path d="M5 6.5h6M5 9.5h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              </svg>
+            </span>
+            <span class="nav-label">Indexing</span>
+          </button>
+        </li>
+        <li>
           <button type="button" role="tab" class="nav-item" data-section="sentinel" aria-controls="section-sentinel">
             <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none"><path d="M8 1.5l6 3v4c0 3.5-2.5 5.8-6 6.5C4.5 14.3 2 12 2 8.5v-4l6-3z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M6 8l1.5 1.5L10.5 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
             <span class="nav-label">Sentinel</span>
@@ -1373,6 +1384,42 @@
                 </table>
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ════════════════ Indexing ════════════════ -->
+      <section id="section-dbindex" class="hub-section" role="tabpanel" aria-label="Indexing" hidden>
+        <header class="section-bar">
+          <div>
+            <h1>Database Indexing</h1>
+            <p class="section-sub">Local knowledge catalogs that feed AI prompt grounding and agent tool loops offline</p>
+          </div>
+          <div class="section-actions">
+            <button type="button" id="dbindexBuildBtn" class="btn-primary">+ Index Database</button>
+          </div>
+        </header>
+
+        <div id="dbindexState" class="state-line" role="status">Loading indexes…</div>
+
+        <div id="dbindexListContainer" hidden>
+          <div class="hub-setting-card">
+            <div class="hub-setting-card-header">
+              <div>
+                <h2 class="hub-setting-card-title">General Configuration</h2>
+                <p class="hub-setting-card-desc hub-prose">Embed tables and columns using active model keys (OpenAI, Gemini, Ollama, etc.) for semantic search.</p>
+              </div>
+            </div>
+            <div class="hub-setting-card-body">
+              <label class="hub-card-checkbox-row">
+                <input type="checkbox" id="dbindexEnableEmbeddings">
+                <span>Enable Semantic Search (Embeddings)</span>
+              </label>
+            </div>
+          </div>
+
+          <div id="dbindexCards" class="hub-cards-grid">
+            <!-- Cards loaded dynamically by scripts.js -->
           </div>
         </div>
       </section>

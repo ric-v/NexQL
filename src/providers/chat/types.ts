@@ -17,6 +17,15 @@ export interface ChatMessage {
   toolCalls?: ToolCall[];
   toolCallId?: string;
   name?: string;
+  ragContext?: {
+    objects: Array<{ ref: string; score: number; detail: 'full' | 'columns' | 'skeleton' }>;
+    joinHints: string[];
+    tokensUsed: number;
+  };
+  agenticSteps?: Array<{
+    toolCall: ToolCall;
+    result: string;
+  }>;
 }
 
 export interface FileAttachment {

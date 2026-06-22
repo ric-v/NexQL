@@ -18,6 +18,20 @@ export interface ToolSpec {
 
 export const DB_TOOLS: ToolSpec[] = [
   {
+    name: 'select_connection_context',
+    description: 'Ask the user to choose or confirm a database connection to use for the conversation when the prompt is vague, lacks context, or references a database not currently selected.',
+    parameters: {
+      type: 'object',
+      properties: {
+        reason: {
+          type: 'string',
+          description: 'The explanation to show the user as to why they are being prompted to select a connection (e.g. "I need to know which database contains the active brands table").'
+        }
+      },
+      required: ['reason']
+    }
+  },
+  {
     name: 'search_schema',
     description: 'Search the database schema index using natural language or keywords to find tables, views, materialized views, and functions matching the query.',
     parameters: {

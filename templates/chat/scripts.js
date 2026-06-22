@@ -1895,6 +1895,69 @@ window.addEventListener('message', event => {
   const message = event.data;
 
   switch (message.type) {
+    case 'startStream':
+      {
+        console.log('[WebView] startStream received');
+        stopLoadingMessages();
+        emptyState.style.display = 'none';
+        dismissBubbleStrip();
+        typingIndicator.classList.remove('visible');
+
+        // Render an empty assistant message element in-place
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message assistant';
+
+        const roleDiv = document.createElement('div');
+        roleDiv.className = 'message-role';
+        roleDiv.textContent = '🤖 PG Studio Bot';
+
+        const bubbleDiv = document.createElement('div');
+        bubbleDiv.className = 'message-bubble';
+
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'message-content';
+        contentDiv.id = 'streaming-content';
+
+        bubbleDiv.appendChild(contentDiv);
+        messageDiv.appendChild(roleDiv);
+        messageDiv.appendChild(bubbleDiv);
+
+        // Append footer row initially without text content for copy action
+        messageDiv.appendChild(buildAssistantFooterRow('', ''));
+
+        // Insert before typing indicator
+        messagesContainer.insertBefore(messageDiv, typingIndicator);
+
+        // Scroll to the start of this message
+        messageDiv.scrollIntoView({ block: 'start', behavior: 'smooth' });
+
+        // Update local arrays/variables to be in sync
+        currentMessages.push({ role: 'assistant', content: '' });
+        lastMessageCount = currentMessages.length;
+      }
+      break;
+    case 'streamChunk':
+      {
+        console.log('[WebView] streamChunk received, text length:', message.text?.length, 'accumulated length:', message.accumulated?.length);
+        const contentDiv = document.getElementById('streaming-content');
+        if (contentDiv) {
+          contentDiv.innerHTML = parseMarkdown(message.accumulated);
+
+          // Update plain text in footer buttons copy action
+          const messageDiv = contentDiv.closest('.message');
+          if (messageDiv) {
+            const usageEl = messageDiv.querySelector('.message-usage-row');
+            if (usageEl) {
+              const newUsageEl = buildAssistantFooterRow('', message.accumulated);
+              usageEl.parentNode.replaceChild(newUsageEl, usageEl);
+            }
+          }
+
+          // Scroll as we receive content
+          scrollMessagesToEnd('auto');
+        }
+      }
+      break;
     case 'updateMessages':
       stopLoadingMessages();
       renderMessages(message.messages, true);
@@ -2030,7 +2093,15 @@ window.addEventListener('message', event => {
     // Phase B: Context bar update
     case 'contextUpdate':
       updateEnvironmentBanner(message.environment || null, message.readOnlyMode || false);
-      updateContextBar(message.connectionName || null, message.database || null);
+      syncContextDropdowns(message.connectionId || '', message.database || '');
+      break;
+
+    case 'connectionsList':
+      populateConnections(message.connections);
+      break;
+
+    case 'databasesList':
+      populateDatabases(message.connectionId, message.databases);
       break;
 
     // Phase B: Error card display
@@ -2221,9 +2292,127 @@ function showToast(text, type = 'info') {
   }, 5000);
 }
 
+function buildRagContextCollapsible(ragContext) {
+  if (!ragContext) return null;
+
+  const ragDetails = document.createElement('details');
+  ragDetails.className = 'collapsible-process';
+  
+  const objectsCount = ragContext.objects ? ragContext.objects.length : 0;
+  const summary = document.createElement('summary');
+  summary.textContent = `🔍 Retrieved schema context (${objectsCount} table${objectsCount !== 1 ? 's' : ''})`;
+  ragDetails.appendChild(summary);
+  
+  const content = document.createElement('div');
+  content.className = 'collapsible-process-content';
+  
+  if (ragContext.objects && ragContext.objects.length > 0) {
+    const objTitle = document.createElement('div');
+    objTitle.style.fontWeight = '600';
+    objTitle.style.marginBottom = '4px';
+    objTitle.textContent = 'Matched Tables & Schemas:';
+    content.appendChild(objTitle);
+    
+    ragContext.objects.forEach(obj => {
+      const item = document.createElement('div');
+      item.className = 'rag-hit-item';
+      
+      const refSpan = document.createElement('span');
+      refSpan.textContent = obj.ref;
+      
+      const detailSpan = document.createElement('span');
+      detailSpan.className = 'rag-hit-detail';
+      detailSpan.textContent = obj.detail;
+      
+      item.appendChild(refSpan);
+      item.appendChild(detailSpan);
+      content.appendChild(item);
+    });
+  }
+  
+  if (ragContext.joinHints && ragContext.joinHints.length > 0) {
+    const joinTitle = document.createElement('div');
+    joinTitle.style.fontWeight = '600';
+    joinTitle.style.marginTop = '8px';
+    joinTitle.style.marginBottom = '4px';
+    joinTitle.textContent = 'Join Relationships Identified:';
+    content.appendChild(joinTitle);
+    
+    ragContext.joinHints.forEach(hint => {
+      const item = document.createElement('div');
+      item.style.fontSize = '11px';
+      item.style.fontFamily = 'var(--vscode-editor-font-family)';
+      item.style.padding = '5px 8px';
+      item.style.background = 'var(--vscode-textCodeBlock-background)';
+      item.style.borderRadius = '4px';
+      item.style.border = '1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.1))';
+      item.textContent = hint;
+      content.appendChild(item);
+    });
+  }
+  
+  if (ragContext.tokensUsed) {
+    const tokensInfo = document.createElement('div');
+    tokensInfo.style.fontSize = '10px';
+    tokensInfo.style.opacity = '0.6';
+    tokensInfo.style.marginTop = '6px';
+    tokensInfo.style.textAlign = 'right';
+    tokensInfo.textContent = `Context budget tokens: ${ragContext.tokensUsed}`;
+    content.appendChild(tokensInfo);
+  }
+  
+  ragDetails.appendChild(content);
+  return ragDetails;
+}
+
+function buildAgenticStepsCollapsible(agenticSteps) {
+  if (!agenticSteps || agenticSteps.length === 0) return null;
+
+  const agentDetails = document.createElement('details');
+  agentDetails.className = 'collapsible-process';
+  
+  const stepsCount = agenticSteps.length;
+  const summary = document.createElement('summary');
+  summary.textContent = `⚙️ Executed database agent (${stepsCount} step${stepsCount !== 1 ? 's' : ''})`;
+  agentDetails.appendChild(summary);
+  
+  const content = document.createElement('div');
+  content.className = 'collapsible-process-content';
+  
+  agenticSteps.forEach((step, stepIdx) => {
+    const stepDiv = document.createElement('div');
+    stepDiv.className = 'collapsible-step';
+    
+    const header = document.createElement('div');
+    header.className = 'collapsible-step-header';
+    header.textContent = `Step ${stepIdx + 1}: Call tool "${step.toolCall.name}"`;
+    stepDiv.appendChild(header);
+    
+    if (step.toolCall.arguments) {
+      const argsDiv = document.createElement('div');
+      argsDiv.style.fontSize = '11px';
+      argsDiv.style.opacity = '0.7';
+      argsDiv.style.marginBottom = '4px';
+      argsDiv.textContent = `Arguments: ${JSON.stringify(step.toolCall.arguments)}`;
+      stepDiv.appendChild(argsDiv);
+    }
+    
+    const body = document.createElement('div');
+    body.className = 'collapsible-step-body';
+    body.textContent = step.result;
+    stepDiv.appendChild(body);
+    
+    content.appendChild(stepDiv);
+  });
+  
+  agentDetails.appendChild(content);
+  return agentDetails;
+}
+
 let lastMessageCount = 0;
 
 function renderMessages(messages, animate = false) {
+  console.log('[WebView] renderMessages messages:', messages);
   currentMessages = Array.isArray(messages) ? [...messages] : [];
 
   if (messages.length === 0) {
@@ -2326,6 +2515,10 @@ function renderMessages(messages, animate = false) {
 
       if (isNewAssistantMessage && isLastMessage) {
         // Will be typed out — anchor assistant turn at top so the reply is read from the start
+        const agentCollapsible = buildAgenticStepsCollapsible(msg.agenticSteps);
+        if (agentCollapsible) {
+          bubbleDiv.appendChild(agentCollapsible);
+        }
         bubbleDiv.appendChild(contentDiv);
         messageDiv.appendChild(roleDiv);
         messageDiv.appendChild(bubbleDiv);
@@ -2353,6 +2546,22 @@ function renderMessages(messages, animate = false) {
       }
     } else {
       contentDiv.textContent = msg.content;
+    }
+
+    // Add RAG context collapsible for user messages if available
+    if (msg.role === 'user' && msg.ragContext) {
+      const ragCollapsible = buildRagContextCollapsible(msg.ragContext);
+      if (ragCollapsible) {
+        bubbleDiv.appendChild(ragCollapsible);
+      }
+    }
+
+    // Add Agentic steps collapsible for assistant messages if available
+    if (msg.role === 'assistant' && msg.agenticSteps && msg.agenticSteps.length > 0) {
+      const agentCollapsible = buildAgenticStepsCollapsible(msg.agenticSteps);
+      if (agentCollapsible) {
+        bubbleDiv.appendChild(agentCollapsible);
+      }
     }
 
     bubbleDiv.appendChild(contentDiv);
@@ -2422,39 +2631,80 @@ function updateEnvironmentBanner(environment, readOnlyMode) {
   chip.title = (readOnlyMode ? 'Read-only · ' : '') + label + ' environment — click for safety details';
 }
 
-function updateContextBar(connectionName, database, tableName) {
-  currentContext.connectionName = connectionName;
-  currentContext.database = database;
-  
-  const contextBar = document.getElementById('contextBar');
-  if (!contextBar) return;
-  
-  const envChip = document.getElementById('contextEnvChip');
-  const hasEnv = envChip && !envChip.hidden;
+// Map to cache database lists per connection ID in the webview
+const connectionDatabasesCache = {};
+let currentSelectedConnId = '';
+let currentSelectedDb = '';
 
-  if (connectionName || database || tableName || hasEnv) {
-    contextBar.style.display = 'flex';
-    const connElem = document.getElementById('contextConnection');
-    const tableElem = document.getElementById('contextTable');
-    
-    if (connElem) {
-      const connInfo = connectionName ? connectionName : 'Connected';
-      const dbInfo = database ? database : '';
-      connElem.textContent = [connInfo, dbInfo].filter(Boolean).join(' • ');
-    }
-    
-    if (tableElem) {
-      if (tableName) {
-        tableElem.textContent = '@' + tableName;
-        tableElem.parentElement.style.display = 'flex';
+function populateConnections(connections) {
+  const select = document.getElementById('contextConnectionSelect');
+  if (!select) return;
+  
+  // Clear but keep first
+  select.innerHTML = '<option value="">Select Connection...</option>';
+  connections.forEach(conn => {
+    const opt = document.createElement('option');
+    opt.value = conn.id;
+    opt.textContent = conn.name;
+    select.appendChild(opt);
+  });
+
+  if (currentSelectedConnId) {
+    select.value = currentSelectedConnId;
+  }
+}
+
+function populateDatabases(connectionId, databases) {
+  connectionDatabasesCache[connectionId] = databases;
+  
+  if (document.getElementById('contextConnectionSelect')?.value !== connectionId) {
+    return;
+  }
+
+  const select = document.getElementById('contextDatabaseSelect');
+  if (!select) return;
+
+  select.innerHTML = '<option value="">Select Database...</option>';
+  databases.forEach(db => {
+    const opt = document.createElement('option');
+    opt.value = db;
+    opt.textContent = db;
+    select.appendChild(opt);
+  });
+
+  if (currentSelectedDb) {
+    select.value = currentSelectedDb;
+  }
+}
+
+function syncContextDropdowns(connectionId, database) {
+  currentSelectedConnId = connectionId;
+  currentSelectedDb = database;
+
+  const connSelect = document.getElementById('contextConnectionSelect');
+  const dbSelect = document.getElementById('contextDatabaseSelect');
+  const contextBar = document.getElementById('contextBar');
+
+  if (contextBar) {
+    contextBar.style.display = (connectionId || database) ? 'flex' : 'none';
+  }
+
+  if (connSelect) {
+    if (connSelect.value !== connectionId) {
+      connSelect.value = connectionId;
+      // Fetch databases for this connection if not cached
+      if (connectionId) {
+        if (connectionDatabasesCache[connectionId]) {
+          populateDatabases(connectionId, connectionDatabasesCache[connectionId]);
+        } else {
+          dbSelect.innerHTML = '<option value="">Loading...</option>';
+          vscode.postMessage({ type: 'getDatabases', connectionId });
+        }
       } else {
-        tableElem.parentElement.style.display = 'none';
+        dbSelect.innerHTML = '<option value="">Select Database...</option>';
       }
-    }
-  } else {
-    const envChip = document.getElementById('contextEnvChip');
-    if (!envChip || envChip.hidden) {
-      contextBar.style.display = 'none';
+    } else if (dbSelect && dbSelect.value !== database) {
+      dbSelect.value = database;
     }
   }
 }
@@ -2798,6 +3048,32 @@ function wireChatDomEvents() {
   stopBtn?.addEventListener('click', cancelRequest);
 
   document.getElementById('imageLightbox')?.addEventListener('click', closeLightbox);
+
+  const connSelect = document.getElementById('contextConnectionSelect');
+  const dbSelect = document.getElementById('contextDatabaseSelect');
+
+  if (connSelect) {
+    connSelect.addEventListener('change', () => {
+      const connectionId = connSelect.value;
+      if (connectionId) {
+        dbSelect.innerHTML = '<option value="">Loading...</option>';
+        vscode.postMessage({ type: 'getDatabases', connectionId });
+      } else {
+        dbSelect.innerHTML = '<option value="">Select Database...</option>';
+        vscode.postMessage({ type: 'changeContext', connectionId: '', database: '' });
+      }
+    });
+  }
+
+  if (dbSelect) {
+    dbSelect.addEventListener('change', () => {
+      const connectionId = connSelect ? connSelect.value : '';
+      const database = dbSelect.value;
+      vscode.postMessage({ type: 'changeContext', connectionId, database });
+    });
+  }
+
+  vscode.postMessage({ type: 'getConnections' });
 }
 
 wireChatDomEvents();

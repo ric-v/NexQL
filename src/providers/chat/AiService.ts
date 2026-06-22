@@ -110,6 +110,8 @@ export class AiService {
     environment?: 'production' | 'staging' | 'development';
     readOnlyMode?: boolean;
     connectionName?: string;
+    databaseName?: string;
+    useAgentic?: boolean;
   } | undefined;
 
   setConnectionContext(ctx: AiService['_connectionContext']): void {
@@ -122,21 +124,22 @@ export class AiService {
     config: vscode.WorkspaceConfiguration,
     customSystemPrompt?: string,
     scope: AiConfigScope = 'notebook',
-    tools?: ToolSpec[]
+    tools?: ToolSpec[],
+    onChunk?: (chunk: { text?: string; toolCalls?: ToolCall[] }) => void
   ): Promise<AiResponse> {
     if (provider === 'vscode-lm') {
-      return await this.callVsCodeLm(userMessage, config, customSystemPrompt, scope, tools);
+      return await this.callVsCodeLm(userMessage, config, customSystemPrompt, scope, tools, onChunk);
     }
 
     if (provider === 'cursor') {
-      return await this.callCursorAgent(userMessage, config, customSystemPrompt, scope);
+      return await this.callCursorAgent(userMessage, config, customSystemPrompt, scope, onChunk);
     }
 
     if (provider === 'opencode') {
       return await this.callOpenCodeAgent(userMessage, config, customSystemPrompt, scope);
     }
 
-    return await this.callDirectApi(provider, userMessage, config, customSystemPrompt, scope, tools);
+    return await this.callDirectApi(provider, userMessage, config, customSystemPrompt, scope, tools, onChunk);
   }
 
   private _resolveConfiguredModel(
@@ -164,7 +167,8 @@ export class AiService {
     config: vscode.WorkspaceConfiguration,
     customSystemPrompt?: string,
     scope: AiConfigScope = 'notebook',
-    tools?: ToolSpec[]
+    tools?: ToolSpec[],
+    onChunk?: (chunk: { text?: string; toolCalls?: ToolCall[] }) => void
   ): Promise<AiResponse> {
     const telemetry = TelemetryService.getInstance();
     const configuredModel = this._resolveConfiguredModel(config, scope);
@@ -311,7 +315,7 @@ export class AiService {
       }));
 
       let effectiveRequest: any = chatRequest;
-      const extracted = await this._extractVsCodeLmResponse(chatRequest as any);
+      const extracted = await this._extractVsCodeLmResponse(chatRequest as any, onChunk);
       let responseText = extracted.text;
       let toolCalls = extracted.toolCalls;
       debugLog('[AiService] Initial extraction result length:', responseText.length, 'toolCalls:', toolCalls?.length);
@@ -351,7 +355,7 @@ export class AiService {
           resultKeys: rawRetryRequest?.result ? Object.keys(rawRetryRequest.result) : []
         }));
 
-        const retryExtracted = await this._extractVsCodeLmResponse(retryRequest as any);
+        const retryExtracted = await this._extractVsCodeLmResponse(retryRequest as any, onChunk);
         responseText = retryExtracted.text;
         toolCalls = retryExtracted.toolCalls;
         debugLog('[AiService] Retry extraction result length:', responseText.length);
@@ -365,7 +369,7 @@ export class AiService {
           debugWarn('[AiService] Selected model produced empty output. Trying alternate model:', fallbackModel.name || fallbackModel.id);
           const fallbackRequest = await fallbackModel.sendRequest(effectiveMessagesForFallback, requestOptions, this._cancellationTokenSource.token);
           effectiveRequest = fallbackRequest;
-          const fallbackExtracted = await this._extractVsCodeLmResponse(fallbackRequest as any);
+          const fallbackExtracted = await this._extractVsCodeLmResponse(fallbackRequest as any, onChunk);
           responseText = fallbackExtracted.text;
           toolCalls = fallbackExtracted.toolCalls;
           debugLog('[AiService] Alternate model extraction result length:', responseText.length);
@@ -487,6 +491,13 @@ export class AiService {
   ): Promise<{ text: string; usage?: string }> {
     const telemetry = TelemetryService.getInstance();
     if (!userMessage || !userMessage.trim()) {
+      const lastUser = [...this._messages].reverse().find(m => m.role === 'user');
+      if (lastUser && lastUser.content) {
+        userMessage = lastUser.content;
+      }
+    }
+
+    if (!userMessage || !userMessage.trim()) {
       throw new Error('User message is required for AI requests.');
     }
 
@@ -529,8 +540,16 @@ export class AiService {
     config: vscode.WorkspaceConfiguration,
     customSystemPrompt?: string,
     scope: AiConfigScope = 'notebook',
+    onChunk?: (chunk: { text?: string; toolCalls?: ToolCall[] }) => void
   ): Promise<{ text: string; usage?: string }> {
     const telemetry = TelemetryService.getInstance();
+    if (!userMessage || !userMessage.trim()) {
+      const lastUser = [...this._messages].reverse().find(m => m.role === 'user');
+      if (lastUser && lastUser.content) {
+        userMessage = lastUser.content;
+      }
+    }
+
     if (!userMessage || !userMessage.trim()) {
       throw new Error('User message is required for AI requests.');
     }
@@ -556,10 +575,47 @@ export class AiService {
         local: { cwd: workspaceRoot }
       });
 
-      const run = await agent.send({ text: prompt });
+      const sendOptions: any = {};
+      const run = await agent.send({ text: prompt }, sendOptions);
       const cancellationListener = (this._cancellationTokenSource.token as any).onCancellationRequested?.(() => {
         void run.cancel();
       }) ?? { dispose: () => undefined };
+
+      if (onChunk) {
+        const token = this._cancellationTokenSource.token;
+        (async () => {
+          try {
+            let lastText = '';
+            for await (const msg of run.stream()) {
+              if (token.isCancellationRequested) {
+                break;
+              }
+              if (msg.type === 'assistant' && msg.message && Array.isArray(msg.message.content)) {
+                let accumulatedText = '';
+                for (const block of msg.message.content) {
+                  if (block.type === 'text' && typeof block.text === 'string') {
+                    accumulatedText += block.text;
+                  }
+                }
+                if (accumulatedText) {
+                  if (accumulatedText.startsWith(lastText)) {
+                    const delta = accumulatedText.slice(lastText.length);
+                    if (delta) {
+                      onChunk({ text: delta });
+                    }
+                    lastText = accumulatedText;
+                  } else {
+                    onChunk({ text: accumulatedText });
+                    lastText = accumulatedText;
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            console.error('[AiService DEBUG] Error streaming from Cursor SDK:', e);
+          }
+        })();
+      }
 
       try {
         const result = await run.wait();
@@ -827,7 +883,10 @@ export class AiService {
     return candidates[0];
   }
 
-  private async _extractVsCodeLmResponse(chatRequest: any): Promise<{ text: string, toolCalls?: ToolCall[] }> {
+  private async _extractVsCodeLmResponse(
+    chatRequest: any,
+    onChunk?: (chunk: { text?: string; toolCalls?: ToolCall[] }) => void
+  ): Promise<{ text: string, toolCalls?: ToolCall[] }> {
     let text = '';
     const toolCalls: ToolCall[] = [];
     const streamPartDebug: string[] = [];
@@ -843,20 +902,32 @@ export class AiService {
           streamPartDebug.push(ctorName);
         }
 
+        let chunkText = '';
         if (part instanceof (vscode as any).LanguageModelTextPart) {
-          text += typeof part.value === 'string' ? part.value : '';
+          chunkText = typeof part.value === 'string' ? part.value : '';
         } else if (part instanceof (vscode as any).LanguageModelToolCallPart || (part && 'callId' in part && 'name' in part)) {
-          toolCalls.push({
+          const tc: ToolCall = {
             id: part.callId,
             name: part.name,
             arguments: part.input
-          });
+          };
+          toolCalls.push(tc);
+          if (onChunk) {
+            onChunk({ toolCalls: [tc] });
+          }
         } else if (typeof part === 'string') {
-          text += part;
+          chunkText = part;
         } else if (typeof part.text === 'string') {
-          text += part.text;
+          chunkText = part.text;
         } else if (typeof part.value === 'string') {
-          text += part.value;
+          chunkText = part.value;
+        }
+
+        if (chunkText) {
+          text += chunkText;
+          if (onChunk) {
+            onChunk({ text: chunkText });
+          }
         }
       }
     }
@@ -876,7 +947,11 @@ export class AiService {
     if (chatRequest?.text && Symbol.asyncIterator in Object(chatRequest.text)) {
       for await (const fragment of chatRequest.text) {
         textChunkCount += 1;
-        text += this._normalizeLmTextFragment(fragment);
+        const fragmentStr = this._normalizeLmTextFragment(fragment);
+        text += fragmentStr;
+        if (onChunk && fragmentStr) {
+          onChunk({ text: fragmentStr });
+        }
       }
     }
 
@@ -1093,7 +1168,8 @@ export class AiService {
     config: vscode.WorkspaceConfiguration,
     customSystemPrompt?: string,
     scope: AiConfigScope = 'notebook',
-    tools?: ToolSpec[]
+    tools?: ToolSpec[],
+    onChunk?: (chunk: { text?: string; toolCalls?: ToolCall[] }) => void
   ): Promise<AiResponse> {
     const telemetry = TelemetryService.getInstance();
     if (!DIRECT_API_PROVIDERS.has(provider)) {
@@ -1356,8 +1432,12 @@ export class AiService {
       }
     }
 
+    if (onChunk && provider !== 'gemini') {
+      body.stream = true;
+    }
+
     try {
-      const response = await this._makeHttpRequestWithRetry(endpoint, headers, body, provider);
+      const response = await this._makeHttpRequestWithRetry(endpoint, headers, body, provider, onChunk);
       telemetry.trackEvent('ai_request', { provider, success: true });
       return response;
     } catch (error) {
@@ -1371,11 +1451,12 @@ export class AiService {
     headers: any,
     body: any,
     provider: string,
+    onChunk?: (chunk: { text?: string; toolCalls?: ToolCall[] }) => void
   ): Promise<{ text: string; usage?: string }> {
     let lastErr: unknown;
     for (let attempt = 0; attempt < HTTP_RETRY_MAX_ATTEMPTS; attempt++) {
       try {
-        return await this._makeHttpRequest(endpoint, headers, body, provider);
+        return await this._makeHttpRequest(endpoint, headers, body, provider, onChunk);
       } catch (err) {
         lastErr = err;
         if (
@@ -1476,7 +1557,13 @@ export class AiService {
     }
   }
 
-  private _makeHttpRequest(endpoint: string, headers: any, body: any, provider: string): Promise<{ text: string, usage?: string }> {
+  private _makeHttpRequest(
+    endpoint: string,
+    headers: any,
+    body: any,
+    provider: string,
+    onChunk?: (chunk: { text?: string; toolCalls?: ToolCall[] }) => void
+  ): Promise<{ text: string, usage?: string }> {
     return new Promise((resolve, reject) => {
       const url = new URL(endpoint);
       const requestData = JSON.stringify(body);
@@ -1494,12 +1581,11 @@ export class AiService {
 
       const protocol = url.protocol === 'https:' ? https : http;
       const req = protocol.request(options, (res) => {
-        let data = '';
-        res.on('data', chunk => data += chunk);
-        res.on('end', () => {
-          const statusCode = res.statusCode ?? 0;
-
-          if (statusCode !== 200) {
+        const statusCode = res.statusCode ?? 0;
+        if (statusCode !== 200) {
+          let data = '';
+          res.on('data', chunk => data += chunk);
+          res.on('end', () => {
             let detail = `API request failed with status ${statusCode}`;
             try {
               const errBody = JSON.parse(data) as { error?: { message?: string } };
@@ -1513,56 +1599,108 @@ export class AiService {
               }
             }
             reject(new AiProviderHttpError(detail, statusCode));
-            return;
-          }
+          });
+          return;
+        }
 
-          let response: Record<string, unknown>;
-          try {
-            response = JSON.parse(data) as Record<string, unknown>;
-          } catch (e) {
-            reject(
-              new AiProviderHttpError(
-                `Failed to parse API response: ${e instanceof Error ? e.message : String(e)}`,
-                statusCode,
-              ),
-            );
-            return;
-          }
+        let data = '';
+        let buffer = '';
+        res.on('data', (chunk: Buffer | string) => {
+          const chunkStr = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+          if (onChunk) {
+            buffer += chunkStr;
+            let lineEnd = buffer.indexOf('\n');
+            while (lineEnd !== -1) {
+              const line = buffer.slice(0, lineEnd).trim();
+              buffer = buffer.slice(lineEnd + 1);
+              lineEnd = buffer.indexOf('\n');
 
+              if (line.startsWith('data:')) {
+                const dataVal = line.slice(5).trim();
+                if (dataVal === '[DONE]') {
+                  continue;
+                }
+                try {
+                  const parsed = JSON.parse(dataVal);
+                  let text = '';
+                  if (provider === 'anthropic') {
+                    if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
+                      text = parsed.delta.text;
+                    }
+                  } else {
+                    // OpenAI-compatible
+                    text = parsed.choices?.[0]?.delta?.content || '';
+                  }
+                  if (text) {
+                    data += text;
+                    onChunk({ text });
+                  }
+                } catch (e) {
+                  // ignore JSON parse errors for partial or meta lines
+                }
+              }
+            }
+          } else {
+            data += chunkStr;
+          }
+        });
+
+        res.on('end', () => {
           let content = '';
           let usage = '';
 
-          if (provider === 'anthropic') {
-            const contentArr = response.content as Array<{ text?: string }> | undefined;
-            content = contentArr?.[0]?.text || '';
-            const usageObj = response.usage as { input_tokens?: number; output_tokens?: number } | undefined;
-            if (usageObj) {
-              usage = `${usageObj.input_tokens} input, ${usageObj.output_tokens} output`;
-            }
-          } else if (provider === 'gemini') {
-            const candidates = response.candidates as Array<{
-              content?: { parts?: Array<{ text?: string }> };
-            }> | undefined;
-            content = candidates?.[0]?.content?.parts?.[0]?.text || '';
-            const usageObj = response.usageMetadata as { totalTokenCount?: number } | undefined;
-            if (usageObj) {
-              usage = `${usageObj.totalTokenCount} tokens`;
-            }
+          if (onChunk) {
+            content = data;
+            usage = AiService._roughTokenEstimateLabel(
+              AiService.estimateTokens(JSON.stringify(body.messages || '')),
+              content.length
+            );
           } else {
-            const choices = response.choices as Array<{ message?: { content?: string } }> | undefined;
-            content = choices?.[0]?.message?.content || '';
-            const usageObj = response.usage as {
-              total_tokens?: number;
-              prompt_tokens?: number;
-              completion_tokens?: number;
-            } | undefined;
-            if (usageObj) {
-              usage = `${usageObj.total_tokens} tokens (P:${usageObj.prompt_tokens}, C:${usageObj.completion_tokens})`;
+            let response: Record<string, unknown>;
+            try {
+              response = JSON.parse(data) as Record<string, unknown>;
+            } catch (e) {
+              reject(
+                new AiProviderHttpError(
+                  `Failed to parse API response: ${e instanceof Error ? e.message : String(e)}`,
+                  statusCode,
+                ),
+              );
+              return;
             }
-          }
 
-          if (!content && provider === 'custom') {
-            content = JSON.stringify(response);
+            if (provider === 'anthropic') {
+              const contentArr = response.content as Array<{ text?: string }> | undefined;
+              content = contentArr?.[0]?.text || '';
+              const usageObj = response.usage as { input_tokens?: number; output_tokens?: number } | undefined;
+              if (usageObj) {
+                usage = `${usageObj.input_tokens} input, ${usageObj.output_tokens} output`;
+              }
+            } else if (provider === 'gemini') {
+              const candidates = response.candidates as Array<{
+                content?: { parts?: Array<{ text?: string }> };
+              }> | undefined;
+              content = candidates?.[0]?.content?.parts?.[0]?.text || '';
+              const usageObj = response.usageMetadata as { totalTokenCount?: number } | undefined;
+              if (usageObj) {
+                usage = `${usageObj.totalTokenCount} tokens`;
+              }
+            } else {
+              const choices = response.choices as Array<{ message?: { content?: string } }> | undefined;
+              content = choices?.[0]?.message?.content || '';
+              const usageObj = response.usage as {
+                total_tokens?: number;
+                prompt_tokens?: number;
+                completion_tokens?: number;
+              } | undefined;
+              if (usageObj) {
+                usage = `${usageObj.total_tokens} tokens (P:${usageObj.prompt_tokens}, C:${usageObj.completion_tokens})`;
+              }
+            }
+
+            if (!content && provider === 'custom') {
+              content = JSON.stringify(response);
+            }
           }
 
           if (usage && body?.model) {

@@ -168,7 +168,11 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
       return [];
     }
     return entries
-      .filter(([, type]) => type === vscode.FileType.Directory)
+      .filter(([name, type]) => {
+        if (type !== vscode.FileType.Directory) return false;
+        if (name === 'dbindex' && parentUri.toString() === this.globalStorageUri.toString()) return false;
+        return true;
+      })
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([name]) => {
         const uri = vscode.Uri.joinPath(parentUri, name);

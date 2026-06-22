@@ -249,22 +249,22 @@
       {
         "command": "postgres-explorer.addConnection",
         "title": "Add PostgreSQL Connection",
-        "icon": "resources/toolbar/add.svg"
+        "icon": "$(add)"
       },
       {
         "command": "postgres-explorer.importConnectionFromDatabaseUrl",
         "title": "Import Connection from DATABASE_URL (.env)",
-        "icon": "resources/toolbar/import.svg"
+        "icon": "$(cloud-download)"
       },
       {
         "command": "postgres-explorer.smartPasteConnection",
         "title": "Add Connection from Clipboard URL",
-        "icon": "resources/toolbar/paste.svg"
+        "icon": "$(clipboard)"
       },
       {
         "command": "postgres-explorer.refreshConnections",
         "title": "Refresh Connections",
-        "icon": "resources/toolbar/refresh.svg"
+        "icon": "$(refresh)"
       },
       {
         "command": "postgres-explorer.editConnection",
@@ -289,7 +289,7 @@
       {
         "command": "postgres-explorer.manageConnections",
         "title": "Manage Connections",
-        "icon": "resources/toolbar/settings.svg"
+        "icon": "$(settings-gear)"
       },
       {
         "command": "postgres-explorer.settingsHub",
@@ -310,7 +310,7 @@
       {
         "command": "postgres-explorer.aiSettings",
         "title": "AI Settings",
-        "icon": "resources/toolbar/ai.svg"
+        "icon": "$(sparkle)"
       },
       {
         "command": "postgres-explorer.showTableProperties",
@@ -1233,7 +1233,7 @@
         "command": "postgres-explorer.ddlViewer.toggleEnabled",
         "title": "DDL Viewer: Toggle SQL Preview",
         "category": "NexQL",
-        "icon": "resources/toolbar/toggle-sql.svg"
+        "icon": "$(file-code)"
       },
       {
         "command": "postgres-explorer.switchConnection",
@@ -1250,7 +1250,7 @@
       {
         "command": "postgres-explorer.switchConnectionProfile",
         "title": "Switch Connection Profile",
-        "icon": "resources/toolbar/profile.svg",
+        "icon": "$(account)",
         "category": "NexQL: Profiles"
       },
       {
@@ -1860,7 +1860,8 @@
           "id": "postgresExplorer",
           "name": "Connections",
           "contextualTitle": "NexQL",
-          "icon": "resources/postgres-vsc-icon.png"
+          "icon": "resources/postgres-vsc-icon.png",
+          "canCollapseAll": true
         },
         {
           "id": "postgresExplorer.notebooks",
@@ -2187,6 +2188,11 @@
           "default": "",
           "scope": "machine",
           "description": "Connection ID for optional team Postgres sync backend (pgstudio_sync schema)."
+        },
+        "postgresExplorer.dbIndex.enableEmbeddings": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable vector embeddings generation for tables and views to support semantic search grounding in AI tools."
         },
         "postgresExplorer.aiProvider": {
           "type": "string",
@@ -2570,37 +2576,37 @@
         {
           "command": "postgres-explorer.addConnection",
           "when": "view == postgresExplorer",
-          "group": "navigation"
-        },
-        {
-          "command": "postgres-explorer.importConnectionFromDatabaseUrl",
-          "when": "view == postgresExplorer",
-          "group": "navigation"
-        },
-        {
-          "command": "postgres-explorer.smartPasteConnection",
-          "when": "view == postgresExplorer",
-          "group": "navigation"
-        },
-        {
-          "command": "postgres-explorer.refreshConnections",
-          "when": "view == postgresExplorer",
-          "group": "navigation"
-        },
-        {
-          "command": "postgres-explorer.ddlViewer.toggleEnabled",
-          "when": "view == postgresExplorer",
-          "group": "navigation"
+          "group": "navigation@1"
         },
         {
           "command": "postgres-explorer.manageConnections",
           "when": "view == postgresExplorer",
-          "group": "navigation"
+          "group": "navigation@2"
+        },
+        {
+          "command": "postgres-explorer.ddlViewer.toggleEnabled",
+          "when": "view == postgresExplorer",
+          "group": "navigation@3"
+        },
+        {
+          "command": "postgres-explorer.refreshConnections",
+          "when": "view == postgresExplorer",
+          "group": "navigation@4"
+        },
+        {
+          "command": "postgres-explorer.importConnectionFromDatabaseUrl",
+          "when": "view == postgresExplorer",
+          "group": "3_phase7@1"
+        },
+        {
+          "command": "postgres-explorer.smartPasteConnection",
+          "when": "view == postgresExplorer",
+          "group": "3_phase7@2"
         },
         {
           "command": "postgres-explorer.aiSettings",
           "when": "view == postgresExplorer",
-          "group": "navigation"
+          "group": "3_phase7@3"
         },
         {
           "command": "postgres-explorer.clearHistory",

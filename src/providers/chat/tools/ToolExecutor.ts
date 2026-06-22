@@ -9,8 +9,8 @@ import { debugLog } from '../../../common/logger';
 export class ToolExecutor {
   constructor(
     private readonly context: vscode.ExtensionContext,
-    private readonly connectionId: string,
-    private readonly databaseName: string
+    private connectionId: string,
+    private databaseName: string
   ) {}
 
   private quoteIdentifier(ident: string): string {
@@ -26,25 +26,39 @@ export class ToolExecutor {
   }
 
   async executeTool(name: string, args: any): Promise<string> {
+    console.log(`[ToolExecutor] executeTool: Executing tool "${name}" with args:`, args);
     debugLog(`[ToolExecutor] Executing tool ${name} with args:`, JSON.stringify(args));
     try {
+      let result: string;
       switch (name) {
+        case 'select_connection_context':
+          result = await this.selectConnectionContext(args.reason);
+          break;
         case 'search_schema':
-          return await this.searchSchema(args.query);
+          result = await this.searchSchema(args.query);
+          break;
         case 'describe_object':
-          return await this.describeObject(args.ref);
+          result = await this.describeObject(args.ref);
+          break;
         case 'get_join_path':
-          return await this.getJoinPath(args.a, args.b);
+          result = await this.getJoinPath(args.a, args.b);
+          break;
         case 'sample_values':
-          return await this.sampleValues(args.ref, args.col);
+          result = await this.sampleValues(args.ref, args.col);
+          break;
         case 'run_select':
-          return await this.runSelect(args.sql);
+          result = await this.runSelect(args.sql);
+          break;
         case 'explain_query':
-          return await this.explainQuery(args.sql);
+          result = await this.explainQuery(args.sql);
+          break;
         default:
           throw new Error(`Unknown tool: ${name}`);
       }
+      console.log(`[ToolExecutor] executeTool: Tool "${name}" finished. Result length: ${result.length} characters.`);
+      return result;
     } catch (err: any) {
+      console.error(`[ToolExecutor] executeTool: Tool "${name}" failed with error:`, err);
       debugLog(`[ToolExecutor] Error executing tool ${name}:`, err.message || err);
       return JSON.stringify({ error: err.message || String(err) });
     }
@@ -54,9 +68,11 @@ export class ToolExecutor {
     if (!query || !query.trim()) {
       return JSON.stringify([]);
     }
+    console.log(`[ToolExecutor] searchSchema: Querying schema index for "${query}"...`);
     const store = new IndexStore(this.context.globalStorageUri);
     const queryService = new IndexQueryService(store);
     const hits = await queryService.search(this.connectionId, this.databaseName, query, 10);
+    console.log(`[ToolExecutor] searchSchema: Found ${hits.length} hits. Top hits:`, hits.slice(0, 3));
     return JSON.stringify(hits, null, 2);
   }
 
@@ -173,5 +189,52 @@ export class ToolExecutor {
         client.release();
       } catch {}
     }
+  }
+
+  private async selectConnectionContext(reason: string): Promise<string> {
+    console.log(`[ToolExecutor] selectConnectionContext: Prompting user with showQuickPick for connection. Reason: "${reason}"`);
+    const connections = vscode.workspace.getConfiguration().get<any[]>('postgresExplorer.connections') || [];
+    if (connections.length === 0) {
+      return JSON.stringify({ error: "No connections configured. Please add a connection first." });
+    }
+
+    const items = connections.map(conn => ({
+      label: conn.name || conn.host || 'Unnamed Connection',
+      description: `${conn.host}:${conn.port || 5432}${conn.database ? '/' + conn.database : ''}`,
+      connectionId: conn.id,
+      database: conn.database || 'postgres'
+    }));
+
+    const selected = await vscode.window.showQuickPick(items, {
+      placeHolder: `Select connection: ${reason}`,
+      ignoreFocusOut: true
+    });
+
+    if (!selected) {
+      console.log(`[ToolExecutor] selectConnectionContext: User cancelled connection quick pick.`);
+      return JSON.stringify({ error: "User cancelled connection selection." });
+    }
+
+    this.connectionId = selected.connectionId;
+    this.databaseName = selected.database;
+    console.log(`[ToolExecutor] selectConnectionContext: Switched context to connectionId="${this.connectionId}", database="${this.databaseName}"`);
+
+    // Sync back to ChatViewProvider
+    try {
+      const { getChatViewProvider } = require('../../../extension');
+      const chatProvider = getChatViewProvider();
+      if (chatProvider) {
+        chatProvider.setConnectionContext(this.connectionId, this.databaseName);
+      }
+    } catch (e) {
+      console.error(`[ToolExecutor] selectConnectionContext: Failed to sync connection context to ChatViewProvider`, e);
+    }
+
+    return JSON.stringify({
+      message: "Connection context switched successfully.",
+      connectionName: selected.label,
+      connectionId: this.connectionId,
+      database: this.databaseName
+    });
   }
 }
