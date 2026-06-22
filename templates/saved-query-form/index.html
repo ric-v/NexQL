@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="{{CSP}}">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{PAGE_TITLE}}</title>
+  <link rel="stylesheet" href="{{HIGHLIGHT_CSS_URI}}">
+  <style>{{INLINE_STYLES}}</style>
+</head>
+<body>
+  <div class="pg-panel-page">
+    <div class="pg-card">
+      <div class="pg-card-header">
+        <div>
+          <h1 class="pg-card-title">{{HEADING}}</h1>
+          <p class="pg-card-desc">{{SUBTITLE}}</p>
+        </div>
+      </div>
+      <div class="pg-card-body">
+        <div class="pg-info-banner">
+          📌 Make your queries discoverable by adding meaningful titles, descriptions, and tags
+        </div>
+
+        <div class="pg-btn-row" style="justify-content:stretch;margin-top:0;">
+          <button type="button" class="pg-btn pg-btn--primary btn-ai-all" id="btnAiAll" style="width:100%;">
+            ✨ Auto-Generate All Fields with AI
+          </button>
+        </div>
+
+        <form id="saveForm">
+          <div class="pg-field">
+            <label class="pg-field-label" for="title">
+              Query Title <span class="required">*</span>
+            </label>
+            <input class="pg-field-control" type="text" id="title" placeholder="e.g., Active Users by Department" required />
+            <div class="pg-field-hint">A memorable name for this query</div>
+          </div>
+
+          <div class="pg-field">
+            <label class="pg-field-label" for="description">Description</label>
+            <input class="pg-field-control" type="text" id="description" placeholder="What does this query do?" />
+            <div class="pg-field-hint">Optional: Help your team understand the purpose of this query</div>
+          </div>
+
+          <div class="pg-field">
+            <label class="pg-field-label" for="tags">Tags</label>
+            <input class="pg-field-control" type="text" id="tags" placeholder="e.g., users, active, department, reports" />
+            <div class="pg-field-hint">Comma-separated tags for easy filtering and discovery</div>
+          </div>
+
+          <div class="pg-field">
+            <label class="pg-field-label">SQL Query</label>
+            <div class="pg-query-preview" id="queryPreview">{{HIGHLIGHTED_QUERY}}</div>
+          </div>
+
+          <div class="pg-btn-row">
+            <button type="button" class="pg-btn pg-btn--secondary" id="btnCancel">Cancel</button>
+            <button type="submit" class="pg-btn pg-btn--primary" id="btnSave">{{SAVE_LABEL}}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+  <script nonce="{{NONCE}}">{{INLINE_SCRIPTS}}</script>
+</body>
+</html>

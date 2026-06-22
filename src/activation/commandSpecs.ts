@@ -7,7 +7,7 @@ import { ChatViewProvider } from '../providers/ChatViewProvider';
 import { cmdAiAssist } from '../commands/aiAssist';
 import { showColumnProperties, copyColumnName, copyColumnNameQuoted, generateSelectStatement, generateWhereClause, generateAlterColumnScript, generateDropColumnScript, generateRenameColumnScript, addColumnComment, generateIndexOnColumn, viewColumnStatistics, cmdAddColumn } from '../commands/columns';
 import { showConstraintProperties, copyConstraintName, generateDropConstraintScript, generateAlterConstraintScript, validateConstraint, generateAddConstraintScript, viewConstraintDependencies, cmdConstraintOperations, cmdAddConstraint } from '../commands/constraints';
-import { cmdConnectDatabase, cmdDisconnectConnection, cmdDisconnectDatabase, cmdReconnectConnection, cmdDuplicateConnection, showConnectionSafety, revealInExplorer } from '../commands/connection';
+import { cmdConnectDatabase, cmdDisconnectConnection, cmdDisconnectDatabase, cmdReconnectConnection, cmdDuplicateConnection, showConnectionSafety, revealInExplorer, cmdAssignConnectionColor, cmdSetConnectionGroup, cmdPinConnection, cmdUnpinConnection } from '../commands/connection';
 import { cmdImportConnectionFromDatabaseUrl } from '../commands/importConnectionFromDatabaseUrl';
 import { cmdSmartPasteConnection } from '../commands/smartPasteConnection';
 import { showIndexProperties, copyIndexName, generateDropIndexScript, generateReindexScript, generateScriptCreate, analyzeIndexUsage, generateAlterIndexScript, addIndexComment, cmdIndexOperations, cmdAddIndex } from '../commands/indexes';
@@ -18,7 +18,7 @@ import { cmdForeignDataWrapperOperations, cmdShowForeignDataWrapperProperties, c
 import { cmdCallFunction, cmdCreateFunction, cmdDropFunction, cmdEditFunction, cmdFunctionOperations, cmdRefreshFunction, cmdShowFunctionProperties } from '../commands/functions';
 import { cmdCallProcedure, cmdCreateProcedure, cmdDropProcedure, cmdEditProcedure, cmdProcedureOperations, cmdRefreshProcedure, cmdShowProcedureProperties } from '../commands/procedures';
 import { cmdCreateMaterializedView, cmdDropMatView, cmdEditMatView, cmdMatViewOperations, cmdRefreshMatView, cmdViewMatViewData, cmdViewMatViewProperties } from '../commands/materializedViews';
-import { cmdNewNotebook, cmdExplainQuery, cmdJumpToSection } from '../commands/notebook';
+import { cmdNewNotebook, cmdExplainQuery, cmdJumpToSection, cmdSwitchNotebookConnection, cmdQuickOpenNotebook } from '../commands/notebook';
 import { toggleFullDatasetForCell, toggleFullDatasetFromCell } from '../commands/fullDataset';
 import { cmdExportNotebook } from '../commands/notebookExport';
 import { cmdCreateObjectInSchema, cmdCreateSchema, cmdSchemaOperations, cmdShowSchemaProperties, cmdPasteTable } from '../commands/schema';
@@ -30,6 +30,11 @@ import { cmdAddRole, cmdAddUser, cmdDropRole, cmdEditRole, cmdGrantRevokeRole, c
 import { cmdCreateView, cmdDropView, cmdEditView, cmdRefreshView, cmdScriptCreate as cmdViewScriptCreate, cmdScriptSelect as cmdViewScriptSelect, cmdShowViewProperties, cmdViewData, cmdViewOperations } from '../commands/views';
 
 import { SettingsHubPanel, SettingsHubShowOptions } from '../features/settings/SettingsHubPanel';
+import {
+  cmdCreateNotebookFolder,
+  cmdMoveNotebook,
+  cmdRenameNotebookFolder,
+} from '../features/notebook/notebookFolderCommands';
 import { ConnectionUtils } from '../utils/connectionUtils';
 import { sentinelThemeSwapService } from '../extension';
 
@@ -581,6 +586,30 @@ export function getCommandSpecs(
       callback: async (item: any) => await cmdConnectDatabase(item, context, databaseTreeProvider)
     },
     {
+      command: 'postgres-explorer.assignConnectionColor',
+      callback: async (item: DatabaseTreeItem) => await cmdAssignConnectionColor(item, context, databaseTreeProvider)
+    },
+    {
+      command: 'postgres-explorer.setConnectionGroup',
+      callback: async (item: DatabaseTreeItem) => await cmdSetConnectionGroup(item, context, databaseTreeProvider)
+    },
+    {
+      command: 'postgres-explorer.pinConnection',
+      callback: async (item: DatabaseTreeItem) => await cmdPinConnection(item, context, databaseTreeProvider)
+    },
+    {
+      command: 'postgres-explorer.unpinConnection',
+      callback: async (item: DatabaseTreeItem) => await cmdUnpinConnection(item, context, databaseTreeProvider)
+    },
+    {
+      command: 'postgres-explorer.switchNotebookConnection',
+      callback: async () => await cmdSwitchNotebookConnection()
+    },
+    {
+      command: 'postgres-explorer.quickOpenNotebook',
+      callback: async () => await cmdQuickOpenNotebook(context)
+    },
+    {
       command: 'postgres-explorer.disconnect',
       callback: async () => {
         databaseTreeProvider.refresh();
@@ -670,11 +699,7 @@ export function getCommandSpecs(
       command: 'postgres-explorer.notebooks.delete',
       callback: async (item: NotebookTreeItem) => {
         if (!item?.uri) { return; }
-        const confirm = await vscode.window.showWarningMessage(
-          `Delete "${item.label as string}.pgsql"? This cannot be undone.`,
-          { modal: true }, 'Delete'
-        );
-        if (confirm !== 'Delete') { return; }
+        const notebookName = item.label as string;
         let syncId: string | undefined;
         try {
           const raw = await vscode.workspace.fs.readFile(item.uri);
@@ -684,28 +709,24 @@ export function getCommandSpecs(
         } catch {
           /* best-effort */
         }
+        const { isItemSyncedToCloud, resolveDeleteCloudChoice, applyLocalDeleteCloudChoice } =
+          await import('../features/sync/localDeletePrompt');
+        const synced = !!(syncId && isItemSyncedToCloud(context, syncId));
+        const cloudChoice = syncId
+          ? await resolveDeleteCloudChoice(context, syncId, notebookName)
+          : 'keep-cloud';
+        if (!cloudChoice) { return; }
+        if (!synced) {
+          const confirm = await vscode.window.showWarningMessage(
+            `Delete "${notebookName}.pgsql"? This cannot be undone.`,
+            { modal: true }, 'Delete'
+          );
+          if (confirm !== 'Delete') { return; }
+        }
         await vscode.workspace.fs.delete(item.uri, { recursive: false });
         if (syncId) {
-          try {
-            const { recordSyncActivity } = await import('../features/sync/SyncActivityLog');
-            // Do NOT remove the index entry here. The sync engine emits a cloud
-            // tombstone by walking syncedIds() for items that were synced before
-            // and are now gone locally (buildOps delete branch). Removing it up
-            // front strips the compare-and-swap base, so the delete would never
-            // propagate to the cloud or other devices. recordAccepted() prunes
-            // the index once the tombstone is acknowledged.
-            recordSyncActivity({
-              kind: 'notebook',
-              action: 'delete',
-              itemId: syncId,
-              name: item.label as string,
-            });
-          } catch {
-            /* best-effort */
-          }
+          await applyLocalDeleteCloudChoice(syncId, cloudChoice);
         }
-        const { triggerInstantSync } = await import('../features/sync/syncTriggers');
-        triggerInstantSync();
         notebooksTreeProvider?.refresh();
       }
     },
@@ -725,6 +746,24 @@ export function getCommandSpecs(
         triggerInstantSync();
         notebooksTreeProvider?.refresh();
       }
+    },
+    {
+      command: 'postgres-explorer.notebooks.createFolder',
+      callback: async (item?: NotebookTreeItem) => {
+        await cmdCreateNotebookFolder(context, item, notebooksTreeProvider, context.globalStorageUri);
+      },
+    },
+    {
+      command: 'postgres-explorer.notebooks.renameFolder',
+      callback: async (item: NotebookTreeItem) => {
+        await cmdRenameNotebookFolder(context, item, notebooksTreeProvider);
+      },
+    },
+    {
+      command: 'postgres-explorer.notebooks.moveNotebook',
+      callback: async (item: NotebookTreeItem) => {
+        await cmdMoveNotebook(context, item, notebooksTreeProvider, context.globalStorageUri);
+      },
     },
     {
       command: 'postgres-explorer.refresh',
@@ -1756,6 +1795,96 @@ export function getCommandSpecs(
 
     // Phase 2: Schema Search
     { command: 'postgres-explorer.searchSchema', callback: async () => await cmdSearchSchema() },
+
+    // Database Index Grounding Commands
+    {
+      command: 'postgres-explorer.dbindex.openPanel',
+      callback: async () => {
+        const { DbIndexPanel } = await import('../features/dbindex/panel/DbIndexPanel');
+        await DbIndexPanel.show(context.extensionUri, context);
+      }
+    },
+    {
+      command: 'postgres-explorer.dbindex.build',
+      callback: async (item?: DatabaseTreeItem) => {
+        const { IndexBuilder } = await import('../features/dbindex/IndexBuilder');
+        const { IndexStore } = await import('../features/dbindex/IndexStore');
+        const { runGuidedBuildWizard } = await import('../features/dbindex/buildWizard');
+        const store = new IndexStore(context.globalStorageUri);
+        const builder = new IndexBuilder(store);
+        const preselected = item && item.connectionId && item.databaseName ? {
+          connectionId: item.connectionId,
+          databaseName: item.databaseName
+        } : undefined;
+        await runGuidedBuildWizard(context, builder, outputChannel, preselected);
+      }
+    },
+    {
+      command: 'postgres-explorer.dbindex.clear',
+      callback: async () => {
+        const { IndexStore } = await import('../features/dbindex/IndexStore');
+        const store = new IndexStore(context.globalStorageUri);
+        const connection = await ConnectionUtils.showConnectionPicker(undefined, {
+          title: 'Clear Database Index',
+          placeHolder: 'Select a connection',
+        });
+        if (!connection) return;
+        const database = await ConnectionUtils.showDatabasePicker(connection, undefined, {
+          title: 'Clear Database Index',
+          placeHolder: 'Select a database',
+        });
+        if (!database) return;
+        
+        const confirm = await vscode.window.showWarningMessage(
+          `Are you sure you want to delete the local index for "${database}"?`,
+          'Delete'
+        );
+        if (confirm === 'Delete') {
+          await store.clearIndex(connection.id, database);
+          vscode.window.showInformationMessage(`Index cleared for "${database}".`);
+
+          // Refresh active panels
+          try {
+            const { SettingsHubPanel } = await import('../features/settings/SettingsHubPanel');
+            if (SettingsHubPanel.currentPanel) {
+              SettingsHubPanel.currentPanel.refreshSection('dbindex');
+            }
+          } catch {}
+          try {
+            const { DbIndexPanel } = await import('../features/dbindex/panel/DbIndexPanel');
+            if (DbIndexPanel.currentPanel) {
+              DbIndexPanel.currentPanel.refreshState();
+            }
+          } catch {}
+        }
+      }
+    },
+    {
+      command: 'postgres-explorer.dbindex.updateBackground',
+      callback: async (connectionId: string, database: string) => {
+        const { IndexBuilder } = await import('../features/dbindex/IndexBuilder');
+        const { IndexStore } = await import('../features/dbindex/IndexStore');
+        const store = new IndexStore(context.globalStorageUri);
+        const baseDir = store.getBaseDir(connectionId, database);
+        const manifest = await store.readManifest(baseDir);
+        if (!manifest) return; // No index configured
+
+        const builder = new IndexBuilder(store);
+        try {
+          await builder.build(
+            connectionId,
+            database,
+            manifest.scope,
+            manifest.buildDepth,
+            'auto',
+            manifest.environment,
+          );
+          outputChannel.appendLine(`[AutoRefresh] Background index rebuild complete for ${database}.`);
+        } catch (err: any) {
+          outputChannel.appendLine(`[AutoRefresh] Background index rebuild failed: ${err.message || err}`);
+        }
+      }
+    }
   ];
 
   return commands;

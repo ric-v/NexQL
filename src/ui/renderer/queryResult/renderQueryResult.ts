@@ -50,7 +50,7 @@ import {
   normalizeNoticesPayload,
   renderNoticesPanel,
 } from '../../../renderer/components/notices/NoticesPanel';
-import { BRAND_ACCENT } from '../rendererConstants';
+import { BRAND_ACCENT, RENDERER_ELEVATION_2, RENDERER_GLASS_BG, RENDERER_GLASS_BLUR } from '../rendererConstants';
 import {
   buildChatResultsSampleJson,
   buildPivotOptimizeUserMessage,
@@ -437,10 +437,12 @@ export function renderPostgresNotebookResult(
         color: var(--vscode-editor-foreground);
         border: 1px solid var(--vscode-widget-border);
         border-top: 2px solid ${BRAND_ACCENT};
-        border-radius: 4px;
+        border-radius: 6px;
         overflow: hidden;
         margin-bottom: 8px;
-        box-shadow: 0 6px 14px rgba(0, 0, 0, 0.08);
+        box-shadow: ${RENDERER_ELEVATION_2};
+        background: color-mix(in srgb, var(--vscode-editor-background) 88%, var(--vscode-sideBar-background));
+        background-image: radial-gradient(ellipse 80% 50% at 100% 0%, color-mix(in srgb, ${BRAND_ACCENT} 6%, transparent), transparent 60%);
       `;
 
       const contentContainer = document.createElement('div');
@@ -1764,10 +1766,11 @@ export function renderPostgresNotebookResult(
         max-width:min(680px, 100%);
         padding:5px 8px;
         border-radius:10px;
-        background:color-mix(in srgb, var(--vscode-editor-background) 86%, transparent);
+        background:${RENDERER_GLASS_BG};
         border:1px solid color-mix(in srgb, var(--vscode-widget-border) 42%, transparent);
-        box-shadow:0 4px 18px rgba(0,0,0,0.1);
-        backdrop-filter:blur(10px);
+        box-shadow:${RENDERER_ELEVATION_2};
+        backdrop-filter:${RENDERER_GLASS_BLUR};
+        -webkit-backdrop-filter:${RENDERER_GLASS_BLUR};
       `;
 
       const toolbarDock = document.createElement('div');

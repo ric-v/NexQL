@@ -52,6 +52,18 @@ export const SCHEMA_USAGE_RULE =
   `it is present in the context.`;
 
 /**
+ * Guidance for the agentic/tool-loop to perform stepwise schema exploration.
+ */
+export const AGENTIC_SCHEMA_EXPLORATION_RULE =
+  `You have NO upfront schema context in your system prompt. Instead, you have access to interactive database tools. ` +
+  `To answer the user's request about the database, you MUST dynamically discover the schema using a stepwise approach:\n` +
+  `1. Identify candidate tables/views by searching the index using the \`search_schema\` tool (which returns matching table names, kinds, and scores).\n` +
+  `2. Once you find the correct table names, invoke the \`describe_object\` tool to retrieve structural details (columns, types, indexes, constraints) only for those specific tables.\n` +
+  `3. Find relationships between tables by using the \`get_join_path\` tool.\n` +
+  `4. You can sample data values using \`sample_values\` or run read-only SQL queries using \`run_select\` for further validation.\n` +
+  `Never claim you lack database or schema access. Use your tools to actively discover the correct identifiers.`;
+
+/**
  * P1.7 — shared self-check fragment for every SQL-producing capability. Exported so the
  * notebook-assist prompt (aiAssist.ts) can reuse the identical wording.
  */
@@ -205,7 +217,17 @@ export function buildSystemPrompt(
   }
 
   sections.push(roleLine(capability));
-  sections.push(SCHEMA_USAGE_RULE);
+  
+  if (ctx?.useAgentic) {
+    let connInfo = `Connected to database: \`${ctx.databaseName || 'unknown'}\``;
+    if (ctx.connectionName) {
+      connInfo += ` via connection \`${ctx.connectionName}\``;
+    }
+    sections.push(connInfo);
+    sections.push(AGENTIC_SCHEMA_EXPLORATION_RULE);
+  } else {
+    sections.push(SCHEMA_USAGE_RULE);
+  }
 
   if (SQL_FORMATTING_CAPABILITIES.has(capability)) {
     sections.push(SQL_FORMATTING_DIRECTIVE);

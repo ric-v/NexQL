@@ -1,0 +1,27 @@
+body {
+  padding: 0;
+  margin: 0;
+  font-family: var(--vscode-font-family);
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+}
+
+.pg-card-header {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.query-code .sql-keyword { color: var(--vscode-symbolIcon-keywordForeground, #569cd6); font-weight: 600; }
+.query-code .sql-string { color: var(--vscode-symbolIcon-stringForeground, #ce9178); }
+.query-code .sql-comment { color: var(--vscode-symbolIcon-colorForeground, #6a9955); font-style: italic; }
+.query-code .sql-function { color: var(--vscode-symbolIcon-functionForeground, #dcdcaa); }
+
+.pg-tag-list .pg-pill {
+  font-size: 11px;
+}
+
+.no-tags {
+  font-size: 12px;
+  color: var(--pg-text-muted);
+  font-style: italic;
+}

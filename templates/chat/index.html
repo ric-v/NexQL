@@ -80,7 +80,12 @@
         <span class="context-label">CONTEXT</span>
         <button type="button" class="context-env-chip" id="contextEnvChip" hidden title="View connection safety details"></button>
         <div class="context-item">
-          <span class="context-value" id="contextConnection">Local DB 1 • ecommerce_demo</span>
+          <select class="context-select" id="contextConnectionSelect" title="Select connection">
+            <option value="">Select Connection...</option>
+          </select>
+          <select class="context-select" id="contextDatabaseSelect" title="Select database">
+            <option value="">Select Database...</option>
+          </select>
         </div>
         <div class="context-item">
           <span class="context-value badge" id="contextTable">@table</span>

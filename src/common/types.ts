@@ -34,6 +34,8 @@ export interface ConnectionConfig {
   platformPreset?: ConnectionPlatformPreset;
   /** Hide Supabase platform schemas in the explorer (default true for Supabase). */
   hidePlatformSchemas?: boolean;
+  color?: 'red' | 'orange' | 'blue' | 'green' | 'gray';
+  group?: string;
 }
 
 export interface PostgresMetadata {

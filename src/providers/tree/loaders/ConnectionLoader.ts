@@ -3,6 +3,7 @@ import { BaseLoader, LoaderContext } from './BaseLoader';
 import { DatabaseTreeItem } from '../../DatabaseTreeProvider';
 import type { DatabaseTreeProvider } from '../../DatabaseTreeProvider';
 import { SchemaCache } from '../../../lib/schema-cache';
+import { NotebookIndexService } from '../../../services/NotebookIndexService';
 
 const SYSTEM_DATABASES = new Set(['postgres', 'template0', 'template1']);
 
@@ -58,8 +59,27 @@ export class ConnectionLoader extends BaseLoader {
           items.push(new DatabaseTreeItem('Recent', vscode.TreeItemCollapsibleState.Collapsed, 'recent-group', element.connectionId));
         }
 
-        const dbCountResult = await client.query('SELECT COUNT(*) FROM pg_database');
+        const dbCountResult = await client.query("SELECT COUNT(*) FROM pg_database WHERE has_database_privilege(datname, 'CONNECT')");
         items.push(new DatabaseTreeItem('Databases', vscode.TreeItemCollapsibleState.Collapsed, 'databases-group', element.connectionId, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, dbCountResult.rows[0].count));
+
+        const notebooks = NotebookIndexService.getInstance().getNotebooksForConnection(element.connectionId);
+        items.push(new DatabaseTreeItem(
+          'Notebooks',
+          vscode.TreeItemCollapsibleState.Collapsed,
+          'connection-notebooks-folder',
+          element.connectionId,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          notebooks.length
+        ));
 
         const rolesCountResult = await client.query('SELECT COUNT(*) FROM pg_roles');
         items.push(new DatabaseTreeItem('Users & Roles', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, rolesCountResult.rows[0].count));
@@ -75,8 +95,13 @@ export class ConnectionLoader extends BaseLoader {
         const cacheKey = SchemaCache.buildKey(element.connectionId!, dbName, undefined, 'databases');
         const dbResult = await (provider as any)._cache.getOrFetch(cacheKey, async () => {
           return await client.query(`
-            SELECT datname, pg_size_pretty(pg_database_size(datname)) as size 
+            SELECT datname,
+                   CASE WHEN has_database_privilege(datname, 'CONNECT')
+                        THEN pg_size_pretty(pg_database_size(datname))
+                        ELSE NULL
+                   END AS size 
             FROM pg_database 
+            WHERE has_database_privilege(datname, 'CONNECT')
             ORDER BY datname
           `);
         });
@@ -128,9 +153,13 @@ export class ConnectionLoader extends BaseLoader {
 
       case 'system-databases-group': {
         const systemDbResult = await client.query(
-          `SELECT datname, pg_size_pretty(pg_database_size(datname)) as size
+          `SELECT datname,
+                  CASE WHEN has_database_privilege(datname, 'CONNECT')
+                       THEN pg_size_pretty(pg_database_size(datname))
+                       ELSE NULL
+                  END AS size
            FROM pg_database
-           WHERE datname = ANY($1)
+           WHERE datname = ANY($1) AND has_database_privilege(datname, 'CONNECT')
            ORDER BY datname`,
           [Array.from(SYSTEM_DATABASES)]
         );
@@ -227,6 +256,42 @@ export class ConnectionLoader extends BaseLoader {
           ));
         }
         return recentItems;
+      }
+
+      case 'connection-notebooks-folder': {
+        if (!element.connectionId) return [];
+        const notebooks = NotebookIndexService.getInstance().getNotebooksForConnection(element.connectionId);
+        
+        notebooks.sort((a, b) => {
+          const aIsScratch = a.name === 'scratch';
+          const bIsScratch = b.name === 'scratch';
+          if (aIsScratch !== bIsScratch) {
+            return aIsScratch ? -1 : 1;
+          }
+          return a.name.localeCompare(b.name);
+        });
+
+        return notebooks.map(nb => {
+          const item = new DatabaseTreeItem(
+            nb.name,
+            vscode.TreeItemCollapsibleState.None,
+            'connection-notebook-file',
+            element.connectionId,
+            nb.databaseName
+          );
+          (item as any).uri = nb.uri;
+          item.command = {
+            command: 'postgres-explorer.notebooks.open',
+            title: 'Open Notebook',
+            arguments: [item]
+          };
+          item.resourceUri = nb.uri;
+          const mtimeStr = new Date(nb.mtime).toLocaleDateString();
+          item.description = nb.sectionCount > 0 ? `${nb.sectionCount} section${nb.sectionCount !== 1 ? 's' : ''} · ${mtimeStr}` : mtimeStr;
+          item.tooltip = `${nb.name}.pgsql\nDatabase: ${nb.databaseName || '(none)'}\nModified: ${mtimeStr}`;
+          item.contextValue = 'connection-notebook-file';
+          return item;
+        });
       }
 
       default:

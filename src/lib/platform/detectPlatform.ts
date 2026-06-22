@@ -35,7 +35,7 @@ export function detectPoolerMode(hostname: string, port: number): PoolerMode {
 }
 
 function extensionSet(extensions: string[]): Set<string> {
-  return new Set(extensions.map((e) => e.toLowerCase()));
+  return new Set((extensions || []).filter(e => typeof e === 'string').map((e) => e.toLowerCase()));
 }
 
 function detectPlatformId(input: DetectPlatformInput): PgPlatform {

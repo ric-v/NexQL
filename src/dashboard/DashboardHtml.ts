@@ -3,7 +3,7 @@ import { DashboardStats } from '../common/types';
 import { MODERN_WEBVIEW_BASE_CSS } from '../common/htmlStyles';
 import { readSharedTemplateCss } from '../lib/template-loader';
 
-export async function getHtmlForWebview(webview: vscode.Webview, extensionUri: vscode.Uri, stats: DashboardStats): Promise<string> {
+export async function getHtmlForWebview(webview: vscode.Webview, extensionUri: vscode.Uri, stats: DashboardStats, color?: string): Promise<string> {
   const nonce = getNonce();
   const cspSource = webview.cspSource;
 
@@ -36,6 +36,22 @@ export async function getHtmlForWebview(webview: vscode.Webview, extensionUri: v
     html = html.replace('{{INLINE_STYLES}}', () => inlineStyles);
     html = html.replace('{{INLINE_SCRIPTS}}', () => js);
     html = html.replace('{{NONCE}}', () => nonce);
+
+    let headerStyle = '';
+    if (color) {
+      const colorMap: Record<string, { bg: string, border: string }> = {
+        red: { bg: 'rgba(248, 113, 113, 0.08)', border: 'var(--vscode-errorForeground, #f87171)' },
+        orange: { bg: 'rgba(250, 204, 21, 0.08)', border: 'var(--vscode-editorWarning-foreground, #facc15)' },
+        blue: { bg: 'rgba(59, 130, 246, 0.08)', border: 'var(--vscode-textLink-foreground, #3b82f6)' },
+        green: { bg: 'rgba(74, 222, 128, 0.08)', border: 'var(--vscode-testing-iconPassed, #4ade80)' },
+        gray: { bg: 'rgba(128, 128, 128, 0.08)', border: 'var(--vscode-descriptionForeground, #808080)' }
+      };
+      const themeColor = colorMap[color];
+      if (themeColor) {
+        headerStyle = `background: linear-gradient(180deg, ${themeColor.bg} 0%, transparent 100%); border-bottom: 2px solid ${themeColor.border}; padding-bottom: 8px; margin-bottom: 8px;`;
+      }
+    }
+    html = html.replace('{{HEADER_STYLE}}', () => headerStyle);
 
     return html;
   } catch (error) {

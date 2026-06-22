@@ -2,12 +2,30 @@
  * Type definitions for the Chat View
  */
 
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: any;
+}
+
 export interface ChatMessage {
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
   attachments?: FileAttachment[];
   mentions?: DbMention[];
   usage?: string;
+  toolCalls?: ToolCall[];
+  toolCallId?: string;
+  name?: string;
+  ragContext?: {
+    objects: Array<{ ref: string; score: number; detail: 'full' | 'columns' | 'skeleton' }>;
+    joinHints: string[];
+    tokensUsed: number;
+  };
+  agenticSteps?: Array<{
+    toolCall: ToolCall;
+    result: string;
+  }>;
 }
 
 export interface FileAttachment {

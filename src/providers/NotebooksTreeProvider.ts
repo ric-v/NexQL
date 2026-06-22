@@ -9,10 +9,10 @@ import {
   isViewerForSpace,
   workspaceDisplayName,
 } from '../features/sync/SharedTeamTree';
+import { getNotebookTreeIcon } from './tree/treeIconTheme';
 
 export type NotebookTreeItemType =
-  | 'connection-folder'
-  | 'db-folder'
+  | 'folder'
   | 'notebook-file'
   | 'shared-team-root'
   | 'workspace-folder'
@@ -28,41 +28,21 @@ export class NotebookTreeItem extends vscode.TreeItem {
     tooltip?: string,
     public readonly spaceId?: string,
     public readonly syncItemId?: string,
+    folderDepth = 0,
   ) {
     super(label, collapsibleState);
     this.description = description;
     this.tooltip = tooltip ?? label;
     this.contextValue = itemType;
 
-    switch (itemType) {
-      case 'connection-folder':
-        this.iconPath = new vscode.ThemeIcon('server', new vscode.ThemeColor('charts.blue'));
-        break;
-      case 'db-folder':
-        this.iconPath = new vscode.ThemeIcon('database', new vscode.ThemeColor('charts.purple'));
-        break;
-      case 'notebook-file':
-        this.iconPath = new vscode.ThemeIcon('notebook', new vscode.ThemeColor('charts.yellow'));
-        this.command = {
-          command: 'postgres-explorer.notebooks.open',
-          title: 'Open Notebook',
-          arguments: [this],
-        };
-        break;
-      case 'shared-team-root':
-        this.iconPath = new vscode.ThemeIcon('organization');
-        break;
-      case 'workspace-folder':
-        this.iconPath = new vscode.ThemeIcon('folder-library');
-        break;
-      case 'shared-notebook-file':
-        this.iconPath = new vscode.ThemeIcon('notebook', new vscode.ThemeColor('charts.orange'));
-        this.command = {
-          command: 'postgres-explorer.notebooks.open',
-          title: 'Open Notebook',
-          arguments: [this],
-        };
-        break;
+    this.iconPath = getNotebookTreeIcon(itemType, folderDepth);
+
+    if (itemType === 'notebook-file' || itemType === 'shared-notebook-file') {
+      this.command = {
+        command: 'postgres-explorer.notebooks.open',
+        title: 'Open Notebook',
+        arguments: [this],
+      };
     }
   }
 }
@@ -75,6 +55,14 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
     private readonly globalStorageUri: vscode.Uri,
     private readonly extensionContext?: vscode.ExtensionContext,
   ) {}
+
+  private _folderDepth(folderUri: vscode.Uri): number {
+    const rel = path.relative(this.globalStorageUri.fsPath, folderUri.fsPath);
+    if (!rel || rel.startsWith('..')) {
+      return 0;
+    }
+    return rel.split(path.sep).filter(Boolean).length;
+  }
 
   refresh(): void {
     this._onDidChangeTreeData.fire();
@@ -89,7 +77,7 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
   ): Promise<Array<NotebookTreeItem | SharedTeamRootTreeItem | WorkspaceFolderTreeItem>> {
     try {
       if (!element) {
-        const folders = await this._getConnectionFolders();
+        const folders = await this._getRootFolders();
         const sharedRoot = this._getSharedTeamRoot();
         return sharedRoot ? [...folders, sharedRoot] : folders;
       }
@@ -99,11 +87,8 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
       if (element instanceof WorkspaceFolderTreeItem) {
         return this._getSharedNotebookFiles(element.spaceId);
       }
-      if (element.itemType === 'connection-folder' && element.uri) {
-        return await this._getDbFolders(element.uri);
-      }
-      if (element.itemType === 'db-folder' && element.uri) {
-        return await this._getNotebookFiles(element.uri);
+      if (element.itemType === 'folder' && element.uri) {
+        return await this._getFolderChildren(element.uri);
       }
     } catch {
       // globalStorage may not exist yet
@@ -165,55 +150,61 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
     return !!match?.entry.spaceId?.startsWith('ws_');
   }
 
-  private async _getConnectionFolders(): Promise<NotebookTreeItem[]> {
+  private async _getRootFolders(): Promise<NotebookTreeItem[]> {
+    return this._listSubfolders(this.globalStorageUri);
+  }
+
+  private async _getFolderChildren(folderUri: vscode.Uri): Promise<NotebookTreeItem[]> {
+    const folders = await this._listSubfolders(folderUri);
+    const notebooks = await this._listNotebooks(folderUri);
+    return [...folders, ...notebooks];
+  }
+
+  private async _listSubfolders(parentUri: vscode.Uri): Promise<NotebookTreeItem[]> {
     let entries: [string, vscode.FileType][];
     try {
-      entries = await vscode.workspace.fs.readDirectory(this.globalStorageUri);
+      entries = await vscode.workspace.fs.readDirectory(parentUri);
     } catch {
       return [];
     }
     return entries
-      .filter(([, type]) => type === vscode.FileType.Directory)
-      .map(([name]) => new NotebookTreeItem(
-        name,
-        vscode.TreeItemCollapsibleState.Collapsed,
-        'connection-folder',
-        vscode.Uri.joinPath(this.globalStorageUri, name)
-      ));
+      .filter(([name, type]) => {
+        if (type !== vscode.FileType.Directory) return false;
+        if (name === 'dbindex' && parentUri.toString() === this.globalStorageUri.toString()) return false;
+        return true;
+      })
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name]) => {
+        const uri = vscode.Uri.joinPath(parentUri, name);
+        return new NotebookTreeItem(
+          name,
+          vscode.TreeItemCollapsibleState.Collapsed,
+          'folder',
+          uri,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          this._folderDepth(uri),
+        );
+      });
   }
 
-  private async _getDbFolders(connUri: vscode.Uri): Promise<NotebookTreeItem[]> {
+  private async _listNotebooks(folderUri: vscode.Uri): Promise<NotebookTreeItem[]> {
     let entries: [string, vscode.FileType][];
     try {
-      entries = await vscode.workspace.fs.readDirectory(connUri);
-    } catch {
-      return [];
-    }
-    return entries
-      .filter(([, type]) => type === vscode.FileType.Directory)
-      .map(([name]) => new NotebookTreeItem(
-        name,
-        vscode.TreeItemCollapsibleState.Collapsed,
-        'db-folder',
-        vscode.Uri.joinPath(connUri, name)
-      ));
-  }
-
-  private async _getNotebookFiles(dbUri: vscode.Uri): Promise<NotebookTreeItem[]> {
-    let entries: [string, vscode.FileType][];
-    try {
-      entries = await vscode.workspace.fs.readDirectory(dbUri);
+      entries = await vscode.workspace.fs.readDirectory(folderUri);
     } catch {
       return [];
     }
 
     const files = entries.filter(([name, type]) =>
-      type === vscode.FileType.File && name.endsWith('.pgsql')
+      type === vscode.FileType.File && name.endsWith('.pgsql'),
     );
 
     const items: NotebookTreeItem[] = [];
     for (const [name] of files) {
-      const uri = vscode.Uri.joinPath(dbUri, name);
+      const uri = vscode.Uri.joinPath(folderUri, name);
       if (this._isTeamNotebookPath(uri.fsPath)) {
         continue;
       }
@@ -224,10 +215,9 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
         'notebook-file',
         uri,
         description,
-        tooltip
+        tooltip,
       ));
     }
-    // Sort: scratch file first, then named notebooks alphabetically
     items.sort((a, b) => {
       const aLabel = a.label as string;
       const bLabel = b.label as string;
@@ -243,22 +233,55 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
     try {
       const [stat, raw] = await Promise.all([
         vscode.workspace.fs.stat(uri),
-        vscode.workspace.fs.readFile(uri)
+        vscode.workspace.fs.readFile(uri),
       ]);
       const mtime = new Date(stat.mtime).toLocaleDateString();
       let sectionCount = 0;
+      let connectionId: string | undefined;
       try {
         const data = JSON.parse(Buffer.from(raw).toString());
+        if (data.metadata) {
+          connectionId = data.metadata.connectionId;
+        }
         if (Array.isArray(data.cells)) {
-          sectionCount = data.cells.filter((c: any) =>
-            c.kind === 'markdown' && /^#{1,3}\s/.test(c.value ?? '')
+          sectionCount = data.cells.filter((c: { kind?: string; value?: string }) =>
+            c.kind === 'markdown' && /^#{1,3}\s/.test(c.value ?? ''),
           ).length;
         }
       } catch { /* malformed file */ }
-      const desc = sectionCount > 0 ? `${sectionCount} section${sectionCount !== 1 ? 's' : ''} · ${mtime}` : mtime;
+      
+      let connBadge = '';
+      if (connectionId) {
+        const connections = vscode.workspace.getConfiguration().get<any[]>('postgresExplorer.connections') || [];
+        const conn = connections.find(c => c.id === connectionId);
+        if (conn) {
+          connBadge = `🔌 ${conn.name || conn.host} · `;
+        }
+      }
+
+      const desc = `${connBadge}${sectionCount > 0 ? `${sectionCount} section${sectionCount !== 1 ? 's' : ''} · ${mtime}` : mtime}`;
       return { description: desc, tooltip: `${filename}\nModified: ${mtime}\nSections: ${sectionCount}` };
     } catch {
       return { description: '', tooltip: filename };
+    }
+  }
+}
+
+export class NotebooksDragAndDropController implements vscode.TreeDragAndDropController<NotebookTreeItem | any> {
+  dragMimeTypes = ['application/vnd.code.tree.postgresExplorer.notebooks'];
+  dropMimeTypes = [];
+
+  handleDrag(
+    source: Array<NotebookTreeItem | any>,
+    dataTransfer: vscode.DataTransfer,
+    token: vscode.CancellationToken
+  ): void {
+    const uris = source
+      .filter(item => (item.itemType === 'notebook-file' || item.itemType === 'shared-notebook-file') && item.uri)
+      .map(item => item.uri!.toString());
+
+    if (uris.length > 0) {
+      dataTransfer.set('application/vnd.code.tree.postgresExplorer.notebooks', new vscode.DataTransferItem(uris));
     }
   }
 }

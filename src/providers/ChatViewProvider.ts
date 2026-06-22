@@ -21,7 +21,8 @@ import {
   AiService,
   SessionService,
   getWebviewHtml,
-  AiCapability
+  AiCapability,
+  ToolCall
 } from './chat';
 import type { ConnectionConfig, NoticeLogEntry } from '../common/types';
 import { buildBackupToolsSystemPrompt, buildBackupToolsUserMessage } from './chat/backupToolsAssistantPrompt';
@@ -74,8 +75,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private _activeWebview?: vscode.Webview;
   private _messages: ChatMessage[] = [];
   private _isProcessing = false;
+  private _cancellationTokenSource: vscode.CancellationTokenSource | null = null;
 
   // Phase C: Track current connection/database context for session metadata
+  private _currentConnectionId: string | undefined;
   private _currentConnectionName: string | undefined;
   private _currentDatabase: string | undefined;
 
@@ -115,6 +118,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    this._currentConnectionId = context.connectionId;
     this._currentConnectionName = context.connectionName;
     this._currentDatabase = context.database;
     this._currentEnvironment = context.environment;
@@ -123,6 +127,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       environment: this._currentEnvironment,
       readOnlyMode: this._currentReadOnlyMode,
       connectionName: this._currentConnectionName,
+      databaseName: this._currentDatabase,
+      useAgentic: false,
+    });
+    this._sendContextUpdate();
+  }
+
+  /** Force set database/connection context (called from tools executor or other context switchers). */
+  public setConnectionContext(connectionId: string, databaseName: string): void {
+    this._currentConnectionId = connectionId;
+    this._currentDatabase = databaseName;
+    const connections = vscode.workspace.getConfiguration().get<any[]>('postgresExplorer.connections') || [];
+    const conn = connections.find(c => c.id === connectionId);
+    if (conn) {
+      this._currentEnvironment = conn.environment;
+      this._currentReadOnlyMode = conn.readOnlyMode === true;
+      this._currentConnectionName = conn.name || conn.host || 'Unknown';
+    }
+    this._aiService.setConnectionContext({
+      environment: this._currentEnvironment,
+      readOnlyMode: this._currentReadOnlyMode,
+      connectionName: this._currentConnectionName || this._currentConnectionId || '',
+      databaseName: this._currentDatabase,
+      useAgentic: false,
     });
     this._sendContextUpdate();
   }
@@ -240,6 +267,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           await this.handleOptimizeQuery(data.query, data.executionTime);
           break;
         case 'cancelRequest':
+          if (this._cancellationTokenSource) {
+            this._cancellationTokenSource.cancel();
+            this._cancellationTokenSource.dispose();
+            this._cancellationTokenSource = null;
+          }
           this._aiService.cancel();
           this._setTypingIndicator(false);
           this._isProcessing = false;
@@ -268,6 +300,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           break;
         case 'getModelCatalog':
           await this._pushModelCatalogToWebview();
+          break;
+        case 'getConnections':
+          await this._handleGetConnections();
+          break;
+        case 'getDatabases':
+          await this._handleGetDatabases(data.connectionId);
+          break;
+        case 'changeContext':
+          this.setConnectionContext(data.connectionId, data.database);
           break;
         case 'switchChatModel':
           await this._handleSwitchChatModel(data.selectionId);
@@ -527,7 +568,56 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     message: string,
     attachments?: FileAttachment[],
     mentions?: DbMention[]
-  ): Promise<{ fullMessage: string; aiMessage: string }> {
+  ): Promise<{
+    fullMessage: string;
+    aiMessage: string;
+    ragContext?: {
+      objects: Array<{ ref: string; score: number; detail: 'full' | 'columns' | 'skeleton' }>;
+      joinHints: string[];
+      tokensUsed: number;
+    };
+  }> {
+    console.log(`[ChatView] _composeUserTurnPayload: Received user message. Current context: connectionId="${this._currentConnectionId}", database="${this._currentDatabase}"`);
+    
+    if (!this._currentConnectionId || !this._currentDatabase) {
+      try {
+        const { WorkspaceStateService } = await import('../services/WorkspaceStateService');
+        const defaults = WorkspaceStateService.getInstance().getDefaults();
+        let connId = defaults.lastConnectionId;
+        let dbName = defaults.lastDatabaseName;
+
+        const connections = vscode.workspace.getConfiguration().get<any[]>('postgresExplorer.connections') || [];
+        if ((!connId || !dbName) && connections.length > 0) {
+          const firstConn = connections[0];
+          connId = firstConn.id;
+          dbName = firstConn.database || 'postgres';
+          console.log(`[ChatView] Fallback connection context loaded from first configured connection: connectionId="${connId}", database="${dbName}"`);
+        }
+
+        if (connId && dbName) {
+          this._currentConnectionId = connId;
+          this._currentDatabase = dbName;
+          
+          const conn = connections.find(c => c.id === this._currentConnectionId);
+          if (conn) {
+            this._currentEnvironment = conn.environment;
+            this._currentReadOnlyMode = conn.readOnlyMode === true;
+            this._currentConnectionName = conn.name || conn.host || 'Unknown';
+          }
+          this._aiService.setConnectionContext({
+            environment: this._currentEnvironment,
+            readOnlyMode: this._currentReadOnlyMode,
+            connectionName: this._currentConnectionName || this._currentConnectionId || '',
+            databaseName: this._currentDatabase,
+            useAgentic: false,
+          });
+          this._sendContextUpdate();
+        }
+      } catch (e) {
+        console.error('[ChatView] Fallback resolution failed:', e);
+      }
+    }
+    
     let fullMessage = message;
     if (attachments && attachments.length > 0) {
       const attachmentLinks = attachments.map(att => {
@@ -560,6 +650,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       if (mentions[0]) {
         this._currentDatabase = mentions[0].database;
         this._currentConnectionName = mentions[0].breadcrumb?.split('.')[0] || mentions[0].connectionId;
+        this._currentConnectionId = mentions[0].connectionId;
 
         if (mentions[0].connectionId) {
           const connections = vscode.workspace.getConfiguration().get<any[]>('postgresExplorer.connections') || [];
@@ -574,6 +665,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           environment: this._currentEnvironment,
           readOnlyMode: this._currentReadOnlyMode,
           connectionName: this._currentConnectionName,
+          databaseName: this._currentDatabase,
+          useAgentic: false,
         });
 
         this._sendContextUpdate();
@@ -620,6 +713,40 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       debugLog('[ChatView] ========== FULL AI MESSAGE ==========');
       debugLog(aiMessage);
       debugLog('[ChatView] ========== END FULL AI MESSAGE ==========');
+    } else if (this._currentConnectionId && this._currentDatabase) {
+      try {
+        console.log(`[ChatView] Attempting local index grounding for database="${this._currentDatabase}"...`);
+        const { IndexStore } = await import('../features/dbindex/IndexStore');
+        const { IndexQueryService } = await import('../features/dbindex/IndexQueryService');
+        const store = new IndexStore(this._extensionContext.globalStorageUri);
+        const queryService = new IndexQueryService(store);
+        const config = vscode.workspace.getConfiguration();
+        const result = await queryService.retrieve(
+          this._currentConnectionId,
+          this._currentDatabase,
+          message,
+          2500,
+          config
+        );
+        let ragContext: any = undefined;
+        if (result) {
+          aiMessage = result.packMarkdown + '\n\n' + fullMessage;
+          ragContext = {
+            objects: result.objects,
+            joinHints: result.joinHints,
+            tokensUsed: result.tokensUsed
+          };
+          console.log(`[ChatView] Grounded user turn payload with local index context. Pack length: ${result.packMarkdown.length} characters.`);
+          debugLog('[ChatView] Grounded user turn payload with local index context.');
+        } else {
+          console.log(`[ChatView] No matching local index found or retrieval returned null.`);
+        }
+        return { fullMessage, aiMessage, ragContext };
+      } catch (e) {
+        console.error('[ChatView] Failed to retrieve local index context:', e);
+        debugLog('[ChatView] Failed to retrieve local index context:', e);
+        return { fullMessage, aiMessage };
+      }
     }
 
     return { fullMessage, aiMessage };
@@ -637,14 +764,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
       vscode.window.setStatusBarMessage(`$(sparkle) AI: ${modelInfo}`, 3000);
 
-      this._aiService.setMessages(this._messages);
-      let responseText: string;
-      let usageInfo: string | undefined;
-      const aiStartTime = Date.now();
+      // Check if we should use agentic tool loop
+      let useAgentic = false;
+      if (this._currentConnectionId && this._currentDatabase && this._chatSystemPromptMode !== 'backup_tools') {
+        useAgentic = await requirePro(ProFeature.AgenticModes);
+      }
 
-      debugLog('[ChatView] Calling AI provider:', provider);
-      // Reuse the existing customSystemPrompt channel: ChatViewProvider selects the
-      // capability-specific prompt; AiService provider methods stay prompt-agnostic.
+      this._aiService.setConnectionContext({
+        environment: this._currentEnvironment,
+        readOnlyMode: this._currentReadOnlyMode,
+        connectionName: this._currentConnectionName || this._currentConnectionId || '',
+        databaseName: this._currentDatabase,
+        useAgentic: useAgentic
+      });
+
       const customSystem =
         this._chatSystemPromptMode === 'backup_tools'
           ? buildBackupToolsSystemPrompt({
@@ -655,9 +788,88 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             })
           : this._aiService.buildSystemPrompt(capability);
 
-      const result = await this._aiService.callProvider(provider, aiMessage, config, customSystem, 'chat');
-      responseText = result.text;
-      usageInfo = result.usage;
+      this._cancellationTokenSource = new vscode.CancellationTokenSource();
+      const cancellationToken = this._cancellationTokenSource.token;
+
+      let responseText: string;
+      let usageInfo: string | undefined;
+      const aiStartTime = Date.now();
+
+      if (useAgentic) {
+        debugLog('[ChatView] Executing agentic tool loop...');
+        const { ToolOrchestrator } = await import('./chat/tools/ToolOrchestrator');
+        const orchestrator = new ToolOrchestrator(
+          this._extensionContext,
+          this._aiService,
+          this._currentConnectionId!,
+          this._currentDatabase!
+        );
+
+        const result = await orchestrator.run(
+          provider,
+          this._messages,
+          config,
+          customSystem,
+          'chat',
+          cancellationToken,
+          async (messages) => {
+            this._messages = messages;
+            this._updateChatHistory();
+          }
+        );
+
+        this._messages = result.messages;
+        responseText = result.text;
+        usageInfo = result.usage;
+      } else {
+        debugLog('[ChatView] Falling back to standard chat (one-shot retrieve grounding)...');
+        this._aiService.setMessages(this._messages);
+
+        // Push empty assistant message placeholder
+        this._messages.push({ role: 'assistant', content: '' });
+        this._getTargetWebview()?.postMessage({
+          type: 'startStream'
+        });
+
+        let accumulatedResponse = '';
+        const result = await this._aiService.callProvider(
+          provider,
+          aiMessage,
+          config,
+          customSystem,
+          'chat',
+          undefined,
+          (chunk) => {
+            if (cancellationToken?.isCancellationRequested) {
+              return;
+            }
+            if (chunk.text) {
+              accumulatedResponse += chunk.text;
+              
+              // Update in-memory message content
+              const lastIdx = this._messages.length - 1;
+              if (lastIdx >= 0 && this._messages[lastIdx].role === 'assistant') {
+                this._messages[lastIdx].content = accumulatedResponse;
+              }
+
+              this._getTargetWebview()?.postMessage({
+                type: 'streamChunk',
+                text: chunk.text,
+                accumulated: accumulatedResponse
+              });
+            }
+          }
+        );
+        responseText = result.text;
+        usageInfo = result.usage;
+
+        responseText = this._sanitizeResponse(responseText);
+        const lastIdx = this._messages.length - 1;
+        if (lastIdx >= 0 && this._messages[lastIdx].role === 'assistant') {
+          this._messages[lastIdx].content = responseText;
+          this._messages[lastIdx].usage = usageInfo;
+        }
+      }
 
       const aiElapsed = ((Date.now() - aiStartTime) / 1000).toFixed(1);
       if (usageInfo) {
@@ -666,11 +878,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         usageInfo = `${aiElapsed}s`;
       }
 
-      debugLog('[ChatView] AI response received, length:', responseText.length);
-
-      responseText = this._sanitizeResponse(responseText);
-
-      this._messages.push({ role: 'assistant', content: responseText, usage: usageInfo });
+      // Update usage label on the last assistant message
+      if (this._messages.length > 0) {
+        const lastMsg = this._messages[this._messages.length - 1];
+        if (lastMsg.role === 'assistant') {
+          lastMsg.usage = usageInfo;
+        }
+      }
 
       await this._saveCurrentSession();
     } catch (error) {
@@ -679,6 +893,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         role: 'assistant',
         content: `❌ Error: ${errorMessage}\n\nPlease check your AI provider settings in the extension configuration.`
       });
+    } finally {
+      if (this._cancellationTokenSource) {
+        this._cancellationTokenSource.dispose();
+        this._cancellationTokenSource = null;
+      }
     }
   }
 
@@ -698,13 +917,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this._messages.pop();
       }
 
+      // Pop any preceding tool calls/results from the last agent turn
+      while (this._messages.length > 0) {
+        const top = this._messages[this._messages.length - 1];
+        if (top.role === 'tool' || (top.role === 'assistant' && top.toolCalls)) {
+          this._messages.pop();
+        } else {
+          break;
+        }
+      }
+
       const user = this._messages[this._messages.length - 1];
       if (!user || user.role !== 'user') {
         return;
       }
 
       const plain = this._plainPromptFromUserMessage(user);
-      const { aiMessage } = await this._composeUserTurnPayload(plain, user.attachments, user.mentions);
+      const { aiMessage, ragContext } = await this._composeUserTurnPayload(plain, user.attachments, user.mentions);
+      user.ragContext = ragContext;
 
       this._updateChatHistory();
 
@@ -740,7 +970,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this._messages.push(turn);
 
       const plain = this._plainPromptFromUserMessage(turn);
-      const { aiMessage } = await this._composeUserTurnPayload(plain, turn.attachments, turn.mentions);
+      const { aiMessage, ragContext } = await this._composeUserTurnPayload(plain, turn.attachments, turn.mentions);
+      turn.ragContext = ragContext;
 
       this._updateChatHistory();
 
@@ -778,9 +1009,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     try {
-      const { fullMessage, aiMessage } = await this._composeUserTurnPayload(message, attachments, mentions);
+      const { fullMessage, aiMessage, ragContext } = await this._composeUserTurnPayload(message, attachments, mentions);
 
-      this._messages.push({ role: 'user', content: fullMessage, attachments, mentions });
+      this._messages.push({ role: 'user', content: fullMessage, attachments, mentions, ragContext });
       this._updateChatHistory();
 
       this._setTypingIndicator(true);
@@ -813,6 +1044,31 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   // ==================== Database Objects ====================
+
+  private async _handleGetConnections(): Promise<void> {
+    try {
+      const connections = await this._dbObjectService.getConnections();
+      this._getTargetWebview()?.postMessage({
+        type: 'connectionsList',
+        connections: connections.map(c => ({ id: c.connectionId, name: c.name }))
+      });
+    } catch (e) {
+      console.error('[ChatView] Failed to get connections for dropdown:', e);
+    }
+  }
+
+  private async _handleGetDatabases(connectionId: string): Promise<void> {
+    try {
+      const databases = await this._dbObjectService.getDatabases(connectionId);
+      this._getTargetWebview()?.postMessage({
+        type: 'databasesList',
+        connectionId,
+        databases: databases.map(d => d.name)
+      });
+    } catch (e) {
+      console.error('[ChatView] Failed to get databases for dropdown:', e);
+    }
+  }
 
   private async _handleSearchDbObjects(query: string): Promise<void> {
     try {
@@ -1060,9 +1316,49 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   // ==================== UI Helpers ====================
 
   private _updateChatHistory(): void {
+    const uiMessages: ChatMessage[] = [];
+    let pendingSteps: Array<{ toolCall: ToolCall; result: string }> = [];
+
+    for (let i = 0; i < this._messages.length; i++) {
+      const msg = this._messages[i];
+      if (msg.role === 'assistant' && msg.toolCalls) {
+        for (const call of msg.toolCalls) {
+          const toolResp = this._messages.slice(i + 1).find(m => m.role === 'tool' && m.toolCallId === call.id);
+          pendingSteps.push({
+            toolCall: call,
+            result: toolResp ? toolResp.content : 'No response content'
+          });
+        }
+      } else if (msg.role === 'tool') {
+        continue;
+      } else if (msg.role === 'assistant' && !msg.toolCalls) {
+        const newMsg = { ...msg };
+        if (pendingSteps.length > 0) {
+          newMsg.agenticSteps = pendingSteps;
+          pendingSteps = [];
+        }
+        uiMessages.push(newMsg);
+      } else {
+        uiMessages.push(msg);
+      }
+    }
+
+    if (pendingSteps.length > 0) {
+      const lastMsg = uiMessages[uiMessages.length - 1];
+      if (lastMsg && lastMsg.role === 'assistant') {
+        lastMsg.agenticSteps = pendingSteps;
+      } else {
+        uiMessages.push({
+          role: 'assistant',
+          content: 'Running database tools...',
+          agenticSteps: pendingSteps
+        });
+      }
+    }
+
     this._getTargetWebview()?.postMessage({
       type: 'updateMessages',
-      messages: this._messages
+      messages: uiMessages
     });
   }
 
@@ -1304,6 +1600,7 @@ Why is this query running slower than its historical baseline? What could have c
     this._chatSystemPromptMode = 'backup_tools';
 
     const conn = params.connection;
+    this._currentConnectionId = conn?.id;
     this._currentConnectionName = conn?.name ?? params.databaseLabel;
     this._currentDatabase = params.databaseName;
     this._currentEnvironment = conn?.environment;
@@ -1311,7 +1608,9 @@ Why is this query running slower than its historical baseline? What could have c
     this._aiService.setConnectionContext({
       environment: this._currentEnvironment,
       readOnlyMode: this._currentReadOnlyMode,
-      connectionName: this._currentConnectionName
+      connectionName: this._currentConnectionName,
+      databaseName: this._currentDatabase,
+      useAgentic: false,
     });
     this._sendContextUpdate();
 

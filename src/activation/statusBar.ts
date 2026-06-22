@@ -160,7 +160,21 @@ export class NotebookStatusBar implements vscode.Disposable {
     const environment = connection?.environment;
     const accentEnabled = this.sentinelSettings?.statusBarAccent !== false;
     const showEnvItem = this.sentinelActive && accentEnabled && environment;
-    const itemStyle = showEnvItem ? this.envItemStyle(environment) : this.defaultItemStyle();
+    let itemStyle = showEnvItem ? this.envItemStyle(environment) : this.defaultItemStyle();
+
+    const connectionColor = connection?.color || (environment === 'production' ? 'red' : environment === 'staging' ? 'orange' : environment === 'development' ? 'green' : undefined);
+    if (connectionColor) {
+      if (connectionColor === 'red') {
+        itemStyle = { background: new vscode.ThemeColor('statusBarItem.errorBackground') };
+      } else if (connectionColor === 'orange') {
+        itemStyle = { background: new vscode.ThemeColor('statusBarItem.warningBackground') };
+      } else {
+        itemStyle = {
+          background: new vscode.ThemeColor('statusBarItem.prominentBackground'),
+          color: new vscode.ThemeColor(`charts.${connectionColor}`)
+        };
+      }
+    }
 
     const platformCached = PlatformConnectionService.getInstance().getCached(
       metadata.connectionId,

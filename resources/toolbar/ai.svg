@@ -1,0 +1,24 @@
+<svg viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="aiPrimary" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff007f" />
+      <stop offset="50%" stop-color="#7c3aed" />
+      <stop offset="100%" stop-color="#3b82f6" />
+    </linearGradient>
+    <linearGradient id="aiSecondary" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ec4899" />
+      <stop offset="100%" stop-color="#fbcfe8" />
+    </linearGradient>
+  </defs>
+  <!-- Orbiting glow ring -->
+  <ellipse cx="12" cy="12" rx="9" ry="3" fill="none" stroke="url(#aiPrimary)" stroke-width="1.2" transform="rotate(-30 12 12)" opacity="0.4" stroke-dasharray="3, 3" />
+  
+  <!-- Main magic sparkle -->
+  <path d="M 12,2 C 12.3,7.5 16.5,11.7 22,12 C 16.5,12.3 12.3,16.5 12,22 C 11.7,16.5 7.5,12.3 2,12 C 7.5,11.7 11.7,7.5 12,2 Z" fill="url(#aiPrimary)" />
+  
+  <!-- Secondary sparkle top-right -->
+  <path d="M 18,3 C 18.15,5 20,6.85 22,7 C 20,7.15 18.15,9 18,11 C 17.85,9 16,7.15 14,7 C 16,6.85 17.85,5 18,3 Z" fill="url(#aiSecondary)" opacity="0.9" />
+  
+  <!-- Minor star bottom-left -->
+  <path d="M 6,15 C 6.1,16.5 7.5,17.9 9,18 C 7.5,18.1 6.1,19.5 6,21 C 5.9,19.5 4.5,18.1 3,18 C 4.5,17.9 5.9,16.5 6,15 Z" fill="url(#aiSecondary)" opacity="0.75" />
+</svg>

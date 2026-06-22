@@ -4,6 +4,7 @@
  */
 
 import type { SentinelEnvironment } from '../../features/sentinel/types';
+import { RENDERER_GLASS_BG, RENDERER_GLASS_BLUR } from '../../ui/renderer/rendererConstants';
 
 export interface TopBarOptions {
   connectionName: string;
@@ -55,8 +56,11 @@ export function createTopBar(options: TopBarOptions, postMessage: (msg: any) => 
     align-items: center;
     gap: 6px;
     padding: 6px 12px;
-    background: var(--vscode-editor-background);
+    background: ${RENDERER_GLASS_BG};
+    backdrop-filter: ${RENDERER_GLASS_BLUR};
+    -webkit-backdrop-filter: ${RENDERER_GLASS_BLUR};
     border-bottom: 1px solid var(--vscode-widget-border);
+    box-shadow: 0 1px 0 color-mix(in srgb, var(--vscode-textLink-foreground) 12%, transparent);
     font-family: var(--vscode-font-family);
     font-size: 12px;
   `;
