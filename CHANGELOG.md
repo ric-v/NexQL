@@ -15,6 +15,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [1.5.0] - 2026-06-09
 
+### Rebranded
+
+- **Rebranded to NexQL** — Complete rebranding from PostgreSQL Explorer (YAPE) to **NexQL - postgres explorer**.
+  - Updated all extension icons, assets, extension configurations, display names, and marketplace metadata.
+  - Redesigned the project website/documentation page at [docs/index.html](file:///home/ric-v/projects/ric-v/PgStudio/docs/index.html) and [nexql.html](file:///home/ric-v/projects/ric-v/PgStudio/nexql.html) featuring a beautiful dark layout with a new spectrum color palette (blue → indigo → magenta → amber) and interactive product tour.
+
 ### Added
 
 - **Licensing & Subscription System** — Implemented license management and entitlement enforcement.

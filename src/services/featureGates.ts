@@ -202,6 +202,9 @@ export function isProFeatureEnabled(feature: ProFeature): boolean {
  * (the feature is rate-limited for the period, not permanently locked).
  */
 export async function requirePro(feature: ProFeature, _context?: vscode.ExtensionContext): Promise<boolean> {
+  if (feature === ProFeature.AiAssistant) {
+    return true; // AI Assistant is free and unlimited for all plans
+  }
   const mode = enforcement();
   if (mode === 'off') {
     return true;

@@ -148,21 +148,9 @@ npm-update:
 test-full: docker-up test-all coverage docker-down
 	@echo "Full test suite completed"
 
-# Git tag and version bump (interactive)
+# Git tag and version bump (interactive or non-interactive)
 git-tag:
-	@echo "Current version: $(EXTENSION_VERSION)"
-	@read -p "Enter the new version number (e.g., 1.0.1): " VERSION; \
-	VERSION=$${VERSION#v}; \
-	if [ -z "$$VERSION" ]; then echo "Version cannot be empty"; exit 1; fi; \
-	echo "Updating package.json version to $$VERSION..."; \
-	$(NODE_BIN) -e "let pkg=require('./package.json'); pkg.version='$$VERSION'; require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2));"; \
-	echo "package.json updated."; \
-	git add package.json; \
-	git commit -m "Bump version to $$VERSION"; \
-	git tag -a "v$$VERSION" -m "Release v$$VERSION"; \
-	git push origin main; \
-	git push origin "v$$VERSION"; \
-	echo "Git tag v$$VERSION created and pushed."
+	@$(NODE_BIN) ./scripts/bump-version.js $(CHANNEL) $(BUMP)
 
 # Help target
 help:

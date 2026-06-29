@@ -7,11 +7,11 @@
 [![Version](https://img.shields.io/visual-studio-marketplace/v/ric-v.postgres-explorer?style=for-the-badge&logo=visual-studio-code&logoColor=white&color=0066CC)](https://marketplace.visualstudio.com/items?itemName=ric-v.postgres-explorer)
 [![Downloads](https://img.shields.io/visual-studio-marketplace/d/ric-v.postgres-explorer?style=for-the-badge&logo=visual-studio-code&logoColor=white&color=2ECC71)](https://marketplace.visualstudio.com/items?itemName=ric-v.postgres-explorer)
 [![Rating](https://img.shields.io/visual-studio-marketplace/r/ric-v.postgres-explorer?style=for-the-badge&logo=visual-studio-code&logoColor=white&color=F39C12)](https://marketplace.visualstudio.com/items?itemName=ric-v.postgres-explorer)
-[![Status](https://img.shields.io/badge/status-stable%20v1.2.1%20%2B%20nightly-blue?style=for-the-badge&logo=git&logoColor=white)](https://github.com/dev-asterix/PgStudio/releases)
+[![Status](https://img.shields.io/badge/status-stable%20v2.0.0%20%2B%20nightly-blue?style=for-the-badge&logo=git&logoColor=white)](https://github.com/dev-asterix/PgStudio/releases)
 
 **NexQL** (formerly YAPE) is a comprehensive PostgreSQL database management extension featuring interactive SQL notebooks, real-time monitoring dashboard, AI-powered assistance, and advanced database operations—all within VS Code.
 
-[📖 **Documentation**](https://nexql.astrx.dev/) • [🛒 **Marketplace**](https://marketplace.visualstudio.com/items?itemName=ric-v.postgres-explorer) • [🤝 **Contributing**](#-contributing) • [📝 **v1.0.0 Release Notes**](docs/RELEASE_NOTES_v1.0.0.md) • [📋 **Changelog**](CHANGELOG.md)
+[📖 **Documentation**](https://nexql.astrx.dev/) • [🛒 **Marketplace**](https://marketplace.visualstudio.com/items?itemName=ric-v.postgres-explorer) • [🤝 **Contributing**](#-contributing) • [📝 **v2.0.0 Release Notes**](docs/RELEASE_NOTES_v2.0.0.md) • [📋 **Changelog**](CHANGELOG.md)
 
 </div>
 
@@ -128,7 +128,7 @@
 
 ## 📋 Feature Matrix
 
-| Area | NexQL v1.2.1 | Notes |
+| Area | NexQL v2.0.0+ | Notes |
 |---|---|---|
 | Core PostgreSQL object operations | ✅ | Tables, views, mat views, functions, roles, extensions, FDWs, and more |
 | AI-assisted SQL workflows | ✅ | Generate, optimize, explain, and analyze with notebook-first execution |
@@ -217,12 +217,13 @@ If `posthogApiKey` is empty, telemetry stays local (debug sink only).
 - `docs/WEBSITE_CONTEXT.md` - Website architecture and content context
 - `docs/API_STABILITY.md` - v1.x API stability and deprecation policy
 - `docs/SECURITY_REVIEW.md` - v1.0 security controls and release checklist
+- `docs/RELEASE_NOTES_v2.0.0.md` - v2.0 highlights and release notes (rebranding, licensing & subscription)
 - `docs/RELEASE_NOTES_v1.0.0.md` - v1.0 highlights and release notes
 - `docs/MIGRATION_GUIDE_0.x_to_1.0.0.md` - upgrade path from 0.9.x to 1.0.0
 - `SECURITY.md` - Security policy and vulnerability reporting guidance
 - `CHANGELOG.md` - Release notes and what changed across versions
 
-**Stable: v1.2.1 | Nightly: v1.0.0-nightly+ —** Latest stable adds cursor-based result streaming, `bytea` formatting controls, richer result-grid tooling, export correctness with Auto-LIMIT, and SQL Assistant regenerate/resend. See [CHANGELOG.md](CHANGELOG.md); v1.0 launch materials remain in [Release Notes](docs/RELEASE_NOTES_v1.0.0.md) and [Migration Guide](docs/MIGRATION_GUIDE_0.x_to_1.0.0.md).
+**Stable: v2.0.0 | Nightly: v2.1.0+ —** Latest stable introduces rebranding as NexQL, complete licensing & subscription workflows (Sponsor & Singularity tiers), secure per-provider AI configurations, and integrated What's New displays. See [CHANGELOG.md](CHANGELOG.md); v2.0 launch materials remain in [Release Notes](docs/RELEASE_NOTES_v2.0.0.md) and older v1.0 details in [v1.0.0 Release Notes](docs/RELEASE_NOTES_v1.0.0.md).
 
 ---
 
