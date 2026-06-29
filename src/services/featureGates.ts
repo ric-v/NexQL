@@ -37,7 +37,10 @@ function enforcement(): Enforcement {
 }
 
 /** Synchronous check for hot paths (e.g. webview rendering). */
-export function isProFeatureEnabled(_feature: ProFeature): boolean {
+export function isProFeatureEnabled(feature: ProFeature): boolean {
+  if (feature === ProFeature.AiAssistant) {
+    return true; // AI Assistant is free and unlimited for all plans
+  }
   if (enforcement() !== 'hard') {
     return true; // off / soft never block
   }
@@ -49,6 +52,9 @@ export function isProFeatureEnabled(_feature: ProFeature): boolean {
  * shows an upgrade prompt. In `soft` mode it nudges once but still allows.
  */
 export async function requirePro(feature: ProFeature, _context?: vscode.ExtensionContext): Promise<boolean> {
+  if (feature === ProFeature.AiAssistant) {
+    return true; // AI Assistant is free and unlimited for all plans
+  }
   const mode = enforcement();
   if (mode === 'off') {
     return true;

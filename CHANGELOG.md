@@ -8,20 +8,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [2.0.0] - 2026-06-08
 
+### Rebranded
+
+- **Rebranded to NexQL** — Complete rebranding from PostgreSQL Explorer (YAPE) to **NexQL - postgres explorer**.
+  - Updated all extension icons, assets, extension configurations, display names, and marketplace metadata.
+  - Redesigned the project website/documentation page at [docs/index.html](file:///home/ric-v/projects/ric-v/PgStudio/docs/index.html) and [nexql.html](file:///home/ric-v/projects/ric-v/PgStudio/nexql.html) featuring a beautiful dark layout with a new spectrum color palette (blue → indigo → magenta → amber) and interactive product tour.
+
 ### Added
 
-- **Licensing & Subscription System** — Implemented license management and entitlement enforcement.
-  - **In-Extension Commands** — Added commands for activating (`postgres-explorer.license.activate`), managing (`postgres-explorer.license.manage`), and upgrading licenses.
-  - **LicenseService** — Introduced a background licensing manager with secure cache storage (using VS Code's `SecretStorage` API), 24-hour cache TTL, and a 7-day offline grace period.
-  - **Status Bar Indicator** — Added a license status bar indicator showing the active tier.
-  - **Feature Gates** — Integrated gates for premium features using information prompts (soft gates) or modal warning dialogs (hard gates) to direct unlicensed users to upgrade paths.
-  - **License Key Recovery** — Added a secure API endpoint (`/api/license/recover`) and UI flow for recovering license keys via email.
-  - **Enhanced Payment Verification** — Enhanced subscription checks and HMAC payment signature verification.
+- **Licensing & Subscription System** — Comprehensive license manager and entitlements enforcement for multi-tier support (Free, Sponsor, and Singularity/Team tiers).
+  - **In-Extension Commands** — Added commands for activating (`postgres-explorer.license.activate`), managing (`postgres-explorer.license.manage`), and upgrading licenses directly inside VS Code.
+  - **LicenseService** — Secure background licensing agent utilizing VS Code's native `SecretStorage` API for caching credentials with 24-hour cache TTL and 7-day offline grace period capability.
+  - **Feature Gates** — Built-in hard gates (modal warnings) and soft gates (information prompts) on advanced tools like Explain Analyzer, Schema Designer, Index Advisor, and Schema Search to handle license entitlements.
+  - **Status Bar Indicator** — Active license tier warning/info indicator added to the status bar.
+  - **Razorpay Integration** — Implemented backend hooks (`api/create-subscription.js`, `api/webhook.js`) to handle subscription checkouts, upgrades, and HMAC signature validations.
+  - **License Key Recovery** — Endpoints for looking up and recovering license keys via email.
+- **AI Assistant & Credentials Services**
+  - **AiCredentialsService & AiModelCatalogService** — Centralized services to securely validate, cache, and manage API credentials across providers (OpenAI, Anthropic, Gemini, and VS Code LM).
+  - **Multi-Model Support** — Support for custom settings panel to specify model selections (defaulting to GPT-4o, Claude Sonnet 3.5, Gemini 2.5 Flash, etc.) and save API keys independently.
+  - **Enhanced Chat Webview** — Redesigned Chat UI panel with a header-based active model picker dropdown, dynamic capabilities, and custom AI settings page launcher.
+- **Interactive "What's New" Panel**
+  - Added `WhatsNewManager` to automatically present a beautifully styled release notes webview on version changes or manual command invocation.
 
 ### Changed
 
 - **Saved Queries Soft Limit** — Implemented a soft limit of 5 saved queries for Free tier users, prompting upgrades for unlimited saving.
-- **Consolidated API Layout** — Consolidated and cleaned up shared utility modules (store, email, config, keygen) inside the `api/_lib/` directory.
+- **Consolidated API Layout** — Consolidated shared serverless library modules (store, email, config, keygen) inside the `api/_lib/` directory.
+- **AI Scoping** — Split configuration settings between `ai.chat.*` (for sidebar chat assistant) and `ai.notebook.*` (for inline CodeLens/insights query assistant).
+- **Environment and Safety Signals** — Refined environment detection (DEV/STAGE/PROD), read-only execution modes, and safety checks on risky write operations.
 
 ---
 
