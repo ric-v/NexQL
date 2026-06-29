@@ -1692,3 +1692,65 @@ a.landing-chip:hover {
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Release Announcement Banner ─────────────────────────── */
+.release-banner {
+  background: linear-gradient(90deg, #1e1b4b, #311042, #1e1b4b);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-family: var(--vscode-font-family, 'Space Grotesk', sans-serif);
+  border-bottom: 1px solid var(--desktop-topbar-border, rgba(255, 255, 255, 0.08));
+  position: relative;
+  z-index: 1001;
+  padding: 8px 40px 8px 16px;
+  text-align: center;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.release-banner a {
+  color: #a78bfa;
+  text-decoration: underline;
+  font-weight: 600;
+  transition: color 0.2s ease;
+}
+
+.release-banner a:hover {
+  color: #c084fc;
+}
+
+.release-banner .banner-close-btn {
+  background: none;
+  border: none;
+  color: #9ca3af;
+  font-size: 18px;
+  cursor: pointer;
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  line-height: 1;
+  padding: 4px;
+}
+
+.release-banner .banner-close-btn:hover {
+  color: #ffffff;
+}
+
+body.banner-dismissed .release-banner {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .release-banner {
+    font-size: 11px;
+    padding: 6px 36px 6px 12px;
+  }
+  .release-banner .banner-close-btn {
+    right: 8px;
+    font-size: 16px;
+  }
+}
