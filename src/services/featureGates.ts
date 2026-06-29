@@ -115,7 +115,6 @@ export function meetsTier(actual: LicenseTier, required: LicenseTier): boolean {
  * imports) have firmer caps.
  */
 export const FREE_QUOTAS: Partial<Record<ProFeature, FeatureQuota>> = {
-  [ProFeature.AiAssistant]: { limit: 25, period: 'day' },
   [ProFeature.ExplainStudio]: { limit: 10, period: 'day' },
   [ProFeature.Dashboard]: { limit: 5, period: 'day' },
   [ProFeature.SchemaDiff]: { limit: 5, period: 'day' },
@@ -124,7 +123,6 @@ export const FREE_QUOTAS: Partial<Record<ProFeature, FeatureQuota>> = {
   [ProFeature.BackupRestore]: { limit: 3, period: 'week' },
   [ProFeature.SyncDeviceRebind]: { limit: 1, period: 'week' },
   [ProFeature.DbIndexBuild]: { limit: 2, period: 'week' },
-  [ProFeature.AgenticModes]: { limit: 5, period: 'day' },
 };
 
 /**
@@ -202,8 +200,8 @@ export function isProFeatureEnabled(feature: ProFeature): boolean {
  * (the feature is rate-limited for the period, not permanently locked).
  */
 export async function requirePro(feature: ProFeature, _context?: vscode.ExtensionContext): Promise<boolean> {
-  if (feature === ProFeature.AiAssistant) {
-    return true; // AI Assistant is free and unlimited for all plans
+  if (feature === ProFeature.AiAssistant || feature === ProFeature.AgenticModes) {
+    return true; // unlimited on all tiers
   }
   const mode = enforcement();
   if (mode === 'off') {
