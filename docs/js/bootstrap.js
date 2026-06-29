@@ -91,7 +91,25 @@ function wireEditorLayoutToggles() {
   syncLayoutToggleUi();
 }
 
+function wireReleaseBanner() {
+  const banner = document.getElementById("release-banner");
+  const closeBtn = document.getElementById("btn-close-banner");
+  if (!banner || !closeBtn) return;
+
+  const dismissKey = "nexql-release-2.0.0-banner-dismissed";
+  if (localStorage.getItem(dismissKey) === "true") {
+    document.body.classList.add("banner-dismissed");
+  }
+
+  closeBtn.addEventListener("click", () => {
+    localStorage.setItem(dismissKey, "true");
+    document.body.classList.add("banner-dismissed");
+    syncSiteHeaderOffset();
+  });
+}
+
 function initializeDesktopExperience() {
+  wireReleaseBanner();
   wireThemeToggle();
   wireTour();
   wireSiteHeaderScrollState();
