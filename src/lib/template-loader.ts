@@ -5,6 +5,7 @@
  * Supports loading templates with embedded CSS and JS from separate files.
  */
 import * as vscode from 'vscode';
+import { MODERN_WEBVIEW_BASE_CSS } from '../common/htmlStyles';
 
 interface TemplateVariables {
   [key: string]: string;
@@ -84,15 +85,58 @@ export async function loadCompleteTemplate(
   });
 }
 
-/** Shared design tokens + primitives for all `templates/*` webviews. */
+/** Shared design tokens + primitives + components for all `templates/*` webviews. */
 export async function readSharedTemplateCss(extensionUri: vscode.Uri): Promise<string> {
-  const uri = vscode.Uri.joinPath(extensionUri, 'templates', 'shared', 'styles.css');
+  const sharedDir = vscode.Uri.joinPath(extensionUri, 'templates', 'shared');
+  const parts: string[] = [];
+  for (const file of ['styles.css', 'components.css']) {
+    const uri = vscode.Uri.joinPath(sharedDir, file);
+    try {
+      const buf = await vscode.workspace.fs.readFile(uri);
+      parts.push(new TextDecoder().decode(buf));
+    } catch (error) {
+      console.warn(`Shared template CSS not found: ${uri.fsPath}`);
+    }
+  }
+  return parts.join('\n');
+}
+
+/**
+ * Load a panel template folder (index.html + styles.css + scripts.js) with shared
+ * design system, CSP, and nonce — same pattern as BackupRestoreHtml / DashboardHtml.
+ */
+export async function loadPanelTemplate(
+  webview: vscode.Webview,
+  extensionUri: vscode.Uri,
+  folder: string,
+  variables: TemplateVariables = {},
+): Promise<string> {
+  const nonce = getNonce();
+  const csp = buildCsp(webview, nonce);
+  const dir = vscode.Uri.joinPath(extensionUri, 'templates', folder);
+
   try {
-    const buf = await vscode.workspace.fs.readFile(uri);
-    return new TextDecoder().decode(buf);
+    const [htmlBuf, cssBuf, jsBuf, sharedCss] = await Promise.all([
+      vscode.workspace.fs.readFile(vscode.Uri.joinPath(dir, 'index.html')),
+      vscode.workspace.fs.readFile(vscode.Uri.joinPath(dir, 'styles.css')),
+      vscode.workspace.fs.readFile(vscode.Uri.joinPath(dir, 'scripts.js')),
+      readSharedTemplateCss(extensionUri),
+    ]);
+
+    let html = new TextDecoder().decode(htmlBuf);
+    const panelCss = new TextDecoder().decode(cssBuf);
+    const js = new TextDecoder().decode(jsBuf);
+    const inlineStyles = `${MODERN_WEBVIEW_BASE_CSS}\n${sharedCss}\n${panelCss}`;
+
+    html = html.replace(/\{\{CSP\}\}/g, csp);
+    html = html.replace(/\{\{INLINE_STYLES\}\}/g, inlineStyles);
+    html = html.replace(/\{\{NONCE\}\}/g, nonce);
+    html = html.replace(/\{\{INLINE_SCRIPTS\}\}/g, js);
+    html = substituteVariables(html, variables);
+    return html;
   } catch (error) {
-    console.warn(`Shared template CSS not found: ${uri.fsPath}`);
-    return '';
+    console.error(`Failed to load panel template "${folder}":`, error);
+    throw error;
   }
 }
 

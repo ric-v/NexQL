@@ -1,14 +1,15 @@
 import * as vscode from 'vscode';
 import { ChatViewProvider } from '../providers/ChatViewProvider';
-import { DatabaseTreeProvider } from '../providers/DatabaseTreeProvider';
+import { DatabaseTreeProvider, DatabaseDragAndDropController } from '../providers/DatabaseTreeProvider';
 import { PostgresNotebookProvider } from '../features/notebook/notebookProvider';
 import { PostgresNotebookSerializer } from '../features/notebook/postgresNotebook';
 
 import { ProfilesTreeProvider, SavedQueriesTreeProvider } from '../providers/Phase7TreeProviders';
-import { NotebooksTreeProvider } from '../providers/NotebooksTreeProvider';
+import { NotebooksTreeProvider, NotebooksDragAndDropController } from '../providers/NotebooksTreeProvider';
 import { AutoRefreshService } from '../services/AutoRefreshService';
 import { DdlViewerService } from '../services/DdlViewerService';
 import { LicenseService } from '../services/LicenseService';
+import { NotebookIndexService } from '../services/NotebookIndexService';
 
 function runDeferredProviderTask(outputChannel: vscode.OutputChannel, taskName: string, task: () => Promise<void>) {
   setTimeout(() => {
@@ -35,10 +36,19 @@ export function registerProviders(context: vscode.ExtensionContext, outputChanne
     })
   );
 
+  // Refresh tree when active color theme changes
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveColorTheme(() => {
+      databaseTreeProvider.refresh();
+    })
+  );
+
   // Register tree data provider and create tree view
+  const databaseDragAndDropController = new DatabaseDragAndDropController(databaseTreeProvider, context);
   const treeView = vscode.window.createTreeView('postgresExplorer', {
     treeDataProvider: databaseTreeProvider,
-    showCollapseAll: true
+    showCollapseAll: true,
+    dragAndDropController: databaseDragAndDropController
   });
   context.subscriptions.push(treeView);
   const ddlViewerService = new DdlViewerService(context, treeView);
@@ -150,12 +160,36 @@ export function registerProviders(context: vscode.ExtensionContext, outputChanne
   );
 
   // Notebooks panel — browse all notebooks in globalStorage
-  const notebooksTreeProvider = new NotebooksTreeProvider(context.globalStorageUri);
+  const notebooksTreeProvider = new NotebooksTreeProvider(context.globalStorageUri, context);
+  const notebooksDragAndDropController = new NotebooksDragAndDropController();
   const notebooksTreeView = vscode.window.createTreeView('postgresExplorer.notebooks', {
     treeDataProvider: notebooksTreeProvider,
-    showCollapseAll: true
+    showCollapseAll: true,
+    dragAndDropController: notebooksDragAndDropController
   });
   context.subscriptions.push(notebooksTreeView);
+
+  // Initialize NotebookIndexService on startup
+  const notebookIndexService = NotebookIndexService.initialize(context.globalStorageUri);
+  notebookIndexService.ensureInitialized().then(() => {
+    databaseTreeProvider.refresh();
+    notebooksTreeProvider.refresh();
+  });
+
+  // Track MRU notebooks when notebook documents are opened
+  context.subscriptions.push(
+    vscode.workspace.onDidOpenNotebookDocument(async doc => {
+      const nbType = doc.notebookType;
+      if (nbType === 'postgres-notebook' || nbType === 'postgres-query') {
+        const uri = doc.uri;
+        if (uri.scheme === 'file') {
+          const mru = context.globalState.get<string[]>('postgresExplorer.mruNotebooks', []) || [];
+          const updatedMru = [uri.fsPath, ...mru.filter(p => p !== uri.fsPath)].slice(0, 50);
+          await context.globalState.update('postgresExplorer.mruNotebooks', updatedMru);
+        }
+      }
+    })
+  );
 
   // Auto-refresh service — keeps the explorer and notebooks panel in sync
   const autoRefreshService = new AutoRefreshService(

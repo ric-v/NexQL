@@ -2,29 +2,15 @@ import { Chart, ChartType, TooltipPositionerFunction } from 'chart.js';
 import { ensureChartJsRegistered } from './chartJsRegister';
 import { createGradient, darkenColor, formatDate, isDateColumn } from '../../utils/formatting';
 import { ChartRenderOptions } from '../../../common/types';
+import { getThemeChartPalette } from '../../../ui/renderer/rendererConstants';
 
-// Default colors matching renderer_v2.ts
-export const DEFAULT_COLORS = [
-  'rgba(54, 162, 235, 0.6)', // Blue
-  'rgba(255, 99, 132, 0.6)', // Red
-  'rgba(75, 192, 192, 0.6)', // Teal
-  'rgba(255, 206, 86, 0.6)', // Yellow
-  'rgba(153, 102, 255, 0.6)', // Purple
-  'rgba(255, 159, 64, 0.6)', // Orange
-  'rgba(199, 199, 199, 0.6)', // Grey
-  'rgba(231, 233, 237, 0.6)'  // Light Grey
-];
+function getDefaultColors(): string[] {
+  return getThemeChartPalette().fills;
+}
 
-export const BORDER_COLORS = [
-  'rgba(54, 162, 235, 1)',
-  'rgba(255, 99, 132, 1)',
-  'rgba(75, 192, 192, 1)',
-  'rgba(255, 206, 86, 1)',
-  'rgba(153, 102, 255, 1)',
-  'rgba(255, 159, 64, 1)',
-  'rgba(199, 199, 199, 1)',
-  'rgba(231, 233, 237, 1)'
-];
+function getBorderColors(): string[] {
+  return getThemeChartPalette().borders;
+}
 
 
 export class ChartRenderer {
@@ -180,8 +166,10 @@ export class ChartRenderer {
     options.yAxisCols.forEach(col => {
       const colorIdx = options.numericCols.indexOf(col);
       const customColor = options.seriesColors?.get(col);
-      const bgColor = customColor || DEFAULT_COLORS[colorIdx % DEFAULT_COLORS.length];
-      const border = customColor ? darkenColor(customColor) : BORDER_COLORS[colorIdx % BORDER_COLORS.length];
+      const fills = getDefaultColors();
+      const borders = getBorderColors();
+      const bgColor = customColor || fills[colorIdx % fills.length];
+      const border = customColor ? darkenColor(customColor) : borders[colorIdx % borders.length];
 
       datasets.push({
         label: col,
@@ -200,7 +188,8 @@ export class ChartRenderer {
 
     options.yAxisCols.forEach(col => {
       const colorIdx = options.numericCols.indexOf(col);
-      const lineColor = options.seriesColors?.get(col) || BORDER_COLORS[colorIdx % BORDER_COLORS.length];
+      const borders = getBorderColors();
+      const lineColor = options.seriesColors?.get(col) || borders[colorIdx % borders.length];
 
       datasets.push({
         label: col,
@@ -226,8 +215,10 @@ export class ChartRenderer {
     options.yAxisCols.forEach(col => {
       const colorIdx = options.numericCols.indexOf(col);
       const customColor = options.seriesColors?.get(col);
-      const lineColor = customColor ? darkenColor(customColor) : BORDER_COLORS[colorIdx % BORDER_COLORS.length];
-      const fillColor = customColor || DEFAULT_COLORS[colorIdx % DEFAULT_COLORS.length];
+      const fills = getDefaultColors();
+      const borders = getBorderColors();
+      const lineColor = customColor ? darkenColor(customColor) : borders[colorIdx % borders.length];
+      const fillColor = customColor || fills[colorIdx % fills.length];
 
       const bgGradient = ctx ? (() => {
         const grad = ctx.createLinearGradient(0, 0, 0, 400);
@@ -281,7 +272,8 @@ export class ChartRenderer {
       }
 
       const value = options.selectedPieValueCol ? val.value : val.count;
-      const color = options.sliceColors?.get(label) || DEFAULT_COLORS[colorIndex % DEFAULT_COLORS.length];
+      const fills = getDefaultColors();
+      const color = options.sliceColors?.get(label) || fills[colorIndex % fills.length];
 
       visibleData.push({
         label,

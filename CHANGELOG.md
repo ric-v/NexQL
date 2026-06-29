@@ -1,12 +1,19 @@
 # Changelog
 
-All notable changes to the PostgreSQL Explorer extension will be documented in this file.
+All notable changes to the NexQL extension will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [2.0.0] - 2026-06-08
+## [Unreleased]
+
+### Added
+
+- **Sentinel environment signaling** — Ambient prod/staging/dev awareness when a tagged `.pgsql` notebook is focused: status bar shield + user item, workbench chrome tint (syntax theme untouched), in-notebook context strip, Settings Hub **Sentinel** tab, and optional transition toasts.
+- **Sentinel 5.1 polish** — Tab badges `[P]`/`[S]`/`[D]`, SQL Assistant env chip, optional full theme swap (suggest/auto), per-notebook context strip toggle, connection environment tagging nudges + bulk tag, NexQL Themes bridge, first-focus production tour.
+
+## [1.5.0] - 2026-06-09
 
 ### Rebranded
 
@@ -16,26 +23,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- **Licensing & Subscription System** — Comprehensive license manager and entitlements enforcement for multi-tier support (Free, Sponsor, and Singularity/Team tiers).
-  - **In-Extension Commands** — Added commands for activating (`postgres-explorer.license.activate`), managing (`postgres-explorer.license.manage`), and upgrading licenses directly inside VS Code.
-  - **LicenseService** — Secure background licensing agent utilizing VS Code's native `SecretStorage` API for caching credentials with 24-hour cache TTL and 7-day offline grace period capability.
-  - **Feature Gates** — Built-in hard gates (modal warnings) and soft gates (information prompts) on advanced tools like Explain Analyzer, Schema Designer, Index Advisor, and Schema Search to handle license entitlements.
-  - **Status Bar Indicator** — Active license tier warning/info indicator added to the status bar.
-  - **Razorpay Integration** — Implemented backend hooks (`api/create-subscription.js`, `api/webhook.js`) to handle subscription checkouts, upgrades, and HMAC signature validations.
-  - **License Key Recovery** — Endpoints for looking up and recovering license keys via email.
-- **AI Assistant & Credentials Services**
-  - **AiCredentialsService & AiModelCatalogService** — Centralized services to securely validate, cache, and manage API credentials across providers (OpenAI, Anthropic, Gemini, and VS Code LM).
-  - **Multi-Model Support** — Support for custom settings panel to specify model selections (defaulting to GPT-4o, Claude Sonnet 3.5, Gemini 2.5 Flash, etc.) and save API keys independently.
-  - **Enhanced Chat Webview** — Redesigned Chat UI panel with a header-based active model picker dropdown, dynamic capabilities, and custom AI settings page launcher.
-- **Interactive "What's New" Panel**
-  - Added `WhatsNewManager` to automatically present a beautifully styled release notes webview on version changes or manual command invocation.
+- **Licensing & Subscription System** — Implemented license management and entitlement enforcement.
+  - **In-Extension Commands** — Added commands for activating (`postgres-explorer.license.activate`), managing (`postgres-explorer.license.manage`), and upgrading licenses.
+  - **LicenseService** — Introduced a background licensing manager with secure cache storage (using VS Code's `SecretStorage` API), 24-hour cache TTL, and a 7-day offline grace period.
+  - **Status Bar Indicator** — Added a license status bar indicator showing the active tier.
+  - **Feature Gates** — Integrated gates for premium features using information prompts (soft gates) or modal warning dialogs (hard gates) to direct unlicensed users to upgrade paths.
+  - **License Key Recovery** — Added a secure API endpoint (`/api/license/recover`) and UI flow for recovering license keys via email.
+  - **Enhanced Payment Verification** — Enhanced subscription checks and HMAC payment signature verification.
+  - **Notebook Connection Quota** — Added a limit of 10 notebooks per connection for Free tier users. Paid users (Sponsor & Team) remain unlimited. When the limit is reached, users are warned and prompted to open one of their existing notebooks on the connection.
+- **RLS Policy Studio** — A visual, AI-assisted designer for PostgreSQL row-level security policies (opens from a table's context menu, replacing the earlier prompt-based flow).
+  - **Click-to-configure** command (ALL/SELECT/INSERT/UPDATE/DELETE), policy type (PERMISSIVE/RESTRICTIVE), target roles, and `USING` / `WITH CHECK` expression editors — each with inline explanations, and fields that show/hide to match PostgreSQL semantics.
+  - **✨ Generate with AI** — Describe the rule in plain English ("users can only see rows for their own tenant") and the assistant produces the `USING`/`WITH CHECK` expressions, a suggested policy name, and a one-line rationale, using the table's columns/types as context.
+  - **Live SQL preview** with syntax highlighting; includes `ENABLE ROW LEVEL SECURITY` when not yet active. **Open in Notebook** or **Copy SQL** to execute, matching the Table Designer workflow.
+- **Data Import — JSON & NDJSON** — The import wizard now accepts `.json` (array of objects or a single object) and `.ndjson` / `.jsonl` (one object per line) in addition to CSV/TSV. Format is auto-detected from the file extension, nested values are stored as JSON text, and column mapping is resolved by header name so it stays correct even when later records introduce new keys.
+- **Migration Hub** — New command **NexQL: Migration Hub** detects the migration framework(s) in your workspace (Prisma, Drizzle, Alembic, Flyway, Atlas, Knex, Rails, golang-migrate) and opens a runbook with the matching status / apply / rollback / create commands and docs links.
+- **Foreign Data Wrapper DDL** — The Definition (DDL) viewer now generates `CREATE FOREIGN DATA WRAPPER` scripts (handler, validator, options, owner) instead of an "unsupported" placeholder. `TYPE` definitions that can't be reconstructed (base/range/multirange) now report their category clearly.
+- **Diagnostic logging control** — New `postgresExplorer.debug` setting routes verbose diagnostics to a dedicated **NexQL Debug** output channel (off by default), keeping SQL, schema, and AI payloads out of the developer console.
+- **Gating telemetry** — A `gate_decision` usage event records premium-access decisions (feature, enforcement mode, allowed, paid) so feature adoption and conversion can be measured (still behind the global telemetry switch).
 
 ### Changed
 
+- **Freemium access model** — Premium features are no longer hard-blocked. The free tier now gets **metered daily/weekly allowances** per feature and paid subscribers are unlimited. When a free allowance is reached, the action is paused for the period with a non-blocking "resets …" notice (it resets automatically) rather than being locked.
+  - **Freemium Limits Summary**:
+    
+    | Feature | Free Tier Limit | Paid Tier (Sponsor & Team) |
+    | :--- | :--- | :--- |
+    | **AI Assistant** | 25 / day | Unlimited |
+    | **Visual EXPLAIN** | 10 / day | Unlimited |
+    | **Real-time Dashboard** | 5 / day | Unlimited |
+    | **Schema Diff** | 5 / day | Unlimited |
+    | **Schema Designer / ERD / RLS Studio** | 5 / day | Unlimited |
+    | **Data Import** | 3 / week | Unlimited |
+    | **Backup & Restore** | 3 / week | Unlimited |
+    | **Saved Queries** | 5 total (cap) | Unlimited |
+    | **Notebooks** | 10 per connection | Unlimited |
+    
+  - **Subscription Tiers**:
+    - 🌟 **Sponsor** — For individual developers who want to support active development of NexQL and get full, unlimited access to all premium features. Perfect for solo developers and power users who rely on NexQL daily.
+    - 🏢 **Team (Singularity)** — Coming soon. A group plan designed for organisations and development teams. Each Team license covers **up to 5 developers**, giving the whole squad unlimited access to every premium feature under a single subscription. Ideal for teams that collaborate on shared databases.
+  - AI Assistant is metered **per message** (not per panel open).
+  - `postgresExplorer.license.enforcement` now takes `off` (no metering — development) or `freemium` (default); the previous `soft`/`hard` values are treated as `freemium`.
+- **Premium feature coverage** — Backup & Restore and Data Import are now part of the premium/freemium model alongside the AI Assistant, Schema Diff, Schema Designer/ERD, Visual EXPLAIN, and Dashboard.
 - **Saved Queries Soft Limit** — Implemented a soft limit of 5 saved queries for Free tier users, prompting upgrades for unlimited saving.
-- **Consolidated API Layout** — Consolidated shared serverless library modules (store, email, config, keygen) inside the `api/_lib/` directory.
-- **AI Scoping** — Split configuration settings between `ai.chat.*` (for sidebar chat assistant) and `ai.notebook.*` (for inline CodeLens/insights query assistant).
-- **Environment and Safety Signals** — Refined environment detection (DEV/STAGE/PROD), read-only execution modes, and safety checks on risky write operations.
+- **Guided partition creation** — **Create Partition** now collects the strategy (range/list/hash/default), name, and bounds and emits a concrete, ready-to-run `CREATE TABLE … PARTITION OF` statement instead of editable templates.
+- **Cleaner runtime output** — Replaced scattered `console.log`/`console.warn` calls across commands, services, and providers with the gated debug logger described above.
+- **Consolidated API Layout** — Consolidated and cleaned up shared utility modules (store, email, config, keygen) inside the `api/_lib/` directory.
+
+### Fixed
+
+- **Explorer "Reveal in Explorer"** — No longer shows a misleading "Revealed connection" popup for targets it cannot deep-reveal; it now focuses and expands the connection cleanly.
+
+### Removed
+
+- **Unused settings** — Removed `postgresExplorer.streaming.enabled` and `postgresExplorer.streaming.batchSize`, which were not read anywhere and duplicated the working `postgresExplorer.performance.slidingWindow*` settings.
 
 ---
 

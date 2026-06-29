@@ -2,6 +2,8 @@
  * Database object fetching service for @ mentions
  */
 import * as vscode from 'vscode';
+import { debugLog } from '../../common/logger';
+import { extensionContext } from '../../extension';
 import { Client, PoolClient } from 'pg';
 import { ConnectionManager } from '../../services/ConnectionManager';
 import { getSchemaCache, SchemaCache } from '../../lib/schema-cache';
@@ -239,10 +241,10 @@ export class DbObjectService {
     const objects: DbObject[] = [];
     const connections = vscode.workspace.getConfiguration().get<any[]>('postgresExplorer.connections') || [];
 
-    console.log('[ChatView] Fetching DB objects, connections found:', connections.length);
+    debugLog('[ChatView] Fetching DB objects, connections found:', connections.length);
 
     if (connections.length === 0) {
-      console.log('[ChatView] No connections configured');
+      debugLog('[ChatView] No connections configured');
       return objects;
     }
 
@@ -250,7 +252,7 @@ export class DbObjectService {
       let client: PoolClient | undefined;
       try {
         const connName = conn.name || conn.host;
-        console.log('[ChatView] Processing connection:', connName);
+        debugLog('[ChatView] Processing connection:', connName);
 
         client = await ConnectionManager.getInstance().getPooledClient({
           id: conn.id,
@@ -265,7 +267,7 @@ export class DbObjectService {
           "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname"
         );
 
-        console.log('[ChatView] Found databases:', dbResult.rows.length);
+        debugLog('[ChatView] Found databases:', dbResult.rows.length);
 
         for (const dbRow of dbResult.rows) {
           const dbName = dbRow.datname;
@@ -396,7 +398,7 @@ export class DbObjectService {
       }
     }
 
-    console.log('[ChatView] Total objects found:', objects.length);
+    debugLog('[ChatView] Total objects found:', objects.length);
     this._cache = objects;
     return objects;
   }
@@ -574,9 +576,9 @@ export class DbObjectService {
   async getObjectSchema(obj: DbObject, ctx?: SchemaRenderContext): Promise<string> {
     const cacheKey = `${obj.connectionId}:${obj.schema}:${obj.name}:${obj.type}`;
 
-    // Check cache first
+    // Check memory cache first
     if (this._objectSchemaCache.has(cacheKey)) {
-      console.log('[ChatView] Cache hit for:', cacheKey);
+      debugLog('[ChatView] Cache hit for:', cacheKey);
       const cached = this._objectSchemaCache.get(cacheKey)!;
       // Refresh LRU order (delete and re-add)
       this._objectSchemaCache.delete(cacheKey);
@@ -584,6 +586,27 @@ export class DbObjectService {
       return typeof cached === 'string'
         ? cached
         : renderTableSchema(cached, { userMessage: ctx?.userMessage });
+    }
+
+    // Check local database index first
+    try {
+      if (extensionContext) {
+        const { IndexStore } = await import('../../features/dbindex/IndexStore');
+        const { IndexQueryService } = await import('../../features/dbindex/IndexQueryService');
+        const { mapObjectEntryToTableSchema } = await import('../../features/dbindex/contextPack');
+        
+        const store = new IndexStore(extensionContext.globalStorageUri);
+        const queryService = new IndexQueryService(store);
+        const entry = await queryService.describe(obj.connectionId, obj.database, `${obj.schema}.${obj.name}`);
+        if (entry) {
+          debugLog('[ChatView] Local index hit for:', obj.schema + '.' + obj.name);
+          const mapped = mapObjectEntryToTableSchema(obj.schema, obj.name, entry);
+          this._objectSchemaCache.set(cacheKey, mapped);
+          return renderTableSchema(mapped, { userMessage: ctx?.userMessage });
+        }
+      }
+    } catch (e) {
+      debugLog('[ChatView] Local index read bypassed or failed:', e);
     }
 
     const connections = vscode.workspace.getConfiguration().get<any[]>('postgresExplorer.connections') || [];
@@ -660,7 +683,7 @@ export class DbObjectService {
   clearCache(): void {
     this._objectSchemaCache.clear();
     this._dbListCache.clear();
-    console.log('[ChatView] Schema caches cleared');
+    debugLog('[ChatView] Schema caches cleared');
   }
 
   /**
@@ -670,34 +693,31 @@ export class DbObjectService {
    * All SQL stays parameterized.
    */
   private async _fetchTableSchema(client: any, schema: string, table: string): Promise<TableSchema> {
-    const [colsRes, constraintsRes, idxRes, countRes] = await Promise.all([
-      client.query(
-        'SELECT column_name, data_type, is_nullable, column_default, character_maximum_length, numeric_precision, numeric_scale FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position',
-        [schema, table]
-      ),
-      // Combined PK + FK constraints (one round-trip instead of two).
-      client.query(
-        `SELECT tc.constraint_type, tc.constraint_name, kcu.column_name, kcu.ordinal_position,
-                ccu.table_schema AS ref_schema, ccu.table_name AS ref_table, ccu.column_name AS ref_column
-         FROM information_schema.table_constraints tc
-         JOIN information_schema.key_column_usage kcu
-           ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
-         LEFT JOIN information_schema.constraint_column_usage ccu
-           ON tc.constraint_name = ccu.constraint_name AND tc.constraint_type = 'FOREIGN KEY'
-         WHERE tc.table_schema = $1 AND tc.table_name = $2
-           AND tc.constraint_type IN ('PRIMARY KEY', 'FOREIGN KEY')
-         ORDER BY tc.constraint_type, kcu.ordinal_position`,
-        [schema, table]
-      ),
-      client.query(
-        'SELECT i.relname as index_name, ix.indisunique, ix.indisprimary, array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as columns FROM pg_index ix JOIN pg_class i ON i.oid = ix.indexrelid JOIN pg_class t ON t.oid = ix.indrelid JOIN pg_namespace n ON n.oid = t.relnamespace JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey) WHERE n.nspname = $1 AND t.relname = $2 GROUP BY i.relname, ix.indisunique, ix.indisprimary',
-        [schema, table]
-      ),
-      client.query(
-        'SELECT reltuples::bigint as estimate FROM pg_class WHERE relname = $1 AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = $2)',
-        [table, schema]
-      ),
-    ]);
+    const colsRes = await client.query(
+      'SELECT column_name, data_type, is_nullable, column_default, character_maximum_length, numeric_precision, numeric_scale FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position',
+      [schema, table]
+    );
+    const constraintsRes = await client.query(
+      `SELECT tc.constraint_type, tc.constraint_name, kcu.column_name, kcu.ordinal_position,
+              ccu.table_schema AS ref_schema, ccu.table_name AS ref_table, ccu.column_name AS ref_column
+       FROM information_schema.table_constraints tc
+       JOIN information_schema.key_column_usage kcu
+         ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+       LEFT JOIN information_schema.constraint_column_usage ccu
+         ON tc.constraint_name = ccu.constraint_name AND tc.constraint_type = 'FOREIGN KEY'
+       WHERE tc.table_schema = $1 AND tc.table_name = $2
+         AND tc.constraint_type IN ('PRIMARY KEY', 'FOREIGN KEY')
+       ORDER BY tc.constraint_type, kcu.ordinal_position`,
+      [schema, table]
+    );
+    const idxRes = await client.query(
+      'SELECT i.relname as index_name, ix.indisunique, ix.indisprimary, array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as columns FROM pg_index ix JOIN pg_class i ON i.oid = ix.indexrelid JOIN pg_class t ON t.oid = ix.indrelid JOIN pg_namespace n ON n.oid = t.relnamespace JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey) WHERE n.nspname = $1 AND t.relname = $2 GROUP BY i.relname, ix.indisunique, ix.indisprimary',
+      [schema, table]
+    );
+    const countRes = await client.query(
+      'SELECT reltuples::bigint as estimate FROM pg_class WHERE relname = $1 AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = $2)',
+      [table, schema]
+    );
 
     const columns: ColumnInfo[] = colsRes.rows.map((col: any) => {
       let dtype = col.data_type;

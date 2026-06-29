@@ -92,8 +92,19 @@ module.exports = async (req, res) => {
   }
 
   const subscriptionId = subEntity.id;
+  const razorpayEventId =
+    body.id ||
+    req.headers['x-razorpay-event-id'] ||
+    `${event}:${subscriptionId}:${subEntity.current_end || ''}`;
 
   try {
+    if (store.usingNeon) {
+      const { isNew } = await store.licenseDb.recordWebhookEvent(String(razorpayEventId));
+      if (!isNew) {
+        return res.status(200).json({ ok: true, duplicate: true, event });
+      }
+    }
+
     const existing = await store.getEntitlementBySubscription(subscriptionId);
 
     if (ACTIVE_EVENTS.has(event)) {
@@ -134,7 +145,19 @@ module.exports = async (req, res) => {
         instanceIds: existing ? existing.instanceIds || [] : [],
       };
 
-      await store.putEntitlement(entitlement);
+      await store.putEntitlement(entitlement, {
+        source: 'webhook',
+        razorpayEvent: razorpayEventId,
+      });
+
+      if (licenseKey) {
+        try {
+          const { markAccountActive } = require('./_lib/sync-db');
+          await markAccountActive(licenseKey);
+        } catch (err) {
+          console.error('webhook: markAccountActive failed', err);
+        }
+      }
 
       if (isNew && email) {
         await sendLicenseEmail(email, licenseKey, tier);
@@ -146,7 +169,18 @@ module.exports = async (req, res) => {
     if (STATUS_EVENTS[event]) {
       if (existing) {
         existing.status = STATUS_EVENTS[event];
-        await store.putEntitlement(existing);
+        await store.putEntitlement(existing, {
+          source: 'webhook',
+          razorpayEvent: razorpayEventId,
+        });
+        if (existing.licenseKey && ['cancelled', 'halted', 'paused'].includes(existing.status)) {
+          try {
+            const { markAccountInactive } = require('./_lib/sync-db');
+            await markAccountInactive(existing.licenseKey);
+          } catch (err) {
+            console.error('webhook: markAccountInactive failed', err);
+          }
+        }
       }
       return res.status(200).json({ ok: true, event, status: STATUS_EVENTS[event] });
     }

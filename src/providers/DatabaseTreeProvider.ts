@@ -1,11 +1,15 @@
 import { Client, PoolClient } from 'pg';
 import * as vscode from 'vscode';
+import { debugWarn } from '../common/logger';
 import * as path from 'path';
 import { ConnectionManager } from '../services/ConnectionManager';
 import { getSchemaCache, SchemaCache } from '../lib/schema-cache';
 import { Debouncer } from '../lib/debounce';
 import { AutoRefreshService } from '../services/AutoRefreshService';
 import { buildTreeItemKey, buildTreeItemKeyFromParts } from './tree/treeItemKey';
+import { formatConnectionEnvBadge, getDatabaseTreeIcon } from './tree/treeIconTheme';
+import { PlatformConnectionService } from '../services/PlatformConnectionService';
+import { profileDisplayLabel } from '../lib/platform/PlatformProfile';
 import {
   PG_VERSION_10,
   PG_VERSION_11,
@@ -71,7 +75,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
    */
   public async revealItem(connectionId: string, databaseName?: string, schema?: string, objectName?: string, objectType?: string): Promise<void> {
     if (!this.treeView) {
-      console.warn('TreeView not initialized for reveal');
+      debugWarn('TreeView not initialized for reveal');
       return;
     }
 
@@ -96,19 +100,13 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         connectionId
       );
 
-      // Reveal with expand
-      await this.treeView.reveal(connectionItem, { select: true, focus: true, expand: 1 });
-
-      // If database is specified, try to expand and reveal it
-      if (databaseName) {
-        // TODO: Implement deeper reveal logic for database/schema/object
-        // This would require fetching children and finding the exact item
-        vscode.window.showInformationMessage(`Revealed connection: ${connection.name || connection.host}`);
-      } else {
-        vscode.window.showInformationMessage(`Revealed connection: ${connection.name || connection.host}`);
-      }
+      // Reveal and expand the connection. Deeper levels (database/schema/object)
+      // need TreeDataProvider.getParent to build a reveal path, which this tree
+      // does not implement; expanding the connection lets the user drill in from
+      // a focused, scrolled-into-view starting point without a misleading popup.
+      await this.treeView.reveal(connectionItem, { select: true, focus: true, expand: databaseName ? 3 : 1 });
     } catch (err) {
-      console.error('Error revealing item:', err);
+      debugWarn('Error revealing item:', err);
       vscode.window.showWarningMessage('Could not reveal item in explorer');
     }
   }
@@ -433,33 +431,8 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         rootItems.push(badgeItem);
       }
 
-      const groupedConnections: { [key: string]: any[] } = {};
-      const ungroupedConnections: any[] = [];
-
-      connections.forEach(conn => {
-        if (conn.group) {
-          if (!groupedConnections[conn.group]) {
-            groupedConnections[conn.group] = [];
-          }
-          groupedConnections[conn.group].push(conn);
-        } else {
-          ungroupedConnections.push(conn);
-        }
-      });
-
-      // Add groups first
-      for (const groupName of Object.keys(groupedConnections).sort()) {
-        rootItems.push(new DatabaseTreeItem(
-          groupName,
-          vscode.TreeItemCollapsibleState.Collapsed,
-          'connection-group',
-          undefined
-        ));
-      }
-
-      // Add ungrouped connections
-      ungroupedConnections.forEach(conn => {
-        rootItems.push(new DatabaseTreeItem(
+      const createConnectionItem = (conn: any, isPinned = false) => {
+        const item = new DatabaseTreeItem(
           conn.name || `${conn.host}:${conn.port}`,
           vscode.TreeItemCollapsibleState.Collapsed,
           'connection',
@@ -478,8 +451,77 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
           undefined, // rowCount
           undefined, // size
           conn.environment, // environment
-          conn.readOnlyMode // readOnlyMode
+          conn.readOnlyMode, // readOnlyMode
+          undefined, // cronJobId
+          undefined, // cronSchedule
+          undefined, // cronJobActive
+          undefined, // capabilityTags
+          conn.color // color
+        );
+        if (isPinned) {
+          if (item.contextValue === 'connection-disconnected') {
+            item.contextValue = 'connection-pinned-disconnected';
+          } else {
+            item.contextValue = 'connection-pinned';
+          }
+          item.description = item.description ? `📌 Pinned · ${item.description}` : '📌 Pinned';
+        }
+        const platformSuffix =
+          PlatformConnectionService.getInstance().connectionTooltipSuffix(conn);
+        item.tooltip = item.tooltip
+          ? `${item.tooltip}\n${platformSuffix}`
+          : platformSuffix;
+        const profile =
+          PlatformConnectionService.getInstance().getEstimatedProfile(conn);
+        if (profile.platform !== 'vanilla') {
+          const platformLabel = profileDisplayLabel(profile);
+          item.description = item.description
+            ? `${item.description} · ${platformLabel}`
+            : platformLabel;
+        }
+        return item;
+      };
+
+      const pinnedIds = this.extensionContext.globalState.get<string[]>('postgresExplorer.pinnedConnections', []);
+      const pinnedSet = new Set(pinnedIds);
+
+      // Add pinned connections first
+      connections.forEach(conn => {
+        if (pinnedSet.has(conn.id)) {
+          rootItems.push(createConnectionItem(conn, true));
+        }
+      });
+
+      const groupedConnections: { [key: string]: any[] } = {};
+      const ungroupedConnections: any[] = [];
+
+      connections.forEach(conn => {
+        if (pinnedSet.has(conn.id)) {
+          return;
+        }
+        if (conn.group) {
+          if (!groupedConnections[conn.group]) {
+            groupedConnections[conn.group] = [];
+          }
+          groupedConnections[conn.group].push(conn);
+        } else {
+          ungroupedConnections.push(conn);
+        }
+      });
+
+      // Add groups next
+      for (const groupName of Object.keys(groupedConnections).sort()) {
+        rootItems.push(new DatabaseTreeItem(
+          groupName,
+          vscode.TreeItemCollapsibleState.Collapsed,
+          'connection-group',
+          undefined
         ));
+      }
+
+      // Add ungrouped unpinned connections
+      ungroupedConnections.forEach(conn => {
+        rootItems.push(createConnectionItem(conn, false));
       });
 
       return rootItems;
@@ -513,7 +555,16 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
           ? await this.getCachedServerVersion(element.connectionId, client)
           : PG_VERSION_11;
 
-      const ctx = { provider: this, client, element, pgVer };
+      await PlatformConnectionService.getInstance().probeIfNeeded(
+        { ...connection, database: dbName },
+        client,
+      );
+      const platformProfile = PlatformConnectionService.getInstance().getProfile(
+        element.connectionId!,
+        dbName,
+      );
+
+      const ctx = { provider: this, client, element, pgVer, platformProfile };
 
       // Connection/Databases/Favorites/Recent Loader
       if (
@@ -521,7 +572,8 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         element.type === 'databases-group' ||
         element.type === 'system-databases-group' ||
         element.type === 'favorites-group' ||
-        element.type === 'recent-group'
+        element.type === 'recent-group' ||
+        element.type === 'connection-notebooks-folder'
       ) {
         return await this.connectionLoader.getChildren(ctx);
       }
@@ -583,7 +635,7 @@ export class DatabaseTreeItem extends vscode.TreeItem {
   constructor(
     public readonly label: string,
     public readonly collapsibleState: vscode.TreeItemCollapsibleState,
-    public readonly type: 'connection' | 'database' | 'schema' | 'table' | 'view' | 'function' | 'procedure' | 'column' | 'category' | 'materialized-view' | 'type' | 'foreign-table' | 'extension' | 'role' | 'databases-group' | 'system-databases-group' | 'favorites-group' | 'recent-group' | 'constraint' | 'index' | 'foreign-data-wrapper' | 'foreign-server' | 'user-mapping' | 'connection-group' | 'trigger' | 'sequence' | 'partition' | 'domain' | 'aggregate' | 'event-trigger' | 'rule' | 'tablespace' | 'publication' | 'subscription' | 'cron-job' | 'policy' | 'sponsor-badge' | 'team-badge',
+    public readonly type: 'connection' | 'database' | 'schema' | 'table' | 'view' | 'function' | 'procedure' | 'column' | 'category' | 'materialized-view' | 'type' | 'foreign-table' | 'extension' | 'role' | 'databases-group' | 'system-databases-group' | 'favorites-group' | 'recent-group' | 'constraint' | 'index' | 'foreign-data-wrapper' | 'foreign-server' | 'user-mapping' | 'connection-group' | 'trigger' | 'sequence' | 'partition' | 'domain' | 'aggregate' | 'event-trigger' | 'rule' | 'tablespace' | 'publication' | 'subscription' | 'cron-job' | 'policy' | 'sponsor-badge' | 'team-badge' | 'connection-notebooks-folder' | 'connection-notebook-file',
     public readonly connectionId?: string,
     public readonly databaseName?: string,
     public readonly schema?: string,
@@ -603,6 +655,8 @@ export class DatabaseTreeItem extends vscode.TreeItem {
     public readonly cronJobId?: number,
     public readonly cronSchedule?: string,
     public readonly cronJobActive?: boolean,
+    public readonly capabilityTags?: string[],
+    public readonly color?: 'red' | 'orange' | 'blue' | 'green' | 'gray',
   ) {
     super(label, collapsibleState);
     if (type === 'category' && label) {
@@ -614,52 +668,20 @@ export class DatabaseTreeItem extends vscode.TreeItem {
     } else if (type === 'cron-job' && cronJobId === undefined) {
       this.contextValue = 'cron-setup';
     } else {
-      // Keep original contextValue - isFavorite flag is stored separately for star indicator
-      // For favorites menu detection, we use description containing ★
-      this.contextValue = isInstalled ? `${type}-installed` : type;
+      let contextValue = isInstalled ? `${type}-installed` : type;
+      if (capabilityTags?.length) {
+        contextValue += `:${capabilityTags.join(':')}`;
+      }
+      this.contextValue = contextValue;
     }
     this.tooltip = this.getTooltip(type, comment, roleAttributes, environment, readOnlyMode);
     this.description = this.getDescription(type, isInstalled, installedVersion, roleAttributes, isFavorite, count, rowCount, size, environment, readOnlyMode);
-    this.iconPath = {
-      connection: new vscode.ThemeIcon('plug', isDisconnected ? new vscode.ThemeColor('disabledForeground') : new vscode.ThemeColor('charts.blue')),
-      database: new vscode.ThemeIcon('database', new vscode.ThemeColor('charts.purple')),
-      'databases-group': new vscode.ThemeIcon('database', new vscode.ThemeColor('charts.purple')),
-      'system-databases-group': new vscode.ThemeIcon('folder-library', new vscode.ThemeColor('charts.gray')),
-      'favorites-group': new vscode.ThemeIcon('star-full', new vscode.ThemeColor('charts.yellow')),
-      'recent-group': new vscode.ThemeIcon('history', new vscode.ThemeColor('charts.green')),
-      schema: new vscode.ThemeIcon('symbol-namespace', new vscode.ThemeColor('charts.yellow')),
-      table: new vscode.ThemeIcon('table', new vscode.ThemeColor('charts.blue')),
-      view: new vscode.ThemeIcon('eye', new vscode.ThemeColor('charts.green')),
-      function: new vscode.ThemeIcon('symbol-method', new vscode.ThemeColor('charts.orange')),
-      procedure: new vscode.ThemeIcon('symbol-method', new vscode.ThemeColor('charts.red')),
-      column: new vscode.ThemeIcon('symbol-field', new vscode.ThemeColor('charts.blue')),
-      category: new vscode.ThemeIcon('list-tree'),
-      'materialized-view': new vscode.ThemeIcon('symbol-structure', new vscode.ThemeColor('charts.green')),
-      type: new vscode.ThemeIcon('symbol-type-parameter', new vscode.ThemeColor('charts.red')),
-      'foreign-table': new vscode.ThemeIcon('symbol-interface', new vscode.ThemeColor('charts.blue')),
-      extension: new vscode.ThemeIcon(isInstalled ? 'extensions-installed' : 'extensions', isInstalled ? new vscode.ThemeColor('charts.green') : undefined),
-      role: new vscode.ThemeIcon('person', new vscode.ThemeColor('charts.yellow')),
-      constraint: new vscode.ThemeIcon('lock', new vscode.ThemeColor('charts.orange')),
-      index: new vscode.ThemeIcon('search', new vscode.ThemeColor('charts.purple')),
-      'foreign-data-wrapper': new vscode.ThemeIcon('extensions', new vscode.ThemeColor('charts.blue')),
-      'foreign-server': new vscode.ThemeIcon('server', new vscode.ThemeColor('charts.green')),
-      'user-mapping': new vscode.ThemeIcon('account', new vscode.ThemeColor('charts.yellow')),
-      'connection-group': new vscode.ThemeIcon('folder', new vscode.ThemeColor('charts.blue')),
-      'trigger': new vscode.ThemeIcon('zap', new vscode.ThemeColor('charts.orange')),
-      'sequence': new vscode.ThemeIcon('list-ordered', new vscode.ThemeColor('charts.blue')),
-      'partition': new vscode.ThemeIcon('symbol-array', new vscode.ThemeColor('charts.purple')),
-      'domain': new vscode.ThemeIcon('symbol-namespace', new vscode.ThemeColor('charts.red')),
-      'aggregate': new vscode.ThemeIcon('symbol-operator', new vscode.ThemeColor('charts.green')),
-      'event-trigger': new vscode.ThemeIcon('broadcast', new vscode.ThemeColor('charts.orange')),
-      'rule': new vscode.ThemeIcon('law', new vscode.ThemeColor('charts.yellow')),
-      'tablespace': new vscode.ThemeIcon('folder-library', new vscode.ThemeColor('charts.blue')),
-      'publication': new vscode.ThemeIcon('rss', new vscode.ThemeColor('charts.green')),
-      'subscription': new vscode.ThemeIcon('inbox', new vscode.ThemeColor('charts.purple')),
-      'cron-job': new vscode.ThemeIcon('clock', new vscode.ThemeColor('charts.orange')),
-      policy: new vscode.ThemeIcon('shield', new vscode.ThemeColor('charts.green')),
-      'sponsor-badge': new vscode.ThemeIcon('heart', new vscode.ThemeColor('charts.green')),
-      'team-badge': new vscode.ThemeIcon('verified', new vscode.ThemeColor('charts.purple')),
-    }[type];
+    this.iconPath = getDatabaseTreeIcon(type, {
+      isDisconnected,
+      isInstalled,
+      color,
+      label: this.label,
+    });
   }
 
   private getTooltip(type: string, comment?: string, roleAttributes?: { [key: string]: boolean }, environment?: string, readOnlyMode?: boolean): string {
@@ -698,18 +720,10 @@ export class DatabaseTreeItem extends vscode.TreeItem {
     }
 
     if (type === 'connection') {
-      const badges = [];
-      if (environment === 'production') {
-        badges.push('🔴 PROD');
-      } else if (environment === 'staging') {
-        badges.push('🟡 STAGING');
-      } else if (environment === 'development') {
-        badges.push('🟢 DEV');
-      }
-      if (readOnlyMode) {
-        badges.push('🔒');
-      }
-      return badges.length > 0 ? badges.join(' ') : undefined;
+      return formatConnectionEnvBadge(
+        environment as 'production' | 'staging' | 'development' | undefined,
+        readOnlyMode,
+      );
     } else if (type === 'extension' && isInstalled) {
       desc = `v${installedVersion} (installed)`;
     } else if (type === 'role' && roleAttributes) {
@@ -754,5 +768,108 @@ export class DatabaseTreeItem extends vscode.TreeItem {
       return desc ? `${desc} ★` : '★';
     }
     return desc;
+  }
+}
+
+export class DatabaseDragAndDropController implements vscode.TreeDragAndDropController<DatabaseTreeItem> {
+  dragMimeTypes = [];
+  dropMimeTypes = ['application/vnd.code.tree.postgresExplorer.notebooks'];
+
+  constructor(
+    private readonly provider: DatabaseTreeProvider,
+    private readonly context: vscode.ExtensionContext
+  ) {}
+
+  async handleDrop(
+    target: DatabaseTreeItem | undefined,
+    dataTransfer: vscode.DataTransfer,
+    token: vscode.CancellationToken
+  ): Promise<void> {
+    if (!target || !target.connectionId) {
+      return;
+    }
+
+    const item = dataTransfer.get('application/vnd.code.tree.postgresExplorer.notebooks');
+    if (!item) {
+      return;
+    }
+
+    const urisStr = await item.asString();
+    if (!urisStr) return;
+
+    let uris: string[] = [];
+    try {
+      uris = JSON.parse(urisStr);
+    } catch {
+      uris = urisStr.split(',');
+    }
+
+    const connections = vscode.workspace.getConfiguration().get<any[]>('postgresExplorer.connections') || [];
+    const connection = connections.find(c => c.id === target.connectionId);
+    if (!connection) {
+      vscode.window.showErrorMessage('Target connection configuration not found.');
+      return;
+    }
+
+    const dbName = target.databaseName || connection.database || 'postgres';
+    const { NotebookIndexService } = require('../services/NotebookIndexService');
+    const indexService = NotebookIndexService.getInstance();
+    const safeConnectionName = (connection.name || connection.id).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const safeDatabaseName = dbName.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const destFolder = vscode.Uri.joinPath(this.context.globalStorageUri, safeConnectionName, safeDatabaseName);
+
+    try {
+      await vscode.workspace.fs.createDirectory(destFolder);
+    } catch (err) {
+      // Ignore directory exists/creation errors
+    }
+
+    for (const uriStr of uris) {
+      const sourceUri = vscode.Uri.parse(uriStr);
+      const filename = path.basename(sourceUri.fsPath);
+      const destUri = vscode.Uri.joinPath(destFolder, filename);
+
+      if (sourceUri.fsPath === destUri.fsPath) {
+        continue;
+      }
+
+      try {
+        await vscode.workspace.fs.rename(sourceUri, destUri, { overwrite: false });
+        const raw = await vscode.workspace.fs.readFile(destUri);
+        const data = JSON.parse(Buffer.from(raw).toString());
+
+        const fileMetadata = {
+          connectionId: connection.id,
+          host: connection.host,
+          port: connection.port,
+          username: connection.username,
+          database: dbName,
+          databaseName: dbName,
+          title: connection.name && dbName ? `${connection.name}-${dbName}` : dbName,
+        };
+
+        data.metadata = {
+          ...data.metadata,
+          ...fileMetadata,
+          custom: {
+            cells: data.metadata?.custom?.cells || [],
+            metadata: {
+              ...fileMetadata,
+              enableScripts: true
+            }
+          }
+        };
+
+        await vscode.workspace.fs.writeFile(destUri, Buffer.from(JSON.stringify(data)));
+        indexService.removeNotebook(sourceUri);
+        await indexService.updateNotebook(destUri);
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Failed to move notebook "${filename}": ${err.message}`);
+      }
+    }
+
+    this.provider.refresh();
+    vscode.commands.executeCommand('postgres-explorer.notebooks.refresh');
+    vscode.window.showInformationMessage('Notebook reassigned to connection.');
   }
 }

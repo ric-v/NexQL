@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="{{CSP}}">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{PAGE_TITLE}}</title>
+  <link rel="stylesheet" href="{{HIGHLIGHT_CSS_URI}}">
+  <style>{{INLINE_STYLES}}</style>
+</head>
+<body>
+  <div class="pg-panel-page">
+    <div class="pg-card">
+      <div class="pg-card-header">
+        <div style="flex:1;min-width:0;">
+          <h1 class="pg-card-title">📌 {{QUERY_TITLE}}</h1>
+          {{DESCRIPTION_BLOCK}}
+          <div class="pg-tag-list">{{TAGS_HTML}}</div>
+        </div>
+        <div class="pg-btn-row" style="margin-top:0;flex-shrink:0;">
+          <button type="button" class="pg-btn pg-btn--primary pg-btn-sm" id="btnCopy" title="Copy SQL to clipboard">📋 Copy</button>
+          <button type="button" class="pg-btn pg-btn-danger pg-btn-sm" id="btnDelete" title="Delete this saved query">🗑️ Delete</button>
+        </div>
+      </div>
+      <div class="pg-card-body">
+        <div>
+          <div class="pg-text-section-label">SQL Query</div>
+          <div class="pg-query-preview query-code">{{HIGHLIGHTED_QUERY}}</div>
+        </div>
+
+        <div>
+          <div class="pg-text-section-label">Metadata</div>
+          <div class="pg-meta-grid">
+            <div class="pg-meta-item">
+              <div class="pg-meta-label">Created</div>
+              <div class="pg-meta-value">{{CREATED_DATE}}</div>
+            </div>
+            <div class="pg-meta-item">
+              <div class="pg-meta-label">Last Used</div>
+              <div class="pg-meta-value">{{LAST_USED_DATE}}</div>
+            </div>
+            <div class="pg-meta-item">
+              <div class="pg-meta-label">Usage Count</div>
+              <div class="pg-meta-value">{{USAGE_COUNT}}</div>
+            </div>
+            <div class="pg-meta-item">
+              <div class="pg-meta-label">Query ID</div>
+              <div class="pg-meta-value pg-mono" style="font-size:11px;">{{QUERY_ID}}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script nonce="{{NONCE}}">{{INLINE_SCRIPTS}}</script>
+</body>
+</html>

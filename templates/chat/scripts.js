@@ -1,13 +1,13 @@
 // DEBUG: Initialization Logger
-console.log('[PgStudio] Chat script starting...');
+console.log('[NexQL] Chat script starting...');
 window.onerror = function (message, source, lineno, colno, error) {
-  console.error('[PgStudio] Global Error:', message, error);
+  console.error('[NexQL] Global Error:', message, error);
   if (typeof vscode !== 'undefined') {
     vscode.postMessage({ type: 'error', error: message });
   }
 };
 const vscode = acquireVsCodeApi();
-console.log('[PgStudio] VS Code API acquired');
+console.log('[NexQL] VS Code API acquired');
 
 const messagesContainer = document.getElementById('messagesContainer');
 const chatInput = document.getElementById('chatInput');
@@ -1895,6 +1895,69 @@ window.addEventListener('message', event => {
   const message = event.data;
 
   switch (message.type) {
+    case 'startStream':
+      {
+        console.log('[WebView] startStream received');
+        stopLoadingMessages();
+        emptyState.style.display = 'none';
+        dismissBubbleStrip();
+        typingIndicator.classList.remove('visible');
+
+        // Render an empty assistant message element in-place
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message assistant';
+
+        const roleDiv = document.createElement('div');
+        roleDiv.className = 'message-role';
+        roleDiv.textContent = '🤖 PG Studio Bot';
+
+        const bubbleDiv = document.createElement('div');
+        bubbleDiv.className = 'message-bubble';
+
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'message-content';
+        contentDiv.id = 'streaming-content';
+
+        bubbleDiv.appendChild(contentDiv);
+        messageDiv.appendChild(roleDiv);
+        messageDiv.appendChild(bubbleDiv);
+
+        // Append footer row initially without text content for copy action
+        messageDiv.appendChild(buildAssistantFooterRow('', ''));
+
+        // Insert before typing indicator
+        messagesContainer.insertBefore(messageDiv, typingIndicator);
+
+        // Scroll to the start of this message
+        messageDiv.scrollIntoView({ block: 'start', behavior: 'smooth' });
+
+        // Update local arrays/variables to be in sync
+        currentMessages.push({ role: 'assistant', content: '' });
+        lastMessageCount = currentMessages.length;
+      }
+      break;
+    case 'streamChunk':
+      {
+        console.log('[WebView] streamChunk received, text length:', message.text?.length, 'accumulated length:', message.accumulated?.length);
+        const contentDiv = document.getElementById('streaming-content');
+        if (contentDiv) {
+          contentDiv.innerHTML = parseMarkdown(message.accumulated);
+
+          // Update plain text in footer buttons copy action
+          const messageDiv = contentDiv.closest('.message');
+          if (messageDiv) {
+            const usageEl = messageDiv.querySelector('.message-usage-row');
+            if (usageEl) {
+              const newUsageEl = buildAssistantFooterRow('', message.accumulated);
+              usageEl.parentNode.replaceChild(newUsageEl, usageEl);
+            }
+          }
+
+          // Scroll as we receive content
+          scrollMessagesToEnd('auto');
+        }
+      }
+      break;
     case 'updateMessages':
       stopLoadingMessages();
       renderMessages(message.messages, true);
@@ -2029,8 +2092,16 @@ window.addEventListener('message', event => {
 
     // Phase B: Context bar update
     case 'contextUpdate':
-      updateContextBar(message.connectionName || null, message.database || null);
       updateEnvironmentBanner(message.environment || null, message.readOnlyMode || false);
+      syncContextDropdowns(message.connectionId || '', message.database || '');
+      break;
+
+    case 'connectionsList':
+      populateConnections(message.connections);
+      break;
+
+    case 'databasesList':
+      populateDatabases(message.connectionId, message.databases);
       break;
 
     // Phase B: Error card display
@@ -2126,7 +2197,7 @@ function buildAssistantIconActions(plainTextForClipboard) {
         await navigator.clipboard.writeText(plainTextForClipboard || '');
         showToast('Copied', 'info');
       } catch (e) {
-        console.warn('[PgStudio] Copy failed', e);
+        console.warn('[NexQL] Copy failed', e);
       }
     }),
   );
@@ -2152,7 +2223,7 @@ function buildUserIconActions(plainTextForClipboard, userMessageIndex) {
         await navigator.clipboard.writeText(plainTextForClipboard || '');
         showToast('Copied', 'info');
       } catch (e) {
-        console.warn('[PgStudio] Copy failed', e);
+        console.warn('[NexQL] Copy failed', e);
       }
     }),
   );
@@ -2221,9 +2292,127 @@ function showToast(text, type = 'info') {
   }, 5000);
 }
 
+function buildRagContextCollapsible(ragContext) {
+  if (!ragContext) return null;
+
+  const ragDetails = document.createElement('details');
+  ragDetails.className = 'collapsible-process';
+  
+  const objectsCount = ragContext.objects ? ragContext.objects.length : 0;
+  const summary = document.createElement('summary');
+  summary.textContent = `🔍 Retrieved schema context (${objectsCount} table${objectsCount !== 1 ? 's' : ''})`;
+  ragDetails.appendChild(summary);
+  
+  const content = document.createElement('div');
+  content.className = 'collapsible-process-content';
+  
+  if (ragContext.objects && ragContext.objects.length > 0) {
+    const objTitle = document.createElement('div');
+    objTitle.style.fontWeight = '600';
+    objTitle.style.marginBottom = '4px';
+    objTitle.textContent = 'Matched Tables & Schemas:';
+    content.appendChild(objTitle);
+    
+    ragContext.objects.forEach(obj => {
+      const item = document.createElement('div');
+      item.className = 'rag-hit-item';
+      
+      const refSpan = document.createElement('span');
+      refSpan.textContent = obj.ref;
+      
+      const detailSpan = document.createElement('span');
+      detailSpan.className = 'rag-hit-detail';
+      detailSpan.textContent = obj.detail;
+      
+      item.appendChild(refSpan);
+      item.appendChild(detailSpan);
+      content.appendChild(item);
+    });
+  }
+  
+  if (ragContext.joinHints && ragContext.joinHints.length > 0) {
+    const joinTitle = document.createElement('div');
+    joinTitle.style.fontWeight = '600';
+    joinTitle.style.marginTop = '8px';
+    joinTitle.style.marginBottom = '4px';
+    joinTitle.textContent = 'Join Relationships Identified:';
+    content.appendChild(joinTitle);
+    
+    ragContext.joinHints.forEach(hint => {
+      const item = document.createElement('div');
+      item.style.fontSize = '11px';
+      item.style.fontFamily = 'var(--vscode-editor-font-family)';
+      item.style.padding = '5px 8px';
+      item.style.background = 'var(--vscode-textCodeBlock-background)';
+      item.style.borderRadius = '4px';
+      item.style.border = '1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.1))';
+      item.textContent = hint;
+      content.appendChild(item);
+    });
+  }
+  
+  if (ragContext.tokensUsed) {
+    const tokensInfo = document.createElement('div');
+    tokensInfo.style.fontSize = '10px';
+    tokensInfo.style.opacity = '0.6';
+    tokensInfo.style.marginTop = '6px';
+    tokensInfo.style.textAlign = 'right';
+    tokensInfo.textContent = `Context budget tokens: ${ragContext.tokensUsed}`;
+    content.appendChild(tokensInfo);
+  }
+  
+  ragDetails.appendChild(content);
+  return ragDetails;
+}
+
+function buildAgenticStepsCollapsible(agenticSteps) {
+  if (!agenticSteps || agenticSteps.length === 0) return null;
+
+  const agentDetails = document.createElement('details');
+  agentDetails.className = 'collapsible-process';
+  
+  const stepsCount = agenticSteps.length;
+  const summary = document.createElement('summary');
+  summary.textContent = `⚙️ Executed database agent (${stepsCount} step${stepsCount !== 1 ? 's' : ''})`;
+  agentDetails.appendChild(summary);
+  
+  const content = document.createElement('div');
+  content.className = 'collapsible-process-content';
+  
+  agenticSteps.forEach((step, stepIdx) => {
+    const stepDiv = document.createElement('div');
+    stepDiv.className = 'collapsible-step';
+    
+    const header = document.createElement('div');
+    header.className = 'collapsible-step-header';
+    header.textContent = `Step ${stepIdx + 1}: Call tool "${step.toolCall.name}"`;
+    stepDiv.appendChild(header);
+    
+    if (step.toolCall.arguments) {
+      const argsDiv = document.createElement('div');
+      argsDiv.style.fontSize = '11px';
+      argsDiv.style.opacity = '0.7';
+      argsDiv.style.marginBottom = '4px';
+      argsDiv.textContent = `Arguments: ${JSON.stringify(step.toolCall.arguments)}`;
+      stepDiv.appendChild(argsDiv);
+    }
+    
+    const body = document.createElement('div');
+    body.className = 'collapsible-step-body';
+    body.textContent = step.result;
+    stepDiv.appendChild(body);
+    
+    content.appendChild(stepDiv);
+  });
+  
+  agentDetails.appendChild(content);
+  return agentDetails;
+}
+
 let lastMessageCount = 0;
 
 function renderMessages(messages, animate = false) {
+  console.log('[WebView] renderMessages messages:', messages);
   currentMessages = Array.isArray(messages) ? [...messages] : [];
 
   if (messages.length === 0) {
@@ -2326,6 +2515,10 @@ function renderMessages(messages, animate = false) {
 
       if (isNewAssistantMessage && isLastMessage) {
         // Will be typed out — anchor assistant turn at top so the reply is read from the start
+        const agentCollapsible = buildAgenticStepsCollapsible(msg.agenticSteps);
+        if (agentCollapsible) {
+          bubbleDiv.appendChild(agentCollapsible);
+        }
         bubbleDiv.appendChild(contentDiv);
         messageDiv.appendChild(roleDiv);
         messageDiv.appendChild(bubbleDiv);
@@ -2353,6 +2546,22 @@ function renderMessages(messages, animate = false) {
       }
     } else {
       contentDiv.textContent = msg.content;
+    }
+
+    // Add RAG context collapsible for user messages if available
+    if (msg.role === 'user' && msg.ragContext) {
+      const ragCollapsible = buildRagContextCollapsible(msg.ragContext);
+      if (ragCollapsible) {
+        bubbleDiv.appendChild(ragCollapsible);
+      }
+    }
+
+    // Add Agentic steps collapsible for assistant messages if available
+    if (msg.role === 'assistant' && msg.agenticSteps && msg.agenticSteps.length > 0) {
+      const agentCollapsible = buildAgenticStepsCollapsible(msg.agenticSteps);
+      if (agentCollapsible) {
+        bubbleDiv.appendChild(agentCollapsible);
+      }
     }
 
     bubbleDiv.appendChild(contentDiv);
@@ -2398,38 +2607,111 @@ function renderMessages(messages, animate = false) {
  * @param {string} database - Name of the active database
  * @param {string} tableName - Name of the referenced table (optional)
  */
-function updateContextBar(connectionName, database, tableName) {
-  currentContext.connectionName = connectionName;
-  currentContext.database = database;
+const ENV_CHIP_LABELS = {
+  production: 'PROD',
+  staging: 'STAGING',
+  development: 'DEV',
+};
+
+function updateEnvironmentBanner(environment, readOnlyMode) {
+  const chip = document.getElementById('contextEnvChip');
+  if (!chip) { return; }
+
+  chip.className = 'context-env-chip';
+  if (!environment) {
+    chip.hidden = true;
+    chip.textContent = '';
+    return;
+  }
+
+  const label = ENV_CHIP_LABELS[environment] || String(environment).toUpperCase();
+  chip.textContent = label + (readOnlyMode ? ' RO' : '');
+  chip.classList.add('env-' + environment);
+  chip.hidden = false;
+  chip.title = (readOnlyMode ? 'Read-only · ' : '') + label + ' environment — click for safety details';
+}
+
+// Map to cache database lists per connection ID in the webview
+const connectionDatabasesCache = {};
+let currentSelectedConnId = '';
+let currentSelectedDb = '';
+
+function populateConnections(connections) {
+  const select = document.getElementById('contextConnectionSelect');
+  if (!select) return;
   
-  const contextBar = document.getElementById('contextBar');
-  if (!contextBar) return;
-  
-  if (connectionName || database || tableName) {
-    contextBar.style.display = 'flex';
-    const connElem = document.getElementById('contextConnection');
-    const tableElem = document.getElementById('contextTable');
-    
-    if (connElem) {
-      // Format: "Connection Name • database_name"
-      const connInfo = connectionName ? connectionName : 'Connected';
-      const dbInfo = database ? database : '';
-      connElem.textContent = [connInfo, dbInfo].filter(Boolean).join(' • ');
-    }
-    
-    if (tableElem) {
-      // Format: "@table_name" or "@schema.table_name"
-      if (tableName) {
-        tableElem.textContent = '@' + tableName;
-        tableElem.parentElement.style.display = 'flex';
-      } else {
-        tableElem.parentElement.style.display = 'none';
-      }
-    }
-  } else {
-    contextBar.style.display = 'none';
+  // Clear but keep first
+  select.innerHTML = '<option value="">Select Connection...</option>';
+  connections.forEach(conn => {
+    const opt = document.createElement('option');
+    opt.value = conn.id;
+    opt.textContent = conn.name;
+    select.appendChild(opt);
+  });
+
+  if (currentSelectedConnId) {
+    select.value = currentSelectedConnId;
   }
 }
+
+function populateDatabases(connectionId, databases) {
+  connectionDatabasesCache[connectionId] = databases;
+  
+  if (document.getElementById('contextConnectionSelect')?.value !== connectionId) {
+    return;
+  }
+
+  const select = document.getElementById('contextDatabaseSelect');
+  if (!select) return;
+
+  select.innerHTML = '<option value="">Select Database...</option>';
+  databases.forEach(db => {
+    const opt = document.createElement('option');
+    opt.value = db;
+    opt.textContent = db;
+    select.appendChild(opt);
+  });
+
+  if (currentSelectedDb) {
+    select.value = currentSelectedDb;
+  }
+}
+
+function syncContextDropdowns(connectionId, database) {
+  currentSelectedConnId = connectionId;
+  currentSelectedDb = database;
+
+  const connSelect = document.getElementById('contextConnectionSelect');
+  const dbSelect = document.getElementById('contextDatabaseSelect');
+  const contextBar = document.getElementById('contextBar');
+
+  if (contextBar) {
+    contextBar.style.display = (connectionId || database) ? 'flex' : 'none';
+  }
+
+  if (connSelect) {
+    if (connSelect.value !== connectionId) {
+      connSelect.value = connectionId;
+      // Fetch databases for this connection if not cached
+      if (connectionId) {
+        if (connectionDatabasesCache[connectionId]) {
+          populateDatabases(connectionId, connectionDatabasesCache[connectionId]);
+        } else {
+          dbSelect.innerHTML = '<option value="">Loading...</option>';
+          vscode.postMessage({ type: 'getDatabases', connectionId });
+        }
+      } else {
+        dbSelect.innerHTML = '<option value="">Select Database...</option>';
+      }
+    } else if (dbSelect && dbSelect.value !== database) {
+      dbSelect.value = database;
+    }
+  }
+}
+
+document.getElementById('contextEnvChip')?.addEventListener('click', () => {
+  vscode.postMessage({ type: 'openConnectionSafety' });
+});
 
 /**
  * Show suggestion bubbles from AI next-step recommendations
@@ -2628,7 +2910,7 @@ function safeJsonTailExtract(responseText) {
     return { content: responseText, bubbles: [] };
   } catch (err) {
     // JSON parse failed, return original content
-    console.warn('[PgStudio] JSON extraction failed:', err.message);
+    console.warn('[NexQL] JSON extraction failed:', err.message);
     return { content: responseText, bubbles: [] };
   }
 }
@@ -2766,6 +3048,32 @@ function wireChatDomEvents() {
   stopBtn?.addEventListener('click', cancelRequest);
 
   document.getElementById('imageLightbox')?.addEventListener('click', closeLightbox);
+
+  const connSelect = document.getElementById('contextConnectionSelect');
+  const dbSelect = document.getElementById('contextDatabaseSelect');
+
+  if (connSelect) {
+    connSelect.addEventListener('change', () => {
+      const connectionId = connSelect.value;
+      if (connectionId) {
+        dbSelect.innerHTML = '<option value="">Loading...</option>';
+        vscode.postMessage({ type: 'getDatabases', connectionId });
+      } else {
+        dbSelect.innerHTML = '<option value="">Select Database...</option>';
+        vscode.postMessage({ type: 'changeContext', connectionId: '', database: '' });
+      }
+    });
+  }
+
+  if (dbSelect) {
+    dbSelect.addEventListener('change', () => {
+      const connectionId = connSelect ? connSelect.value : '';
+      const database = dbSelect.value;
+      vscode.postMessage({ type: 'changeContext', connectionId, database });
+    });
+  }
+
+  vscode.postMessage({ type: 'getConnections' });
 }
 
 wireChatDomEvents();

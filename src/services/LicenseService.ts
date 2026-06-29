@@ -3,6 +3,7 @@ import * as https from 'https';
 import * as http from 'http';
 import { URL } from 'url';
 import { SecretStorageService } from './SecretStorageService';
+import { getDeviceName } from '../features/sync/deviceId';
 
 export type LicenseTier = 'free' | 'sponsor' | 'singularity';
 
@@ -11,10 +12,12 @@ interface LicenseCache {
   licenseKey: string;
   instanceId: string;
   tier: LicenseTier;
-  status: string; // 'active' | 'cancelled' | 'halted' | 'paused' | ...
-  validatedAt: number; // unix ms of last successful server validation
+  status: string;
+  validatedAt: number;
   expiresAt: number | null;
   gracePeriodStartedAt: number | null;
+  /** Owner email for server-side device/history management. */
+  email?: string | null;
 }
 
 interface ValidateResponse {
@@ -23,10 +26,41 @@ interface ValidateResponse {
   status?: string;
   expiresAt?: number | null;
   reason?: string;
+  expiringSoon?: boolean;
+  graceUntil?: number | null;
+  devicesPruned?: Array<{ instanceId: string; deviceName: string | null }>;
 }
 
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // re-validate after 24h
-const GRACE_MS = 7 * 24 * 60 * 60 * 1000; // tolerate 7 days offline
+export interface LicenseServerStatus {
+  found: boolean;
+  tier?: LicenseTier;
+  status?: string;
+  period?: string;
+  currency?: string;
+  expiresAt?: number | null;
+  email?: string | null;
+  hasSubscription?: boolean;
+  memberSince?: number | null;
+  renewalCount?: number;
+  deviceLimit?: number;
+  devices?: Array<{
+    instanceId: string;
+    deviceName: string | null;
+    lastSeen: number | null;
+  }>;
+}
+
+export interface LicenseHistoryEvent {
+  eventType: string;
+  detail: Record<string, unknown>;
+  source: string;
+  createdAt: number | null;
+}
+
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+const RETRY_INTERVALS_MS = [15 * 60_000, 30 * 60_000, 60 * 60_000] as const;
+const FOCUS_ATTEMPT_THROTTLE_MS = 60_000;
 const DEFAULT_ENDPOINT = 'https://nexql.astrx.dev/api';
 
 /**
@@ -42,11 +76,13 @@ export class LicenseService {
   private cache: LicenseCache | null = null;
   private revalidating = false;
   private lastAttemptAt = 0;
+  private retryTimer: ReturnType<typeof setInterval> | undefined;
+  private consecutiveFailures = 0;
 
   private readonly _onDidChangeLicense = new vscode.EventEmitter<LicenseTier>();
   public readonly onDidChangeLicense = this._onDidChangeLicense.event;
 
-  private constructor(private readonly context: vscode.ExtensionContext) {}
+  private constructor(private readonly context: vscode.ExtensionContext) { }
 
   public static getInstance(context?: vscode.ExtensionContext): LicenseService {
     if (!LicenseService.instance) {
@@ -58,7 +94,6 @@ export class LicenseService {
     return LicenseService.instance;
   }
 
-  /** Load the cached entitlement and kick off a background refresh if stale. Non-blocking. */
   public async initialize(): Promise<void> {
     try {
       const raw = await SecretStorageService.getInstance().getLicenseCache();
@@ -68,44 +103,104 @@ export class LicenseService {
     } catch {
       this.cache = null;
     }
-    // Fire-and-forget freshness check.
     if (this.cache && this.isStale()) {
       void this.revalidate();
     }
+    this.ensureBackgroundRetry();
     this._onDidChangeLicense.fire(this.getTier());
   }
 
-  /** Current entitled tier, or 'free' when unlicensed / expired / past grace. */
   public getTier(): LicenseTier {
     const tier = this.entitledTier();
-    // Opportunistic refresh when stale — throttled so a failing server never loops.
+    if (tier !== 'free' && this.isStale()) {
+      this.ensureBackgroundRetry();
+    }
     if (tier !== 'free' && this.shouldAttempt()) {
       void this.revalidate();
     }
     return tier;
   }
 
-  /** Side-effect-free tier resolution (safe to call from within revalidate). */
+  public onWindowFocused(): void {
+    if (this.cache && this.entitledTier() !== 'free' && this.shouldAttempt()) {
+      void this.revalidate();
+    }
+  }
+
   private entitledTier(): LicenseTier {
     return this.entitled() ? this.cache!.tier : 'free';
   }
 
   private shouldAttempt(): boolean {
-    return this.isStale() && !this.revalidating && Date.now() - this.lastAttemptAt > 60_000;
+    return this.isStale() && !this.revalidating && Date.now() - this.lastAttemptAt > FOCUS_ATTEMPT_THROTTLE_MS;
+  }
+
+  private needsBackgroundRetry(): boolean {
+    return !!this.cache && this.isStale();
+  }
+
+  private retryIntervalMs(): number {
+    return RETRY_INTERVALS_MS[Math.min(this.consecutiveFailures, RETRY_INTERVALS_MS.length - 1)];
+  }
+
+  private stopBackgroundRetry(): void {
+    if (this.retryTimer) {
+      clearInterval(this.retryTimer);
+      this.retryTimer = undefined;
+    }
+  }
+
+  private scheduleBackgroundRetry(): void {
+    this.stopBackgroundRetry();
+    if (!this.needsBackgroundRetry()) {
+      return;
+    }
+    this.retryTimer = setInterval(() => this.tickBackgroundRetry(), this.retryIntervalMs());
+    this.retryTimer.unref?.();
+  }
+
+  private ensureBackgroundRetry(): void {
+    if (this.needsBackgroundRetry()) {
+      this.scheduleBackgroundRetry();
+    } else {
+      this.stopBackgroundRetry();
+    }
+  }
+
+  private tickBackgroundRetry(): void {
+    if (!this.needsBackgroundRetry()) {
+      this.stopBackgroundRetry();
+      return;
+    }
+    if (!this.revalidating) {
+      void this.revalidate();
+    }
   }
 
   public isPaid(): boolean {
     return this.getTier() !== 'free';
   }
 
-  /** True only while we have a verified-and-current entitlement. */
+  public getLicenseKey(): string | null {
+    return this.cache?.licenseKey ?? null;
+  }
+
+  public getOwnerEmail(): string | null {
+    return this.cache?.email ?? null;
+  }
+
+  public async setOwnerEmail(email: string): Promise<void> {
+    if (!this.cache) return;
+    this.cache.email = email.trim().toLowerCase();
+    await this.persist();
+  }
+
   private entitled(): boolean {
     const c = this.cache;
     if (!c) return false;
     if (c.status !== 'active') return false;
     if (c.expiresAt && Date.now() > c.expiresAt) return false;
     if (Date.now() - c.validatedAt <= CACHE_TTL_MS) return true;
-    // Stale: still honor within the offline grace window.
     if (c.gracePeriodStartedAt && Date.now() - c.gracePeriodStartedAt > GRACE_MS) {
       return false;
     }
@@ -116,7 +211,6 @@ export class LicenseService {
     return !!this.cache && Date.now() - this.cache.validatedAt > CACHE_TTL_MS;
   }
 
-  /** Activate a license key. Returns a user-facing result. */
   public async activate(licenseKey: string): Promise<{ ok: boolean; message: string; tier?: LicenseTier }> {
     const key = (licenseKey || '').trim().toUpperCase();
     if (!key) {
@@ -148,14 +242,27 @@ export class LicenseService {
       validatedAt: Date.now(),
       expiresAt: res.expiresAt ?? null,
       gracePeriodStartedAt: null,
+      email: this.cache?.email ?? null,
     };
     await this.persist();
     this._onDidChangeLicense.fire(res.tier);
+
+    if (res.expiringSoon) {
+      void this.maybeWarnExpiringSoon(res.expiresAt);
+    }
+
+    void this.maybeNotifyDevicesPruned(res.devicesPruned);
+
+    if (res.tier === 'sponsor' || res.tier === 'singularity') {
+      void import('../features/sync/syncBootstrap').then((m) => m.maybePromptSyncBootstrap(this.context));
+    }
+
+    this.ensureBackgroundRetry();
     return { ok: true, message: `Activated NexQL ${this.tierLabel(res.tier)}.`, tier: res.tier };
   }
 
-  /** Remove the local license (does not cancel the subscription). */
   public async deactivate(): Promise<void> {
+    this.stopBackgroundRetry();
     this.cache = null;
     await SecretStorageService.getInstance().deleteLicenseCache();
     this._onDidChangeLicense.fire('free');
@@ -170,7 +277,53 @@ export class LicenseService {
     };
   }
 
-  // ---- internals ---------------------------------------------------------
+  public async fetchServerStatus(email?: string | null): Promise<LicenseServerStatus | null> {
+    const key = this.cache?.licenseKey;
+    if (!key) return null;
+    try {
+      const body: Record<string, string> = { licenseKey: key };
+      const resolvedEmail = (email ?? this.cache?.email)?.trim();
+      if (resolvedEmail) {
+        body.email = resolvedEmail;
+      }
+      return await this.callApi<LicenseServerStatus>('/license/status', body);
+    } catch {
+      return null;
+    }
+  }
+
+  public async fetchHistory(email: string): Promise<LicenseHistoryEvent[]> {
+    const key = this.cache?.licenseKey;
+    if (!key || !email.trim()) return [];
+    try {
+      const res = await this.callApi<{ ok: boolean; events: LicenseHistoryEvent[] }>(
+        '/license/history',
+        { licenseKey: key, email: email.trim(), limit: 50 },
+      );
+      return res?.events ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  public async removeDevice(email: string, instanceId: string): Promise<{ ok: boolean; message: string }> {
+    const key = this.cache?.licenseKey;
+    if (!key) {
+      return { ok: false, message: 'No license is active on this machine.' };
+    }
+    try {
+      const res = await this.callApi<{ ok: boolean; error?: string }>(
+        '/license/devices',
+        { licenseKey: key, email: email.trim(), action: 'remove', instanceId },
+      );
+      if (!res?.ok) {
+        return { ok: false, message: 'Could not remove device. Check your email and try again.' };
+      }
+      return { ok: true, message: 'Device removed.' };
+    } catch {
+      return { ok: false, message: 'Could not reach the license server.' };
+    }
+  }
 
   private async revalidate(): Promise<void> {
     if (this.revalidating || !this.cache) return;
@@ -180,6 +333,7 @@ export class LicenseService {
     try {
       const res = await this.callValidate(this.cache.licenseKey);
       if (res.valid && res.tier) {
+        this.consecutiveFailures = 0;
         this.cache = {
           ...this.cache,
           tier: res.tier,
@@ -189,13 +343,16 @@ export class LicenseService {
           gracePeriodStartedAt: null,
         };
         await this.persist();
+        if (res.expiringSoon) {
+          void this.maybeWarnExpiringSoon(res.expiresAt);
+        }
+        void this.maybeNotifyDevicesPruned(res.devicesPruned);
       } else {
-        // Server says no — instant downgrade (revocation/cancellation/expiry).
         this.cache = null;
         await SecretStorageService.getInstance().deleteLicenseCache();
       }
     } catch {
-      // Network failure → start/keep the offline grace window, retain cache.
+      this.consecutiveFailures++;
       if (this.cache && !this.cache.gracePeriodStartedAt) {
         this.cache.gracePeriodStartedAt = Date.now();
         await this.persist();
@@ -206,7 +363,36 @@ export class LicenseService {
       if (after !== before) {
         this._onDidChangeLicense.fire(after);
       }
+      this.ensureBackgroundRetry();
     }
+  }
+
+  private async maybeWarnExpiringSoon(expiresAt?: number | null): Promise<void> {
+    if (!expiresAt) return;
+    const when = new Date(expiresAt).toLocaleDateString();
+    const choice = await vscode.window.showWarningMessage(
+      `Your NexQL license renews or expires on ${when}.`,
+      'Manage License',
+    );
+    if (choice === 'Manage License') {
+      void vscode.commands.executeCommand('postgres-explorer.license.manage');
+    }
+  }
+
+  private async maybeNotifyDevicesPruned(
+    devicesPruned?: Array<{ instanceId: string; deviceName: string | null }>,
+  ): Promise<void> {
+    if (!devicesPruned?.length) {
+      return;
+    }
+    const n = devicesPruned.length;
+    const names = devicesPruned
+      .map((d) => d.deviceName || d.instanceId.slice(0, 8))
+      .join(', ');
+    await vscode.window.showWarningMessage(
+      `${n} older device${n === 1 ? '' : 's'} (${names}) ${n === 1 ? 'was' : 'were'} removed to stay within the 4-device limit.`,
+      'Manage License',
+    );
   }
 
   private async persist(): Promise<void> {
@@ -225,9 +411,36 @@ export class LicenseService {
     return tier === 'free' ? 'Free' : tier[0].toUpperCase() + tier.slice(1);
   }
 
-  private callValidate(licenseKey: string): Promise<ValidateResponse> {
-    const url = new URL(`${this.endpoint().replace(/\/$/, '')}/license/validate`);
-    const payload = JSON.stringify({ licenseKey, instanceId: vscode.env.machineId });
+  public async refreshDeviceName(deviceName?: string): Promise<void> {
+    if (!this.cache?.licenseKey) {
+      return;
+    }
+    const resolved = (deviceName ?? getDeviceName(this.context) ?? '').trim();
+    if (!resolved) {
+      return;
+    }
+    try {
+      await this.callValidate(this.cache.licenseKey, resolved);
+    } catch {
+      // Best-effort — local name is already saved.
+    }
+  }
+
+  private callValidate(licenseKey: string, deviceName?: string): Promise<ValidateResponse> {
+    const payload: Record<string, string> = {
+      licenseKey,
+      instanceId: vscode.env.machineId,
+    };
+    const resolvedName = (deviceName ?? getDeviceName(this.context) ?? '').trim();
+    if (resolvedName) {
+      payload.deviceName = resolvedName;
+    }
+    return this.callApi<ValidateResponse>('/license/validate', payload);
+  }
+
+  private callApi<T>(path: string, payload: Record<string, unknown>): Promise<T> {
+    const url = new URL(`${this.endpoint().replace(/\/$/, '')}${path}`);
+    const body = JSON.stringify(payload);
     const lib = url.protocol === 'http:' ? http : https;
 
     return new Promise((resolve, reject) => {
@@ -240,35 +453,37 @@ export class LicenseService {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(payload),
+            'Content-Length': Buffer.byteLength(body),
           },
           timeout: 10000,
         },
         (res) => {
-          let body = '';
-          res.on('data', (c) => (body += c));
+          let data = '';
+          res.on('data', (c) => (data += c));
           res.on('end', () => {
-            // 404 = unknown key, 4xx without body = treat as invalid (not a network error).
             if (res.statusCode === 404) {
-              return resolve({ valid: false, status: 'unknown' });
+              return resolve({ found: false, valid: false, status: 'unknown' } as T);
+            }
+            if (!res.statusCode || res.statusCode >= 500) {
+              return reject(new Error(`server ${res.statusCode}`));
             }
             try {
-              resolve(JSON.parse(body) as ValidateResponse);
+              resolve(JSON.parse(data) as T);
             } catch {
-              // Unparseable success body is effectively invalid.
-              resolve({ valid: false });
+              reject(new Error('invalid json'));
             }
           });
         },
       );
       req.on('timeout', () => req.destroy(new Error('timeout')));
       req.on('error', reject);
-      req.write(payload);
+      req.write(body);
       req.end();
     });
   }
 
   public dispose(): void {
+    this.stopBackgroundRetry();
     this._onDidChangeLicense.dispose();
   }
 }

@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import { TelemetryService } from '../../services/TelemetryService';
 import { isProFeatureEnabled, ProFeature } from '../../services/featureGates';
+import { recordSyncActivity } from '../sync/SyncActivityLog';
+import { triggerInstantSync } from '../sync/syncTriggers';
+import { SyncController } from '../sync/SyncController';
 
 const FREE_SAVED_QUERIES_LIMIT = 5;
 
@@ -24,6 +27,12 @@ export interface SavedQuery {
   lastUsed?: number;
   /** Usage count */
   usageCount: number;
+  /** When last modified */
+  updatedAt?: number;
+  /** Monotonic revision for sync conflict resolution */
+  revision?: number;
+  /** Tombstone marker for sync deletes */
+  deleted?: boolean;
   /** Optional connection preset ID to use with this query */
   preferredProfileId?: string;
   /** Connection context for reopening with same DB */
@@ -44,13 +53,16 @@ export interface SavedQueryImportResult {
 
 /**
  * Manages saved queries for quick reuse across sessions.
- * Persists in VS Code workspace memento (workspace-local storage).
+ * Persists in VS Code global memento (cross-workspace storage).
  */
 export class SavedQueriesService {
   private static instance: SavedQueriesService;
   private context: vscode.ExtensionContext | null = null;
   private queries: Map<string, SavedQuery> = new Map();
+  private tombstones: SavedQuery[] = [];
   private readonly STORAGE_KEY = 'postgres-explorer.savedQueries';
+  private readonly LEGACY_WORKSPACE_KEY = 'postgres-explorer.savedQueries';
+  private readonly MIGRATION_KEY = 'postgres-explorer.savedQueries.migratedToGlobal';
 
   private constructor() {}
 
@@ -71,28 +83,71 @@ export class SavedQueriesService {
   }
 
   /**
-   * Load saved queries from workspace memento.
+   * Load saved queries from global memento, migrating legacy workspace data once.
    */
   private loadQueries(): void {
     if (!this.context) {
       return;
     }
-    const stored = this.context.workspaceState.get<SavedQuery[]>(this.STORAGE_KEY, []);
+    void this.migrateFromWorkspaceState();
+    const stored = this.context.globalState.get<SavedQuery[]>(this.STORAGE_KEY, []);
     this.queries.clear();
     stored.forEach((query) => {
-      this.queries.set(query.id, query);
+      const normalized = this.normalizeQuery(query);
+      if (normalized.deleted) {
+        this.tombstones.push(normalized);
+      } else {
+        this.queries.set(normalized.id, normalized);
+      }
     });
   }
 
+  private async migrateFromWorkspaceState(): Promise<void> {
+    if (!this.context) {
+      return;
+    }
+    const migrated = this.context.globalState.get<boolean>(this.MIGRATION_KEY, false);
+    if (migrated) {
+      return;
+    }
+    const legacy = this.context.workspaceState.get<SavedQuery[]>(this.STORAGE_KEY, []);
+    const existing = this.context.globalState.get<SavedQuery[]>(this.STORAGE_KEY, []);
+    if (legacy.length > 0 && existing.length === 0) {
+      await this.context.globalState.update(this.STORAGE_KEY, legacy.map((q) => this.normalizeQuery(q)));
+      await this.context.workspaceState.update(this.STORAGE_KEY, undefined);
+    }
+    await this.context.globalState.update(this.MIGRATION_KEY, true);
+  }
+
   /**
-   * Save queries to workspace memento.
+   * Save queries to global memento.
    */
   private async saveQueries(): Promise<void> {
     if (!this.context) {
       return;
     }
-    const queryArray = Array.from(this.queries.values());
-    await this.context.workspaceState.update(this.STORAGE_KEY, queryArray);
+    const queryArray = [...Array.from(this.queries.values()), ...this.tombstones];
+    await this.context.globalState.update(this.STORAGE_KEY, queryArray);
+  }
+
+  private normalizeQuery(query: SavedQuery): SavedQuery {
+    const now = Date.now();
+    return {
+      ...query,
+      createdAt: query.createdAt ?? now,
+      updatedAt: query.updatedAt ?? query.createdAt ?? now,
+      revision: query.revision ?? 1,
+      usageCount: query.usageCount ?? 0,
+    };
+  }
+
+  private bumpRevision(query: SavedQuery): SavedQuery {
+    const now = Date.now();
+    return {
+      ...query,
+      updatedAt: now,
+      revision: (query.revision ?? 1) + 1,
+    };
   }
 
   /**
@@ -121,7 +176,15 @@ export class SavedQueriesService {
     if (!query.createdAt) {
       query.createdAt = Date.now();
     }
-    this.queries.set(query.id, query);
+    const normalized = this.bumpRevision(this.normalizeQuery(query));
+    this.queries.set(normalized.id, normalized);
+    recordSyncActivity({
+      kind: 'query',
+      action: isNew ? 'create' : 'update',
+      itemId: normalized.id,
+      name: normalized.title,
+    });
+    triggerInstantSync();
     await this.saveQueries();
   }
 
@@ -136,26 +199,77 @@ export class SavedQueriesService {
     const existing = this.queries.get(query.id);
     if (existing) {
       query.createdAt = existing.createdAt;
+      query.revision = existing.revision;
     }
-    this.queries.set(query.id, query);
+    const normalized = this.bumpRevision(this.normalizeQuery(query));
+    this.queries.set(normalized.id, normalized);
+    recordSyncActivity({
+      kind: 'query',
+      action: 'update',
+      itemId: normalized.id,
+      name: normalized.title,
+    });
+    triggerInstantSync();
     await this.saveQueries();
   }
 
   /**
    * Delete a saved query by ID.
+   * Local deletes pass cloudChoice from callers; remote tombstones use fromRemote.
    */
-  async deleteQuery(queryId: string): Promise<void> {
-    this.queries.delete(queryId);
-    await this.saveQueries();
+  async deleteQuery(
+    queryId: string,
+    options?: { cloudChoice?: 'keep-cloud' | 'delete-cloud'; fromRemote?: boolean },
+  ): Promise<void> {
+    const existing = this.queries.get(queryId);
+    if (!existing && !options?.fromRemote) {
+      return;
+    }
+
+    if (options?.fromRemote) {
+      this.queries.delete(queryId);
+      this.tombstones = this.tombstones.filter((t) => t.id !== queryId);
+      await this.saveQueries();
+      return;
+    }
+
+    if (options?.cloudChoice === 'keep-cloud') {
+      await SyncController.getInstance().setItemExcluded(queryId, true);
+      this.queries.delete(queryId);
+      this.tombstones = this.tombstones.filter((t) => t.id !== queryId);
+      await this.saveQueries();
+      return;
+    }
+
+    if (options?.cloudChoice === 'delete-cloud') {
+      this.queries.delete(queryId);
+      this.tombstones = this.tombstones.filter((t) => t.id !== queryId);
+      await this.saveQueries();
+      void SyncController.getInstance().removeFromCloud(queryId);
+      return;
+    }
+
+    if (existing) {
+      this.queries.delete(queryId);
+      this.tombstones = this.tombstones.filter((t) => t.id !== queryId);
+      await this.saveQueries();
+    }
   }
 
   /**
    * Get all saved queries.
    */
   getQueries(): SavedQuery[] {
-    return Array.from(this.queries.values()).sort(
-      (a, b) => (b.lastUsed || b.createdAt) - (a.lastUsed || a.createdAt)
-    );
+    return Array.from(this.queries.values())
+      .filter((q) => !q.deleted)
+      .sort(
+        (a, b) => (b.lastUsed || b.createdAt) - (a.lastUsed || a.createdAt)
+      );
+  }
+
+  /** All queries including tombstones — for sync collection. */
+  getAllQueriesForSync(): SavedQuery[] {
+    return [...Array.from(this.queries.values()), ...this.tombstones];
   }
 
   /**

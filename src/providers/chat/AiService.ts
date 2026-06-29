@@ -4,15 +4,29 @@
 import * as vscode from 'vscode';
 import * as https from 'https';
 import * as http from 'http';
-import { ChatMessage } from './types';
+import { ChatMessage, ToolCall } from './types';
+import { ToolSpec, mapToOpenAiTools, mapToAnthropicTools, mapToGeminiTools, mapToVsCodeLmTools } from './tools/ToolSpec';
+
+export interface AiResponse {
+  text: string;
+  usage?: string;
+  toolCalls?: ToolCall[];
+}
+
 import { SecretStorageService } from '../../services/SecretStorageService';
 import { AiCredentialsService } from '../../features/aiAssistant/AiCredentialsService';
-import { readAiScopeSettings } from '../../features/aiAssistant/aiConfig';
+import { readAiScopeSettings, getChatCompletionEndpoint } from '../../features/aiAssistant/aiConfig';
 import { resolveVsCodeLanguageModel } from '../../features/aiAssistant/modelListing';
 import { AiConfigScope } from '../../features/aiAssistant/types';
 import { DirectApiKeyProvider } from '../../features/aiAssistant/types';
 import { TelemetryService } from '../../services/TelemetryService';
 import { AiCapability, buildSystemPrompt as composeSystemPrompt } from './prompts';
+import { debugLog, debugWarn } from '../../common/logger';
+import {
+  listOpencodeModels,
+  resolveOpencodeWorkingDirectory,
+  runOpencodePrompt,
+} from '../../features/aiAssistant/opencode';
 
 // GitHub Models permission applies to fine-grained tokens/GitHub Apps.
 // For VS Code OAuth sessions, request no explicit scope.
@@ -21,6 +35,7 @@ const GITHUB_MODELS_API_BASE = 'https://models.github.ai';
 const GITHUB_MODELS_API_VERSION = '2026-03-10';
 const DEFAULT_GITHUB_MODEL = 'openai/gpt-4.1';
 const DEFAULT_CURSOR_MODEL = 'auto';
+const DEFAULT_OPENCODE_MODEL = 'auto';
 const DIRECT_API_PROVIDERS = new Set([
   'openai',
   'anthropic',
@@ -95,6 +110,8 @@ export class AiService {
     environment?: 'production' | 'staging' | 'development';
     readOnlyMode?: boolean;
     connectionName?: string;
+    databaseName?: string;
+    useAgentic?: boolean;
   } | undefined;
 
   setConnectionContext(ctx: AiService['_connectionContext']): void {
@@ -107,16 +124,22 @@ export class AiService {
     config: vscode.WorkspaceConfiguration,
     customSystemPrompt?: string,
     scope: AiConfigScope = 'notebook',
-  ): Promise<{ text: string; usage?: string }> {
+    tools?: ToolSpec[],
+    onChunk?: (chunk: { text?: string; toolCalls?: ToolCall[] }) => void
+  ): Promise<AiResponse> {
     if (provider === 'vscode-lm') {
-      return await this.callVsCodeLm(userMessage, config, customSystemPrompt, scope);
+      return await this.callVsCodeLm(userMessage, config, customSystemPrompt, scope, tools, onChunk);
     }
 
     if (provider === 'cursor') {
-      return await this.callCursorAgent(userMessage, config, customSystemPrompt, scope);
+      return await this.callCursorAgent(userMessage, config, customSystemPrompt, scope, onChunk);
     }
 
-    return await this.callDirectApi(provider, userMessage, config, customSystemPrompt, scope);
+    if (provider === 'opencode') {
+      return await this.callOpenCodeAgent(userMessage, config, customSystemPrompt, scope);
+    }
+
+    return await this.callDirectApi(provider, userMessage, config, customSystemPrompt, scope, tools, onChunk);
   }
 
   private _resolveConfiguredModel(
@@ -144,7 +167,9 @@ export class AiService {
     config: vscode.WorkspaceConfiguration,
     customSystemPrompt?: string,
     scope: AiConfigScope = 'notebook',
-  ): Promise<{ text: string; usage?: string }> {
+    tools?: ToolSpec[],
+    onChunk?: (chunk: { text?: string; toolCalls?: ToolCall[] }) => void
+  ): Promise<AiResponse> {
     const telemetry = TelemetryService.getInstance();
     const configuredModel = this._resolveConfiguredModel(config, scope);
     let model: vscode.LanguageModelChat | undefined;
@@ -169,7 +194,7 @@ export class AiService {
       throw new Error('No AI models available via VS Code API. Please ensure GitHub Copilot Chat is installed or switch provider.');
     }
 
-    console.log('[AiService] Selected model details:', JSON.stringify({
+    debugLog('[AiService] Selected model details:', JSON.stringify({
       id: model.id,
       name: model.name,
       family: (model as any).family,
@@ -194,8 +219,28 @@ export class AiService {
 
     const history = this._budgetedHistory(systemPrompt, userMessage, config);
 
-    messages.push(
-      ...history.map(msg => {
+    for (const msg of history) {
+      if (msg.role === 'tool') {
+        const textPart = new (vscode as any).LanguageModelTextPart(msg.content);
+        const resultPart = new (vscode as any).LanguageModelToolResultPart(
+          msg.toolCallId!,
+          [textPart]
+        );
+        messages.push(vscode.LanguageModelChatMessage.User([resultPart]));
+      } else if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
+        const parts: any[] = [];
+        if (msg.content) {
+          parts.push(new (vscode as any).LanguageModelTextPart(msg.content));
+        }
+        for (const tc of msg.toolCalls) {
+          parts.push(new (vscode as any).LanguageModelToolCallPart(
+            tc.id,
+            tc.name,
+            tc.arguments
+          ));
+        }
+        messages.push(vscode.LanguageModelChatMessage.Assistant(parts));
+      } else {
         const text = this._sanitizeContent(this._getMessageContent(msg));
         const images = msg.attachments?.filter(a => a.type === 'image' && a.dataUrl) || [];
         if (images.length > 0) {
@@ -213,18 +258,22 @@ export class AiService {
           if (text.trim()) {
             parts.push(new (vscode as any).LanguageModelTextPart(text));
           }
-          return msg.role === 'user'
+          messages.push(msg.role === 'user'
             ? vscode.LanguageModelChatMessage.User(parts.length > 0 ? parts : text)
-            : vscode.LanguageModelChatMessage.Assistant(text);
+            : vscode.LanguageModelChatMessage.Assistant(text)
+          );
+        } else {
+          messages.push(msg.role === 'user'
+            ? vscode.LanguageModelChatMessage.User(text)
+            : vscode.LanguageModelChatMessage.Assistant(text)
+          );
         }
-        return msg.role === 'user'
-          ? vscode.LanguageModelChatMessage.User(text)
-          : vscode.LanguageModelChatMessage.Assistant(text);
-      })
-    );
-    // Always include the latest user prompt as the final turn.
-    // Some models are sensitive to explicit final-turn structure.
-    messages.push(vscode.LanguageModelChatMessage.User(userMessage));
+      }
+    }
+
+    if (userMessage && userMessage.trim()) {
+      messages.push(vscode.LanguageModelChatMessage.User(userMessage));
+    }
 
     const compactHistory = history.map((msg, idx) => ({
       idx,
@@ -234,7 +283,7 @@ export class AiService {
       mentionCount: msg.mentions?.length || 0
     }));
 
-    console.log('[AiService] Prepared request payload summary:', JSON.stringify({
+    debugLog('[AiService] Prepared request payload summary:', JSON.stringify({
       totalMessages: messages.length,
       historyMessages: history.length,
       userMessageLength: userMessage.length,
@@ -243,18 +292,22 @@ export class AiService {
     }));
 
     // Debug: Log all messages being sent to model
-    console.log('[AiService] ========== MESSAGES SENT TO MODEL ==========');
-    console.log('[AiService] System prompt length:', systemPrompt.length);
-    console.log('[AiService] Conversation history messages:', this._messages.length);
+    debugLog('[AiService] ========== MESSAGES SENT TO MODEL ==========');
+    debugLog('[AiService] System prompt length:', systemPrompt.length);
+    debugLog('[AiService] Conversation history messages:', this._messages.length);
 
     // Create and store cancellation token source for this request
     this._cancellationTokenSource = new vscode.CancellationTokenSource();
 
     try {
-      console.log('[AiService] sendRequest initial attempt started');
-      const chatRequest = await model.sendRequest(messages, {}, this._cancellationTokenSource.token);
+      debugLog('[AiService] sendRequest initial attempt started');
+      const requestOptions: vscode.LanguageModelChatRequestOptions = {};
+      if (tools && tools.length > 0) {
+        requestOptions.tools = mapToVsCodeLmTools(tools);
+      }
+      const chatRequest = await model.sendRequest(messages, requestOptions, this._cancellationTokenSource.token);
       const rawChatRequest = chatRequest as any;
-      console.log('[AiService] sendRequest initial attempt resolved:', JSON.stringify({
+      debugLog('[AiService] sendRequest initial attempt resolved:', JSON.stringify({
         hasStream: !!rawChatRequest?.stream,
         hasText: !!rawChatRequest?.text,
         hasResult: !!rawChatRequest?.result,
@@ -262,14 +315,16 @@ export class AiService {
       }));
 
       let effectiveRequest: any = chatRequest;
-      let responseText = await this._extractVsCodeLmResponseText(chatRequest as any);
-      console.log('[AiService] Initial extraction result length:', responseText.length);
+      const extracted = await this._extractVsCodeLmResponse(chatRequest as any, onChunk);
+      let responseText = extracted.text;
+      let toolCalls = extracted.toolCalls;
+      debugLog('[AiService] Initial extraction result length:', responseText.length, 'toolCalls:', toolCalls?.length);
 
       // Some models may return an empty text stream on the first attempt for verbose histories.
       // Retry once with a minimal context to avoid persisting blank assistant replies.
       let effectiveMessagesForFallback = messages;
-      if (!responseText.trim()) {
-        console.warn('[AiService] Empty response from VS Code LM; retrying with minimal prompt context.');
+      if (!responseText.trim() && !toolCalls) {
+        debugWarn('[AiService] Empty response from VS Code LM; retrying with minimal prompt context.');
         const retryMessages: any[] = [];
         if (systemPrompt) {
           const lmMessageCtor = vscode.LanguageModelChatMessage as any;
@@ -279,43 +334,49 @@ export class AiService {
             retryMessages.push(vscode.LanguageModelChatMessage.User(systemPrompt));
           }
         }
-        retryMessages.push(vscode.LanguageModelChatMessage.User(userMessage));
+        if (userMessage && userMessage.trim()) {
+          retryMessages.push(vscode.LanguageModelChatMessage.User(userMessage));
+        }
 
-        console.log('[AiService] Retry payload summary:', JSON.stringify({
+        debugLog('[AiService] Retry payload summary:', JSON.stringify({
           totalMessages: retryMessages.length,
           userMessageLength: userMessage.length,
           systemPromptLength: systemPrompt.length
         }));
 
-        console.log('[AiService] sendRequest retry attempt started');
-        const retryRequest = await model.sendRequest(retryMessages, {}, this._cancellationTokenSource.token);
+        debugLog('[AiService] sendRequest retry attempt started');
+        const retryRequest = await model.sendRequest(retryMessages, requestOptions, this._cancellationTokenSource.token);
         effectiveRequest = retryRequest;
         const rawRetryRequest = retryRequest as any;
-        console.log('[AiService] sendRequest retry attempt resolved:', JSON.stringify({
+        debugLog('[AiService] sendRequest retry attempt resolved:', JSON.stringify({
           hasStream: !!rawRetryRequest?.stream,
           hasText: !!rawRetryRequest?.text,
           hasResult: !!rawRetryRequest?.result,
           resultKeys: rawRetryRequest?.result ? Object.keys(rawRetryRequest.result) : []
         }));
 
-        responseText = await this._extractVsCodeLmResponseText(retryRequest as any);
-        console.log('[AiService] Retry extraction result length:', responseText.length);
+        const retryExtracted = await this._extractVsCodeLmResponse(retryRequest as any, onChunk);
+        responseText = retryExtracted.text;
+        toolCalls = retryExtracted.toolCalls;
+        debugLog('[AiService] Retry extraction result length:', responseText.length);
         effectiveMessagesForFallback = retryMessages;
       }
 
       // If the configured model yields no chunks at all, try another available model once.
-      if (!responseText.trim()) {
+      if (!responseText.trim() && !toolCalls) {
         const fallbackModel = await this._findAlternateModel(model.id);
         if (fallbackModel) {
-          console.warn('[AiService] Selected model produced empty output. Trying alternate model:', fallbackModel.name || fallbackModel.id);
-          const fallbackRequest = await fallbackModel.sendRequest(effectiveMessagesForFallback, {}, this._cancellationTokenSource.token);
+          debugWarn('[AiService] Selected model produced empty output. Trying alternate model:', fallbackModel.name || fallbackModel.id);
+          const fallbackRequest = await fallbackModel.sendRequest(effectiveMessagesForFallback, requestOptions, this._cancellationTokenSource.token);
           effectiveRequest = fallbackRequest;
-          responseText = await this._extractVsCodeLmResponseText(fallbackRequest as any);
-          console.log('[AiService] Alternate model extraction result length:', responseText.length);
+          const fallbackExtracted = await this._extractVsCodeLmResponse(fallbackRequest as any, onChunk);
+          responseText = fallbackExtracted.text;
+          toolCalls = fallbackExtracted.toolCalls;
+          debugLog('[AiService] Alternate model extraction result length:', responseText.length);
         }
       }
 
-      if (!responseText.trim()) {
+      if (!responseText.trim() && !toolCalls) {
         throw new Error('AI model returned an empty response. Please retry or select a different model.');
       }
 
@@ -326,7 +387,7 @@ export class AiService {
       }
 
       telemetry.trackEvent('ai_request', { provider: 'vscode-lm', success: true });
-      return { text: responseText, usage: usageStr };
+      return { text: responseText, usage: usageStr, toolCalls };
     } finally {
       // Clean up cancellation token source
       if (this._cancellationTokenSource) {
@@ -405,13 +466,90 @@ export class AiService {
     return sections.join('\n\n');
   }
 
-  private async callCursorAgent(
+  private async _resolveOpencodeModel(
+    config: vscode.WorkspaceConfiguration,
+    scope: AiConfigScope = 'notebook',
+  ): Promise<string | undefined> {
+    const configuredModel = this._resolveConfiguredModel(config, scope);
+    if (configuredModel && configuredModel !== 'auto') {
+      return configuredModel;
+    }
+
+    try {
+      const models = await listOpencodeModels(config);
+      return models[0];
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async callOpenCodeAgent(
     userMessage: string,
     config: vscode.WorkspaceConfiguration,
     customSystemPrompt?: string,
     scope: AiConfigScope = 'notebook',
   ): Promise<{ text: string; usage?: string }> {
     const telemetry = TelemetryService.getInstance();
+    if (!userMessage || !userMessage.trim()) {
+      const lastUser = [...this._messages].reverse().find(m => m.role === 'user');
+      if (lastUser && lastUser.content) {
+        userMessage = lastUser.content;
+      }
+    }
+
+    if (!userMessage || !userMessage.trim()) {
+      throw new Error('User message is required for AI requests.');
+    }
+
+    const model = await this._resolveOpencodeModel(config, scope);
+    const systemPrompt = customSystemPrompt !== undefined ? customSystemPrompt : this.buildSystemPrompt();
+    const prompt = this._buildCursorPrompt(userMessage, systemPrompt, config);
+    const workDir = resolveOpencodeWorkingDirectory(config);
+
+    this._cancellationTokenSource = new vscode.CancellationTokenSource();
+
+    try {
+      const result = await runOpencodePrompt(config, {
+        prompt,
+        model,
+        cwd: workDir,
+        serveUrl: config.get<string>('opencodeServeUrl')?.trim() || undefined,
+        cancellationToken: this._cancellationTokenSource.token,
+      });
+
+      const responseText = result.text;
+      if (!responseText.trim()) {
+        throw new Error('AI model returned an empty response. Please retry or select a different model.');
+      }
+
+      telemetry.trackEvent('ai_request', { provider: 'opencode', success: true });
+      return { text: responseText, usage: result.usage };
+    } catch (error) {
+      telemetry.trackEvent('ai_request', { provider: 'opencode', success: false });
+      throw error;
+    } finally {
+      if (this._cancellationTokenSource) {
+        this._cancellationTokenSource.dispose();
+        this._cancellationTokenSource = null;
+      }
+    }
+  }
+
+  private async callCursorAgent(
+    userMessage: string,
+    config: vscode.WorkspaceConfiguration,
+    customSystemPrompt?: string,
+    scope: AiConfigScope = 'notebook',
+    onChunk?: (chunk: { text?: string; toolCalls?: ToolCall[] }) => void
+  ): Promise<{ text: string; usage?: string }> {
+    const telemetry = TelemetryService.getInstance();
+    if (!userMessage || !userMessage.trim()) {
+      const lastUser = [...this._messages].reverse().find(m => m.role === 'user');
+      if (lastUser && lastUser.content) {
+        userMessage = lastUser.content;
+      }
+    }
+
     if (!userMessage || !userMessage.trim()) {
       throw new Error('User message is required for AI requests.');
     }
@@ -437,10 +575,47 @@ export class AiService {
         local: { cwd: workspaceRoot }
       });
 
-      const run = await agent.send({ text: prompt });
+      const sendOptions: any = {};
+      const run = await agent.send({ text: prompt }, sendOptions);
       const cancellationListener = (this._cancellationTokenSource.token as any).onCancellationRequested?.(() => {
         void run.cancel();
       }) ?? { dispose: () => undefined };
+
+      if (onChunk) {
+        const token = this._cancellationTokenSource.token;
+        (async () => {
+          try {
+            let lastText = '';
+            for await (const msg of run.stream()) {
+              if (token.isCancellationRequested) {
+                break;
+              }
+              if (msg.type === 'assistant' && msg.message && Array.isArray(msg.message.content)) {
+                let accumulatedText = '';
+                for (const block of msg.message.content) {
+                  if (block.type === 'text' && typeof block.text === 'string') {
+                    accumulatedText += block.text;
+                  }
+                }
+                if (accumulatedText) {
+                  if (accumulatedText.startsWith(lastText)) {
+                    const delta = accumulatedText.slice(lastText.length);
+                    if (delta) {
+                      onChunk({ text: delta });
+                    }
+                    lastText = accumulatedText;
+                  } else {
+                    onChunk({ text: accumulatedText });
+                    lastText = accumulatedText;
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            console.error('[AiService DEBUG] Error streaming from Cursor SDK:', e);
+          }
+        })();
+      }
 
       try {
         const result = await run.wait();
@@ -708,8 +883,12 @@ export class AiService {
     return candidates[0];
   }
 
-  private async _extractVsCodeLmResponseText(chatRequest: any): Promise<string> {
-    let responseText = '';
+  private async _extractVsCodeLmResponse(
+    chatRequest: any,
+    onChunk?: (chunk: { text?: string; toolCalls?: ToolCall[] }) => void
+  ): Promise<{ text: string, toolCalls?: ToolCall[] }> {
+    let text = '';
+    const toolCalls: ToolCall[] = [];
     const streamPartDebug: string[] = [];
     let streamChunkCount = 0;
     let textChunkCount = 0;
@@ -718,46 +897,82 @@ export class AiService {
     if (chatRequest?.stream && Symbol.asyncIterator in Object(chatRequest.stream)) {
       for await (const part of chatRequest.stream) {
         streamChunkCount += 1;
-        responseText += this._extractTextFromStreamPart(part, streamPartDebug);
+        const ctorName = part?.constructor?.name || typeof part;
+        if (streamPartDebug.length < 8) {
+          streamPartDebug.push(ctorName);
+        }
+
+        let chunkText = '';
+        if (part instanceof (vscode as any).LanguageModelTextPart) {
+          chunkText = typeof part.value === 'string' ? part.value : '';
+        } else if (part instanceof (vscode as any).LanguageModelToolCallPart || (part && 'callId' in part && 'name' in part)) {
+          const tc: ToolCall = {
+            id: part.callId,
+            name: part.name,
+            arguments: part.input
+          };
+          toolCalls.push(tc);
+          if (onChunk) {
+            onChunk({ toolCalls: [tc] });
+          }
+        } else if (typeof part === 'string') {
+          chunkText = part;
+        } else if (typeof part.text === 'string') {
+          chunkText = part.text;
+        } else if (typeof part.value === 'string') {
+          chunkText = part.value;
+        }
+
+        if (chunkText) {
+          text += chunkText;
+          if (onChunk) {
+            onChunk({ text: chunkText });
+          }
+        }
       }
     }
 
-    console.log('[AiService] Stream extraction stats:', JSON.stringify({
+    debugLog('[AiService] Stream extraction stats:', JSON.stringify({
       streamChunkCount,
       streamChunkTypes: streamPartDebug,
-      extractedLength: responseText.length
+      extractedLength: text.length,
+      toolCallsCount: toolCalls.length
     }));
 
-    if (responseText.trim()) {
-      return responseText;
+    if (text.trim() || toolCalls.length > 0) {
+      return { text, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
     }
 
     // Fallback for environments where text is the only available channel.
     if (chatRequest?.text && Symbol.asyncIterator in Object(chatRequest.text)) {
       for await (const fragment of chatRequest.text) {
         textChunkCount += 1;
-        responseText += this._normalizeLmTextFragment(fragment);
+        const fragmentStr = this._normalizeLmTextFragment(fragment);
+        text += fragmentStr;
+        if (onChunk && fragmentStr) {
+          onChunk({ text: fragmentStr });
+        }
       }
     }
 
-    console.log('[AiService] Text extraction stats:', JSON.stringify({
+    debugLog('[AiService] Text extraction stats:', JSON.stringify({
       textChunkCount,
-      extractedLength: responseText.length
+      extractedLength: text.length
     }));
 
-    if (responseText.trim()) {
-      return responseText;
+    if (text.trim()) {
+      return { text, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
     }
 
     // Last-resort compatibility fallback.
     const resultContent = chatRequest?.result?.content;
     if (typeof resultContent === 'string') {
-      console.log('[AiService] Using result.content string fallback with length:', resultContent.length);
-      return resultContent;
+      debugLog('[AiService] Using result.content string fallback with length:', resultContent.length);
+      return { text: resultContent, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
     }
     if (Array.isArray(resultContent)) {
-      console.log('[AiService] Using result.content array fallback with parts:', resultContent.length);
-      return resultContent
+      debugLog('[AiService] Using result.content array fallback with parts:', resultContent.length);
+      const fallbackText = resultContent
         .map((item: any) => {
           if (typeof item === 'string') return item;
           if (typeof item?.text === 'string') return item.text;
@@ -765,13 +980,14 @@ export class AiService {
           return '';
         })
         .join('');
+      return { text: fallbackText, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
     }
 
-    if (!responseText.trim() && streamPartDebug.length > 0) {
-      console.warn('[AiService] LM stream yielded non-text parts only:', streamPartDebug.join(' | '));
+    if (!text.trim() && streamPartDebug.length > 0) {
+      debugWarn('[AiService] LM stream yielded non-text parts only:', streamPartDebug.join(' | '));
     }
 
-    return responseText;
+    return { text: '', toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
   }
 
   private _normalizeLmTextFragment(fragment: any): string {
@@ -952,14 +1168,14 @@ export class AiService {
     config: vscode.WorkspaceConfiguration,
     customSystemPrompt?: string,
     scope: AiConfigScope = 'notebook',
-  ): Promise<{ text: string; usage?: string }> {
+    tools?: ToolSpec[],
+    onChunk?: (chunk: { text?: string; toolCalls?: ToolCall[] }) => void
+  ): Promise<AiResponse> {
     const telemetry = TelemetryService.getInstance();
     if (!DIRECT_API_PROVIDERS.has(provider)) {
       throw new Error(`Unsupported provider: ${provider}`);
     }
-    if (!userMessage || !userMessage.trim()) {
-      throw new Error('User message is required for AI requests.');
-    }
+    // userMessage is optional in tool loops (can be empty if loop history is used)
     const apiKey = await this._getDirectApiKey(config, provider);
     const githubSession = provider === 'github' ? await this._getGitHubSession() : undefined;
     
@@ -992,32 +1208,87 @@ export class AiService {
       content: this._sanitizeContent(this._getMessageContent(msg))
     }));
 
-    if (provider === 'openai') {
-      endpoint = 'https://api.openai.com/v1/chat/completions';
-      model = model || DEFAULT_OPENAI_MODEL;
-
+    if (provider === 'openai' || provider === 'custom' || provider === 'ollama' || provider === 'lmstudio' || provider === 'github') {
       const messages: any[] = [];
       if (systemPrompt) {
         messages.push({ role: 'system', content: systemPrompt });
       }
-      // History with vision support
       for (const msg of budgetedHistory) {
-        const multipart = this._buildMultipartContent(msg);
-        messages.push({
-          role: msg.role,
-          content: multipart ?? this._sanitizeContent(this._getMessageContent(msg))
-        });
+        if (msg.role === 'tool') {
+          messages.push({
+            role: 'tool',
+            tool_call_id: msg.toolCallId,
+            name: msg.name,
+            content: msg.content
+          });
+        } else if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
+          messages.push({
+            role: 'assistant',
+            content: msg.content || null,
+            tool_calls: msg.toolCalls.map(tc => ({
+              id: tc.id,
+              type: 'function',
+              function: {
+                name: tc.name,
+                arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments)
+              }
+            }))
+          });
+        } else {
+          messages.push({
+            role: msg.role,
+            content: this._buildMultipartContent(msg) ?? this._sanitizeContent(this._getMessageContent(msg))
+          });
+        }
       }
-      // Current user message — check if it carries images
-      const currentMsg: ChatMessage = { role: 'user', content: userMessage, attachments: this._messages[this._messages.length - 1]?.attachments };
-      const currentMultipart = this._buildMultipartContent(currentMsg, userMessage);
-      messages.push({ role: 'user', content: currentMultipart ?? userMessage });
+      if (userMessage && userMessage.trim()) {
+        const currentMsg: ChatMessage = { role: 'user', content: userMessage, attachments: this._messages[this._messages.length - 1]?.attachments };
+        const currentMultipart = this._buildMultipartContent(currentMsg, userMessage);
+        messages.push({ role: 'user', content: currentMultipart ?? userMessage });
+      }
 
       body = {
-        model: model,
         messages: messages,
         temperature: 0.7
       };
+
+      if (provider === 'openai') {
+        endpoint = 'https://api.openai.com/v1/chat/completions';
+        model = model || DEFAULT_OPENAI_MODEL;
+        body.model = model;
+      } else if (provider === 'custom') {
+        endpoint = getChatCompletionEndpoint(config.get<string>('aiEndpoint') || '');
+        if (!endpoint) {
+          throw new Error('Endpoint is required for custom provider');
+        }
+        model = model || 'gpt-3.5-turbo';
+        body.model = model;
+      } else if (provider === 'ollama') {
+        endpoint = getChatCompletionEndpoint(config.get<string>('aiEndpoint') || 'http://localhost:11434/v1/chat/completions');
+        model = model || '';
+        body.model = model;
+      } else if (provider === 'lmstudio') {
+        endpoint = getChatCompletionEndpoint(config.get<string>('aiEndpoint') || 'http://localhost:1234/v1/chat/completions');
+        model = model || '';
+        body.model = model;
+      } else if (provider === 'github') {
+        if (!githubSession) {
+          throw new Error('Sign in to GitHub in AI Settings to use GitHub Models.');
+        }
+        endpoint = `${GITHUB_MODELS_API_BASE}/inference/chat/completions`;
+        model = model || DEFAULT_GITHUB_MODEL;
+        body.model = model;
+        headers = {
+          'Accept': 'application/vnd.github+json',
+          'Authorization': `Bearer ${githubSession.accessToken}`,
+          'X-GitHub-Api-Version': GITHUB_MODELS_API_VERSION,
+          'Content-Type': 'application/json'
+        };
+      }
+
+      if (tools && tools.length > 0) {
+        body.tools = mapToOpenAiTools(tools);
+      }
     } else if (provider === 'anthropic') {
       endpoint = 'https://api.anthropic.com/v1/messages';
       model = model || DEFAULT_ANTHROPIC_MODEL;
@@ -1027,16 +1298,57 @@ export class AiService {
 
       const anthropicMessages: any[] = [];
       for (const msg of budgetedHistory) {
-        anthropicMessages.push({
-          role: msg.role === 'assistant' ? 'assistant' : 'user',
-          content: this._buildAnthropicContent(msg)
-        });
+        if (msg.role === 'tool') {
+          const lastMsg = anthropicMessages[anthropicMessages.length - 1];
+          if (lastMsg && lastMsg.role === 'user' && Array.isArray(lastMsg.content) && lastMsg.content.some((c: any) => c.type === 'tool_result')) {
+            lastMsg.content.push({
+              type: 'tool_result',
+              tool_use_id: msg.toolCallId,
+              content: msg.content
+            });
+          } else {
+            anthropicMessages.push({
+              role: 'user',
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: msg.toolCallId,
+                  content: msg.content
+                }
+              ]
+            });
+          }
+        } else if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
+          const contentParts: any[] = [];
+          if (msg.content) {
+            contentParts.push({ type: 'text', text: msg.content });
+          }
+          for (const tc of msg.toolCalls) {
+            contentParts.push({
+              type: 'tool_use',
+              id: tc.id,
+              name: tc.name,
+              input: typeof tc.arguments === 'string' ? JSON.parse(tc.arguments) : tc.arguments
+            });
+          }
+          anthropicMessages.push({
+            role: 'assistant',
+            content: contentParts
+          });
+        } else {
+          anthropicMessages.push({
+            role: msg.role === 'assistant' ? 'assistant' : 'user',
+            content: this._buildAnthropicContent(msg)
+          });
+        }
       }
-      const lastMsg = this._messages[this._messages.length - 1];
-      const currentAnthropicContent = lastMsg?.attachments?.some(a => a.type === 'image')
-        ? this._buildAnthropicContent(lastMsg, userMessage)
-        : userMessage;
-      anthropicMessages.push({ role: 'user', content: currentAnthropicContent });
+      if (userMessage && userMessage.trim()) {
+        const lastMsg = this._messages[this._messages.length - 1];
+        const currentAnthropicContent = lastMsg?.attachments?.some(a => a.type === 'image')
+          ? this._buildAnthropicContent(lastMsg, userMessage)
+          : userMessage;
+        anthropicMessages.push({ role: 'user', content: currentAnthropicContent });
+      }
 
       body = {
         model: model,
@@ -1044,6 +1356,10 @@ export class AiService {
         messages: anthropicMessages,
         max_tokens: 4096
       };
+
+      if (tools && tools.length > 0) {
+        body.tools = mapToAnthropicTools(tools);
+      }
     } else if (provider === 'gemini') {
       model = model || DEFAULT_GEMINI_MODEL;
       endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
@@ -1052,94 +1368,76 @@ export class AiService {
 
       const geminiContents: any[] = [];
       for (const msg of budgetedHistory) {
-        geminiContents.push({
-          role: msg.role === 'assistant' ? 'model' : 'user',
-          parts: this._buildGeminiParts(msg)
-        });
+        if (msg.role === 'tool') {
+          let parsedResponse: any;
+          try {
+            parsedResponse = JSON.parse(msg.content);
+          } catch {
+            parsedResponse = { result: msg.content };
+          }
+          if (typeof parsedResponse !== 'object' || parsedResponse === null || Array.isArray(parsedResponse)) {
+            parsedResponse = { result: parsedResponse };
+          }
+
+          geminiContents.push({
+            role: 'user',
+            parts: [
+              {
+                functionResponse: {
+                  name: msg.name,
+                  response: parsedResponse
+                }
+              }
+            ]
+          });
+        } else if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
+          const parts: any[] = [];
+          if (msg.content) {
+            parts.push({ text: msg.content });
+          }
+          for (const tc of msg.toolCalls) {
+            parts.push({
+              functionCall: {
+                name: tc.name,
+                args: typeof tc.arguments === 'string' ? JSON.parse(tc.arguments) : tc.arguments
+              }
+            });
+          }
+          geminiContents.push({
+            role: 'model',
+            parts
+          });
+        } else {
+          geminiContents.push({
+            role: msg.role === 'assistant' ? 'model' : 'user',
+            parts: this._buildGeminiParts(msg)
+          });
+        }
       }
-      const lastMsg = this._messages[this._messages.length - 1];
-      const currentGeminiParts = lastMsg?.attachments?.some(a => a.type === 'image')
-        ? this._buildGeminiParts(lastMsg, userMessage)
-        : [{ text: userMessage }];
-      geminiContents.push({ role: 'user', parts: currentGeminiParts });
+      if (userMessage && userMessage.trim()) {
+        const lastMsg = this._messages[this._messages.length - 1];
+        const currentGeminiParts = lastMsg?.attachments?.some(a => a.type === 'image')
+          ? this._buildGeminiParts(lastMsg, userMessage)
+          : [{ text: userMessage }];
+        geminiContents.push({ role: 'user', parts: currentGeminiParts });
+      }
 
       body = {
         systemInstruction: systemPrompt ? { parts: [{ text: systemPrompt }] } : undefined,
         contents: geminiContents
       };
-    } else if (provider === 'custom') {
-      endpoint = config.get<string>('aiEndpoint') || '';
-      if (!endpoint) {
-        throw new Error('Endpoint is required for custom provider');
+
+      if (tools && tools.length > 0) {
+        body.tools = [{ functionDeclarations: mapToGeminiTools(tools) }];
       }
-      model = model || 'gpt-3.5-turbo';
+    }
 
-      const messages: any[] = [];
-      if (systemPrompt) {
-        messages.push({ role: 'system', content: systemPrompt });
-      }
-      messages.push(...conversationHistory);
-      messages.push({ role: 'user', content: userMessage });
-
-      body = {
-        model: model,
-        messages: messages
-      };
-    } else if (provider === 'ollama') {
-      endpoint = config.get<string>('aiEndpoint') || 'http://localhost:11434/v1/chat/completions';
-      model = model || '';
-
-      const messages: any[] = [];
-      if (systemPrompt) {
-        messages.push({ role: 'system', content: systemPrompt });
-      }
-      messages.push(...conversationHistory);
-      messages.push({ role: 'user', content: userMessage });
-
-      body = { model, messages };
-    } else if (provider === 'lmstudio') {
-      endpoint = config.get<string>('aiEndpoint') || 'http://localhost:1234/v1/chat/completions';
-      model = model || '';
-
-      const messages: any[] = [];
-      if (systemPrompt) {
-        messages.push({ role: 'system', content: systemPrompt });
-      }
-      messages.push(...conversationHistory);
-      messages.push({ role: 'user', content: userMessage });
-
-      body = { model, messages };
-    } else if (provider === 'github') {
-      if (!githubSession) {
-        throw new Error('Sign in to GitHub in AI Settings to use GitHub Models.');
-      }
-
-      endpoint = `${GITHUB_MODELS_API_BASE}/inference/chat/completions`;
-      model = model || DEFAULT_GITHUB_MODEL;
-
-      const messages: any[] = [];
-      if (systemPrompt) {
-        messages.push({ role: 'system', content: systemPrompt });
-      }
-      messages.push(...conversationHistory);
-      messages.push({ role: 'user', content: userMessage });
-
-      headers = {
-        'Accept': 'application/vnd.github+json',
-        'Authorization': `Bearer ${githubSession.accessToken}`,
-        'X-GitHub-Api-Version': GITHUB_MODELS_API_VERSION,
-        'Content-Type': 'application/json'
-      };
-
-      body = {
-        model,
-        messages,
-        temperature: 0.7
-      };
+    if (onChunk && provider !== 'gemini') {
+      body.stream = true;
     }
 
     try {
-      const response = await this._makeHttpRequestWithRetry(endpoint, headers, body, provider);
+      const response = await this._makeHttpRequestWithRetry(endpoint, headers, body, provider, onChunk);
       telemetry.trackEvent('ai_request', { provider, success: true });
       return response;
     } catch (error) {
@@ -1153,11 +1451,12 @@ export class AiService {
     headers: any,
     body: any,
     provider: string,
+    onChunk?: (chunk: { text?: string; toolCalls?: ToolCall[] }) => void
   ): Promise<{ text: string; usage?: string }> {
     let lastErr: unknown;
     for (let attempt = 0; attempt < HTTP_RETRY_MAX_ATTEMPTS; attempt++) {
       try {
-        return await this._makeHttpRequest(endpoint, headers, body, provider);
+        return await this._makeHttpRequest(endpoint, headers, body, provider, onChunk);
       } catch (err) {
         lastErr = err;
         if (
@@ -1258,7 +1557,13 @@ export class AiService {
     }
   }
 
-  private _makeHttpRequest(endpoint: string, headers: any, body: any, provider: string): Promise<{ text: string, usage?: string }> {
+  private _makeHttpRequest(
+    endpoint: string,
+    headers: any,
+    body: any,
+    provider: string,
+    onChunk?: (chunk: { text?: string; toolCalls?: ToolCall[] }) => void
+  ): Promise<{ text: string, usage?: string }> {
     return new Promise((resolve, reject) => {
       const url = new URL(endpoint);
       const requestData = JSON.stringify(body);
@@ -1276,12 +1581,11 @@ export class AiService {
 
       const protocol = url.protocol === 'https:' ? https : http;
       const req = protocol.request(options, (res) => {
-        let data = '';
-        res.on('data', chunk => data += chunk);
-        res.on('end', () => {
-          const statusCode = res.statusCode ?? 0;
-
-          if (statusCode !== 200) {
+        const statusCode = res.statusCode ?? 0;
+        if (statusCode !== 200) {
+          let data = '';
+          res.on('data', chunk => data += chunk);
+          res.on('end', () => {
             let detail = `API request failed with status ${statusCode}`;
             try {
               const errBody = JSON.parse(data) as { error?: { message?: string } };
@@ -1295,56 +1599,108 @@ export class AiService {
               }
             }
             reject(new AiProviderHttpError(detail, statusCode));
-            return;
-          }
+          });
+          return;
+        }
 
-          let response: Record<string, unknown>;
-          try {
-            response = JSON.parse(data) as Record<string, unknown>;
-          } catch (e) {
-            reject(
-              new AiProviderHttpError(
-                `Failed to parse API response: ${e instanceof Error ? e.message : String(e)}`,
-                statusCode,
-              ),
-            );
-            return;
-          }
+        let data = '';
+        let buffer = '';
+        res.on('data', (chunk: Buffer | string) => {
+          const chunkStr = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+          if (onChunk) {
+            buffer += chunkStr;
+            let lineEnd = buffer.indexOf('\n');
+            while (lineEnd !== -1) {
+              const line = buffer.slice(0, lineEnd).trim();
+              buffer = buffer.slice(lineEnd + 1);
+              lineEnd = buffer.indexOf('\n');
 
+              if (line.startsWith('data:')) {
+                const dataVal = line.slice(5).trim();
+                if (dataVal === '[DONE]') {
+                  continue;
+                }
+                try {
+                  const parsed = JSON.parse(dataVal);
+                  let text = '';
+                  if (provider === 'anthropic') {
+                    if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
+                      text = parsed.delta.text;
+                    }
+                  } else {
+                    // OpenAI-compatible
+                    text = parsed.choices?.[0]?.delta?.content || '';
+                  }
+                  if (text) {
+                    data += text;
+                    onChunk({ text });
+                  }
+                } catch (e) {
+                  // ignore JSON parse errors for partial or meta lines
+                }
+              }
+            }
+          } else {
+            data += chunkStr;
+          }
+        });
+
+        res.on('end', () => {
           let content = '';
           let usage = '';
 
-          if (provider === 'anthropic') {
-            const contentArr = response.content as Array<{ text?: string }> | undefined;
-            content = contentArr?.[0]?.text || '';
-            const usageObj = response.usage as { input_tokens?: number; output_tokens?: number } | undefined;
-            if (usageObj) {
-              usage = `${usageObj.input_tokens} input, ${usageObj.output_tokens} output`;
-            }
-          } else if (provider === 'gemini') {
-            const candidates = response.candidates as Array<{
-              content?: { parts?: Array<{ text?: string }> };
-            }> | undefined;
-            content = candidates?.[0]?.content?.parts?.[0]?.text || '';
-            const usageObj = response.usageMetadata as { totalTokenCount?: number } | undefined;
-            if (usageObj) {
-              usage = `${usageObj.totalTokenCount} tokens`;
-            }
+          if (onChunk) {
+            content = data;
+            usage = AiService._roughTokenEstimateLabel(
+              AiService.estimateTokens(JSON.stringify(body.messages || '')),
+              content.length
+            );
           } else {
-            const choices = response.choices as Array<{ message?: { content?: string } }> | undefined;
-            content = choices?.[0]?.message?.content || '';
-            const usageObj = response.usage as {
-              total_tokens?: number;
-              prompt_tokens?: number;
-              completion_tokens?: number;
-            } | undefined;
-            if (usageObj) {
-              usage = `${usageObj.total_tokens} tokens (P:${usageObj.prompt_tokens}, C:${usageObj.completion_tokens})`;
+            let response: Record<string, unknown>;
+            try {
+              response = JSON.parse(data) as Record<string, unknown>;
+            } catch (e) {
+              reject(
+                new AiProviderHttpError(
+                  `Failed to parse API response: ${e instanceof Error ? e.message : String(e)}`,
+                  statusCode,
+                ),
+              );
+              return;
             }
-          }
 
-          if (!content && provider === 'custom') {
-            content = JSON.stringify(response);
+            if (provider === 'anthropic') {
+              const contentArr = response.content as Array<{ text?: string }> | undefined;
+              content = contentArr?.[0]?.text || '';
+              const usageObj = response.usage as { input_tokens?: number; output_tokens?: number } | undefined;
+              if (usageObj) {
+                usage = `${usageObj.input_tokens} input, ${usageObj.output_tokens} output`;
+              }
+            } else if (provider === 'gemini') {
+              const candidates = response.candidates as Array<{
+                content?: { parts?: Array<{ text?: string }> };
+              }> | undefined;
+              content = candidates?.[0]?.content?.parts?.[0]?.text || '';
+              const usageObj = response.usageMetadata as { totalTokenCount?: number } | undefined;
+              if (usageObj) {
+                usage = `${usageObj.totalTokenCount} tokens`;
+              }
+            } else {
+              const choices = response.choices as Array<{ message?: { content?: string } }> | undefined;
+              content = choices?.[0]?.message?.content || '';
+              const usageObj = response.usage as {
+                total_tokens?: number;
+                prompt_tokens?: number;
+                completion_tokens?: number;
+              } | undefined;
+              if (usageObj) {
+                usage = `${usageObj.total_tokens} tokens (P:${usageObj.prompt_tokens}, C:${usageObj.completion_tokens})`;
+              }
+            }
+
+            if (!content && provider === 'custom') {
+              content = JSON.stringify(response);
+            }
           }
 
           if (usage && body?.model) {
@@ -1429,6 +1785,16 @@ export class AiService {
         } catch {
           return 'Cursor';
         }
+      } else if (provider === 'opencode') {
+        if (configuredModel && configuredModel !== 'auto') {
+          return configuredModel;
+        }
+        try {
+          const models = await listOpencodeModels(config);
+          return models[0] || 'OpenCode (No Models)';
+        } catch {
+          return 'OpenCode';
+        }
       } else {
         return configuredModel || this._getDefaultModel(provider);
       }
@@ -1441,6 +1807,7 @@ export class AiService {
     switch (provider) {
       case 'github': return DEFAULT_GITHUB_MODEL;
       case 'cursor': return DEFAULT_CURSOR_MODEL;
+      case 'opencode': return DEFAULT_OPENCODE_MODEL;
       case 'openai': return DEFAULT_OPENAI_MODEL;
       case 'anthropic': return DEFAULT_ANTHROPIC_MODEL;
       case 'gemini': return DEFAULT_GEMINI_MODEL;
@@ -1454,7 +1821,7 @@ export class AiService {
   private async _selectChatModelsWithTimeout(selector: vscode.LanguageModelChatSelector): Promise<vscode.LanguageModelChat[]> {
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
-        console.warn('[AiService] vscode.lm.selectChatModels timed out after 2000ms');
+        debugWarn('[AiService] vscode.lm.selectChatModels timed out after 2000ms');
         resolve([]);
       }, 2000);
 

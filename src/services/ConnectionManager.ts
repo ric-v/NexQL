@@ -7,6 +7,9 @@ import { SSHService } from './SSHService';
 import { ErrorService } from './ErrorService';
 import { resolvePgPassPassword, pgPassFileDescription } from '../utils/pgPassUtils';
 import { TelemetryService } from './TelemetryService';
+import { debugLog, debugWarn } from '../common/logger';
+import { PlatformConnectionService } from './PlatformConnectionService';
+import { PoolerWarningService } from './PoolerWarningService';
 
 export interface PoolMetrics {
   connectionId: string;
@@ -125,7 +128,7 @@ export class ConnectionManager {
 
     if (!pool) {
       const clientConfig = await this.createClientConfig(config);
-      pool = this.createPool(clientConfig, key);
+      pool = this.createPool(clientConfig, key, config);
       this.pools.set(key, pool);
       trackNewPooledConnection = true;
     }
@@ -136,12 +139,14 @@ export class ConnectionManager {
         telemetry.trackEvent('connection_opened', { connectionKind: 'pooled' });
       }
 
+      await this.afterClientConnected(config, client, trackNewPooledConnection);
+
       // Apply read-only mode if configured
       if (config.readOnlyMode) {
         try {
           await client.query('SET default_transaction_read_only = ON');
         } catch (err) {
-          console.warn('Failed to set read-only mode:', err);
+          debugWarn('Failed to set read-only mode:', err);
         }
       }
 
@@ -150,7 +155,7 @@ export class ConnectionManager {
       telemetry.trackEvent('connection_error', { errorCategory: this.categorizeConnectionError(err) });
       // Handle SSL Fallback
       if (this.shouldFallback(config, err)) {
-        console.warn(`SSL connection failed for ${key}, falling back to non-SSL`, err);
+        debugWarn(`SSL connection failed for ${key}, falling back to non-SSL`, err);
 
         // Remove the failed pool
         this.pools.delete(key);
@@ -162,18 +167,20 @@ export class ConnectionManager {
 
         // Create non-SSL pool
         const clientConfig = await this.createClientConfig(config, true);
-        pool = this.createPool(clientConfig, key);
+        pool = this.createPool(clientConfig, key, config);
         this.pools.set(key, pool);
 
         const client = await pool.connect();
         telemetry.trackEvent('connection_opened', { connectionKind: 'pooled' });
+
+        await this.afterClientConnected(config, client, true);
 
         // Apply read-only mode if configured
         if (config.readOnlyMode) {
           try {
             await client.query('SET default_transaction_read_only = ON');
           } catch (err) {
-            console.warn('Failed to set read-only mode:', err);
+            debugWarn('Failed to set read-only mode:', err);
           }
         }
 
@@ -194,11 +201,17 @@ export class ConnectionManager {
     }
   }
 
-  private createPool(clientConfig: ClientConfig, key: string): Pool {
+  private createPool(
+    clientConfig: ClientConfig,
+    key: string,
+    sourceConfig: ConnectionConfig,
+  ): Pool {
+    const host = sourceConfig.host || '';
     const poolConfig: PoolConfig = {
       ...clientConfig,
       max: 10,
       idleTimeoutMillis: 30000,
+      keepAlive: host.includes('.neon.tech'),
     };
     const pool = new Pool(poolConfig);
     pool.on('error', (err) => {
@@ -222,17 +235,19 @@ export class ConnectionManager {
       await client.connect();
       telemetry.trackEvent('connection_opened', { connectionKind: 'session' });
 
+      await this.afterClientConnected(config, client as unknown as PoolClient);
+
       // Apply read-only mode if configured
       if (config.readOnlyMode) {
         try {
           await client.query('SET default_transaction_read_only = ON');
         } catch (err) {
-          console.warn('Failed to set read-only mode:', err);
+          debugWarn('Failed to set read-only mode:', err);
         }
       }
     } catch (err: any) {
       if (this.shouldFallback(config, err)) {
-        console.warn(`Session SSL connection failed for ${key}, falling back to non-SSL`, err);
+        debugWarn(`Session SSL connection failed for ${key}, falling back to non-SSL`, err);
 
         // Retry with SSL disabled
         const nonSSLConfig = await this.createClientConfig(config, true);
@@ -240,12 +255,14 @@ export class ConnectionManager {
         await client.connect();
         telemetry.trackEvent('connection_opened', { connectionKind: 'session' });
 
+        await this.afterClientConnected(config, client as unknown as PoolClient);
+
         // Apply read-only mode if configured
         if (config.readOnlyMode) {
           try {
             await client.query('SET default_transaction_read_only = ON');
           } catch (err) {
-            console.warn('Failed to set read-only mode:', err);
+            debugWarn('Failed to set read-only mode:', err);
           }
         }
       } else {
@@ -343,7 +360,33 @@ export class ConnectionManager {
       }
     }
 
-    console.log(`Closed resources for ID: ${connectionId}`);
+    PlatformConnectionService.getInstance().invalidateConnection(connectionId);
+    debugLog(`Closed resources for ID: ${connectionId}`);
+  }
+
+  private async afterClientConnected(
+    config: ConnectionConfig,
+    client: PoolClient,
+    showWarnings = true,
+  ): Promise<void> {
+    try {
+      const probed = await PlatformConnectionService.getInstance().probeIfNeeded(
+        config,
+        client,
+      );
+      if (!showWarnings) {
+        return;
+      }
+      if (probed.unsupportedVersion) {
+        const major = Math.floor(probed.serverVersionNum / 10_000);
+        void vscode.window.showWarningMessage(
+          `PostgreSQL ${major} is below NexQL's supported minimum (12). See docs/COMPATIBILITY.md.`,
+        );
+      }
+      void PoolerWarningService.getInstance().maybeWarn(config);
+    } catch (err) {
+      debugWarn('Platform connection probe failed:', err);
+    }
   }
 
   public async closeAll(): Promise<void> {
@@ -392,7 +435,7 @@ export class ConnectionManager {
       const pgpassPwd = resolvePgPassPassword(config.host, config.port, targetDb, config.username);
       if (pgpassPwd !== undefined) {
         password = pgpassPwd;
-        console.log(
+        debugLog(
           `[ConnectionManager] Password resolved from .pgpass for ${config.username}@${config.host}:${config.port}/${targetDb}`,
         );
       } else if (targetDb !== 'postgres') {
@@ -404,13 +447,13 @@ export class ConnectionManager {
         );
         if (fallback !== undefined) {
           password = fallback;
-          console.log(
+          debugLog(
             `[ConnectionManager] Password resolved from .pgpass (postgres fallback) for ${config.username}@${config.host}:${config.port}`,
           );
         }
       }
       if (!password) {
-        console.log(
+        debugLog(
           `[ConnectionManager] No password found in SecretStorage or .pgpass for ${config.username}@${config.host}. Expected: ${pgPassFileDescription()}`,
         );
       }
@@ -430,21 +473,21 @@ export class ConnectionManager {
         try {
           sslConfig.ca = fs.readFileSync(config.sslRootCertPath).toString();
         } catch (e) {
-          console.warn('Failed to read SSL CA:', e);
+          debugWarn('Failed to read SSL CA:', e);
         }
       }
       if (config.sslCertPath) {
         try {
           sslConfig.cert = fs.readFileSync(config.sslCertPath).toString();
         } catch (e) {
-          console.warn('Failed to read SSL Cert:', e);
+          debugWarn('Failed to read SSL Cert:', e);
         }
       }
       if (config.sslKeyPath) {
         try {
           sslConfig.key = fs.readFileSync(config.sslKeyPath).toString();
         } catch (e) {
-          console.warn('Failed to read SSL Key:', e);
+          debugWarn('Failed to read SSL Key:', e);
         }
       }
     }

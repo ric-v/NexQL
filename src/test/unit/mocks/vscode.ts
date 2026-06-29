@@ -35,6 +35,8 @@ export const workspace: {
     writeFile(uri: any, b: Uint8Array): Thenable<void>;
     stat(uri: any): Thenable<any>;
     createDirectory(uri: any): Thenable<void>;
+    rename(source: any, target: any, options?: any): Thenable<void>;
+    delete(uri: any, options?: any): Thenable<void>;
   };
   notebookDocuments: any[];
   onDidOpenNotebookDocument(cb?: any): { dispose(): void };
@@ -52,7 +54,9 @@ export const workspace: {
     readFile: async (_uri: any) => new Uint8Array(),
     writeFile: async (_uri: any, _b: Uint8Array) => { },
     stat: async (_uri: any) => { throw new Error('FileNotFound'); },
-    createDirectory: async (_uri: any) => { }
+    createDirectory: async (_uri: any) => { },
+    rename: async (_s: any, _t: any, _o?: any) => { },
+    delete: async (_uri: any, _o?: any) => { }
   },
   notebookDocuments: [] as any[],
   onDidOpenNotebookDocument: (_cb?: any) => ({ dispose: () => { } }),
@@ -72,6 +76,7 @@ export class EventEmitter<T = any> {
   private listeners: ((e: T) => any)[] = [];
   event = (listener: (e: T) => any) => { this.listeners.push(listener); return { dispose: () => { } }; };
   fire = (e?: T) => { this.listeners.forEach(l => l(e as T)); };
+  dispose() { this.listeners = []; }
 }
 
 export class Disposable { dispose() { } }
@@ -85,6 +90,21 @@ export const window = {
   showWarningMessage: async (_msg?: string) => undefined,
   showInputBox: async (_options?: any) => undefined,
   showQuickPick: async (_items?: any[], _opts?: any) => undefined,
+  createQuickPick: () => ({
+    title: '',
+    placeholder: '',
+    matchOnDescription: false,
+    matchOnDetail: false,
+    value: '',
+    items: [],
+    selectedItems: [],
+    onDidChangeValue: (_cb?: any) => ({ dispose: () => { } }),
+    onDidAccept: (_cb?: any) => ({ dispose: () => { } }),
+    onDidHide: (_cb?: any) => ({ dispose: () => { } }),
+    show: () => { },
+    hide: () => { },
+    dispose: () => { }
+  }),
   showSaveDialog: async (_opts?: any) => undefined,
   showNotebookDocument: async (_doc?: any, _opts?: any) => new NotebookEditor(),
   createTerminal: (_name?: string) => ({ show: (_preserveFocus?: boolean) => { }, sendText: (_text: string, _addNewLine?: boolean) => { }, dispose: () => { } }),
@@ -239,7 +259,13 @@ export interface CodeLensProvider {
   resolveCodeLens?(codeLens: CodeLens, token?: CancellationToken): CodeLens | Thenable<CodeLens>;
 }
 
-export class CancellationTokenSource { token: CancellationToken = {}; cancel() { } dispose() { } }
+export class CancellationTokenSource {
+  token: CancellationToken = { isCancellationRequested: false };
+  cancel() {
+    (this.token as any).isCancellationRequested = true;
+  }
+  dispose() { }
+}
 
 // Language model / chat stubs for `vscode.lm` usage in tests
 export interface LanguageModelChat { id?: string; name?: string; family?: string; sendRequest?(messages: any[], opts?: any, token?: any): Promise<any>; }

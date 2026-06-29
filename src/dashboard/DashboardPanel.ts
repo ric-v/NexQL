@@ -625,7 +625,9 @@ IMPORTANT: When the user sends a bare number (1, 2, or 3), treat it as selecting
       });
       // First paint uses a script-free loading shell; replace it once stats are ready so scripts run and JSON bootstraps the UI.
       if (this._panel.webview.html.includes(DASHBOARD_LOADING_SHELL_MARKER)) {
-        this._panel.webview.html = await getHtmlForWebview(this._panel.webview, this.extensionUri, stats);
+        const env = this._config.environment;
+        const color = this._config.color || (env === 'production' ? 'red' : env === 'staging' ? 'orange' : env === 'development' ? 'green' : undefined);
+        this._panel.webview.html = await getHtmlForWebview(this._panel.webview, this.extensionUri, stats, color);
       }
       // Auto-notify if enabled and health newly turned critical
       if (this._autoNotifyEnabled) {

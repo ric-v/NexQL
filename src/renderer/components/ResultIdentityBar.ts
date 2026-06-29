@@ -281,9 +281,12 @@ export function createResultIdentityBar(options: ResultIdentityBarOptions): HTML
     padding: 5px 6px 5px 10px;
     border-bottom: 1px solid var(--vscode-widget-border);
     user-select: none;
-    background: color-mix(in srgb, var(--vscode-editor-background) 82%, var(--vscode-sideBar-background));
+    background: color-mix(in srgb, var(--vscode-editor-background) 72%, transparent);
+    backdrop-filter: blur(8px) saturate(1.1);
+    -webkit-backdrop-filter: blur(8px) saturate(1.1);
     font-family: var(--vscode-font-family);
     font-size: 12px;
+    box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--vscode-textLink-foreground) 10%, transparent);
   `;
 
   const leftCluster = document.createElement('div');

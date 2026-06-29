@@ -1,5 +1,6 @@
 import { Client } from 'pg';
 import * as vscode from 'vscode';
+import { loadPanelTemplate } from '../../../lib/template-loader';
 
 interface ColumnInfo {
     column_name: string;
@@ -21,14 +22,22 @@ interface SchemaInfo {
 }
 
 export class TablePropertiesPanel {
-    public static async show(client: Client, schema: string, name: string, isView: boolean = false, isFunction: boolean = false, isSchema: boolean = false): Promise<void> {
+    public static async show(
+        client: Client,
+        schema: string,
+        name: string,
+        extensionUri: vscode.Uri,
+        isView: boolean = false,
+        isFunction: boolean = false,
+        isSchema: boolean = false,
+    ): Promise<void> {
         try {
             const panelTitle = isSchema ? `Schema: ${name}` : `${schema}.${name}`;
             const panel = vscode.window.createWebviewPanel(
                 'postgresProperties',
                 panelTitle,
                 vscode.ViewColumn.One,
-                { enableScripts: true }
+                { enableScripts: true, localResourceRoots: [extensionUri] },
             );
 
             let content = '';
@@ -41,7 +50,7 @@ export class TablePropertiesPanel {
                 content = await this.getTableOrViewContent(client, schema, name, isView);
             }
 
-            panel.webview.html = this.getHtml(panelTitle, content);
+            panel.webview.html = await this.getHtml(panel, extensionUri, panelTitle, content);
         } catch (err: any) {
             vscode.window.showErrorMessage(`Error loading properties: ${err.message}`);
         }
@@ -61,27 +70,27 @@ export class TablePropertiesPanel {
         const info = result.rows[0] || { owner: 'Unknown', privileges: [] };
 
         return `
-            <div class="tabs">
-                <button class="tab-btn active" onclick="openTab(event, 'General')">General</button>
-                <button class="tab-btn" onclick="openTab(event, 'Security')">Security</button>
-                <button class="tab-btn" onclick="openTab(event, 'SQL')">SQL</button>
-            </div>
+            <nav class="pg-tab-strip" role="tablist">
+                <button type="button" class="pg-tab-btn active" onclick="openTab(event, 'General')">General</button>
+                <button type="button" class="pg-tab-btn" onclick="openTab(event, 'Security')">Security</button>
+                <button type="button" class="pg-tab-btn" onclick="openTab(event, 'SQL')">SQL</button>
+            </nav>
 
-            <div id="General" class="tab-content active">
-                <div class="info-grid">
+            <div id="General" class="pg-tab-panel active">
+                <div class="pg-info-grid">
                     <div class="label">Name</div><div class="value">${name}</div>
                     <div class="label">Owner</div><div class="value">${info.owner}</div>
                 </div>
             </div>
 
-            <div id="Security" class="tab-content">
-                <div class="list-container">
-                    ${(info.privileges || []).map((p: string) => `<div class="list-item">${p || 'No specific privileges'}</div>`).join('')}
+            <div id="Security" class="pg-tab-panel">
+                <div class="pg-list-container">
+                    ${(info.privileges || []).map((p: string) => `<div class="pg-list-item">${p || 'No specific privileges'}</div>`).join('')}
                 </div>
             </div>
 
-            <div id="SQL" class="tab-content">
-                <pre>${this.formatSql(`CREATE SCHEMA ${name} AUTHORIZATION ${info.owner};`)}</pre>
+            <div id="SQL" class="pg-tab-panel">
+                <pre class="pg-sql-block">${this.formatSql(`CREATE SCHEMA ${name} AUTHORIZATION ${info.owner};`)}</pre>
             </div>
         `;
     }
@@ -102,13 +111,13 @@ export class TablePropertiesPanel {
         const info = result.rows[0];
 
         return `
-            <div class="tabs">
-                <button class="tab-btn active" onclick="openTab(event, 'General')">General</button>
-                <button class="tab-btn" onclick="openTab(event, 'Definition')">Definition</button>
-            </div>
+            <nav class="pg-tab-strip" role="tablist">
+                <button type="button" class="pg-tab-btn active" onclick="openTab(event, 'General')">General</button>
+                <button type="button" class="pg-tab-btn" onclick="openTab(event, 'Definition')">Definition</button>
+            </nav>
 
-            <div id="General" class="tab-content active">
-                <div class="info-grid">
+            <div id="General" class="pg-tab-panel active">
+                <div class="pg-info-grid">
                     <div class="label">Name</div><div class="value">${name}</div>
                     <div class="label">Schema</div><div class="value">${schema}</div>
                     <div class="label">Language</div><div class="value">${info.language}</div>
@@ -117,8 +126,8 @@ export class TablePropertiesPanel {
                 </div>
             </div>
 
-            <div id="Definition" class="tab-content">
-                <pre>${this.formatSql(info.definition)}</pre>
+            <div id="Definition" class="pg-tab-panel">
+                <pre class="pg-sql-block">${this.formatSql(info.definition)}</pre>
             </div>
         `;
     }
@@ -189,13 +198,11 @@ export class TablePropertiesPanel {
             AND ref_class.relname != '${name}'
             AND ref_class.relkind IN ('r', 'v', 'm')`;
 
-        const [generalRes, colRes, defRes, depsRes, refsRes] = await Promise.all([
-            client.query(generalQuery, [schema, name]),
-            client.query(colQuery),
-            client.query(defQuery),
-            client.query(depsQuery),
-            client.query(refsQuery)
-        ]);
+        const generalRes = await client.query(generalQuery, [schema, name]);
+        const colRes = await client.query(colQuery);
+        const defRes = await client.query(defQuery);
+        const depsRes = await client.query(depsQuery);
+        const refsRes = await client.query(refsQuery);
 
         const general = generalRes.rows[0] || {};
         const columns = colRes.rows;
@@ -213,15 +220,15 @@ export class TablePropertiesPanel {
         };
 
         return `
-            <div class="tabs">
-                <button class="tab-btn active" onclick="openTab(event, 'General')">General</button>
-                <button class="tab-btn" onclick="openTab(event, 'Columns')">Columns</button>
-                <button class="tab-btn" onclick="openTab(event, 'Dependencies')">Dependencies</button>
-                <button class="tab-btn" onclick="openTab(event, 'SQL')">SQL</button>
-            </div>
+            <nav class="pg-tab-strip" role="tablist">
+                <button type="button" class="pg-tab-btn active" onclick="openTab(event, 'General')">General</button>
+                <button type="button" class="pg-tab-btn" onclick="openTab(event, 'Columns')">Columns</button>
+                <button type="button" class="pg-tab-btn" onclick="openTab(event, 'Dependencies')">Dependencies</button>
+                <button type="button" class="pg-tab-btn" onclick="openTab(event, 'SQL')">SQL</button>
+            </nav>
 
-            <div id="General" class="tab-content active">
-                <div class="info-grid">
+            <div id="General" class="pg-tab-panel active">
+                <div class="pg-info-grid">
                     <div class="label">View Name</div><div class="value">${general.view_name || name}</div>
                     <div class="label">Schema</div><div class="value">${general.schema_name || schema}</div>
                     <div class="label">Owner</div><div class="value">${general.owner || 'Unknown'}</div>
@@ -231,8 +238,8 @@ export class TablePropertiesPanel {
                 </div>
             </div>
 
-            <div id="Columns" class="tab-content">
-                <table>
+            <div id="Columns" class="pg-tab-panel">
+                <table class="pg-data-table">
                     <thead>
                         <tr>
                             <th>Name</th>
@@ -256,12 +263,12 @@ export class TablePropertiesPanel {
                 </table>
             </div>
 
-            <div id="Dependencies" class="tab-content">
+            <div id="Dependencies" class="pg-tab-panel">
                 <h3>Referenced Objects</h3>
-                <p style="color: var(--vscode-descriptionForeground); font-size: 12px; margin-bottom: 10px;">
+                <p class="pg-text-meta" style="margin-bottom:10px;">
                     Objects that this view depends on:
                 </p>
-                <table>
+                <table class="pg-data-table">
                     <thead>
                         <tr>
                             <th>Schema</th>
@@ -281,10 +288,10 @@ export class TablePropertiesPanel {
                 </table>
 
                 <h3 style="margin-top: 30px;">Dependent Objects</h3>
-                <p style="color: var(--vscode-descriptionForeground); font-size: 12px; margin-bottom: 10px;">
+                <p class="pg-text-meta" style="margin-bottom:10px;">
                     Objects that depend on this view:
                 </p>
-                <table>
+                <table class="pg-data-table">
                     <thead>
                         <tr>
                             <th>Schema</th>
@@ -304,8 +311,8 @@ export class TablePropertiesPanel {
                 </table>
             </div>
 
-            <div id="SQL" class="tab-content">
-                <pre>${this.formatSql(`CREATE OR REPLACE VIEW ${schema}.${name} AS\n${definition}`)}</pre>
+            <div id="SQL" class="pg-tab-panel">
+                <pre class="pg-sql-block">${this.formatSql(`CREATE OR REPLACE VIEW ${schema}.${name} AS\n${definition}`)}</pre>
             </div>
         `;
     }
@@ -333,25 +340,23 @@ export class TablePropertiesPanel {
         // Get definition (simplified for tables)
         const defQuery = `SELECT 'CREATE TABLE ${schema}.${name} ...' as definition`;
 
-        const [colRes, conRes, defRes] = await Promise.all([
-            client.query(colQuery),
-            client.query(conQuery),
-            client.query(defQuery)
-        ]);
+        const colRes = await client.query(colQuery);
+        const conRes = await client.query(conQuery);
+        const defRes = await client.query(defQuery);
 
         const columns = colRes.rows;
         const constraints = conRes.rows;
         const definition = defRes.rows[0]?.definition || '';
 
         return `
-            <div class="tabs">
-                <button class="tab-btn active" onclick="openTab(event, 'Columns')">Columns</button>
-                <button class="tab-btn" onclick="openTab(event, 'Constraints')">Constraints</button>
-                <button class="tab-btn" onclick="openTab(event, 'SQL')">SQL</button>
-            </div>
+            <nav class="pg-tab-strip" role="tablist">
+                <button type="button" class="pg-tab-btn active" onclick="openTab(event, 'Columns')">Columns</button>
+                <button type="button" class="pg-tab-btn" onclick="openTab(event, 'Constraints')">Constraints</button>
+                <button type="button" class="pg-tab-btn" onclick="openTab(event, 'SQL')">SQL</button>
+            </nav>
 
-            <div id="Columns" class="tab-content active">
-                <table>
+            <div id="Columns" class="pg-tab-panel active">
+                <table class="pg-data-table">
                     <thead>
                         <tr>
                             <th>Name</th>
@@ -375,8 +380,8 @@ export class TablePropertiesPanel {
                 </table>
             </div>
 
-            <div id="Constraints" class="tab-content">
-                <table>
+            <div id="Constraints" class="pg-tab-panel">
+                <table class="pg-data-table">
                     <thead>
                         <tr>
                             <th>Name</th>
@@ -396,8 +401,8 @@ export class TablePropertiesPanel {
                 </table>
             </div>
 
-            <div id="SQL" class="tab-content">
-                <pre>${this.formatSql(definition)}</pre>
+            <div id="SQL" class="pg-tab-panel">
+                <pre class="pg-sql-block">${this.formatSql(definition)}</pre>
             </div>
         `;
     }
@@ -420,137 +425,15 @@ export class TablePropertiesPanel {
             .replace(/\b(CREATE|TABLE|VIEW|SCHEMA|SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|GRANT|REVOKE|ALTER|DROP)\b/g, '<span class="keyword">$1</span>');
     }
 
-    private static getHtml(title: string, content: string): string {
-        return `
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <style>
-                    body { 
-                        padding: 0; 
-                        margin: 0;
-                        font-family: var(--vscode-editor-font-family);
-                        color: var(--vscode-editor-foreground);
-                        background: var(--vscode-editor-background);
-                    }
-                    .tabs {
-                        display: flex;
-                        border-bottom: 1px solid var(--vscode-panel-border);
-                        background: var(--vscode-sideBar-background);
-                    }
-                    .tab-btn {
-                        background: none;
-                        border: none;
-                        color: var(--vscode-foreground);
-                        padding: 10px 20px;
-                        cursor: pointer;
-                        opacity: 0.7;
-                        border-bottom: 2px solid transparent;
-                        transition: opacity 0.2s;
-                    }
-                    .tab-btn:hover { opacity: 1; }
-                    .tab-btn.active {
-                        opacity: 1;
-                        border-bottom-color: var(--vscode-panelTitle-activeBorder);
-                    }
-                    .tab-content {
-                        display: none;
-                        padding: 20px;
-                    }
-                    .tab-content.active { display: block; }
-                    
-                    table { 
-                        width: 100%; 
-                        border-collapse: collapse; 
-                        margin-top: 10px;
-                    }
-                    th, td { 
-                        text-align: left; 
-                        padding: 8px 12px; 
-                        border-bottom: 1px solid var(--vscode-panel-border); 
-                    }
-                    th { 
-                        color: var(--vscode-descriptionForeground); 
-                        font-weight: 600;
-                        background: var(--vscode-sideBar-background);
-                    }
-                    tr:hover {
-                        background: var(--vscode-list-hoverBackground);
-                    }
-                    .pk { 
-                        color: var(--vscode-symbolIcon-keyForeground); 
-                        font-weight: bold; 
-                    }
-                    
-                    .info-grid {
-                        display: grid;
-                        grid-template-columns: 150px 1fr;
-                        gap: 12px;
-                        margin-top: 10px;
-                    }
-                    .label { 
-                        color: var(--vscode-descriptionForeground); 
-                        font-weight: 600;
-                    }
-                    .value {
-                        word-break: break-word;
-                    }
-                    
-                    h3 {
-                        color: var(--vscode-foreground);
-                        font-size: 14px;
-                        margin: 20px 0 10px 0;
-                        font-weight: 600;
-                    }
-                    
-                    pre { 
-                        margin: 0; 
-                        white-space: pre-wrap;
-                        background: var(--vscode-textCodeBlock-background);
-                        padding: 15px;
-                        border-radius: 4px;
-                        overflow-x: auto;
-                    }
-                    .keyword { 
-                        color: var(--vscode-symbolIcon-keywordForeground); 
-                        font-weight: 600;
-                    }
-                    
-                    .list-container {
-                        margin-top: 10px;
-                    }
-                    .list-item {
-                        padding: 8px 12px;
-                        border-bottom: 1px solid var(--vscode-panel-border);
-                        background: var(--vscode-sideBar-background);
-                        margin-bottom: 2px;
-                    }
-                    
-                    em {
-                        color: var(--vscode-descriptionForeground);
-                        font-style: italic;
-                    }
-                </style>
-            </head>
-            <body>
-                ${content}
-                <script>
-                    function openTab(evt, tabName) {
-                        var i, tabcontent, tablinks;
-                        tabcontent = document.getElementsByClassName("tab-content");
-                        for (i = 0; i < tabcontent.length; i++) {
-                            tabcontent[i].style.display = "none";
-                        }
-                        tablinks = document.getElementsByClassName("tab-btn");
-                        for (i = 0; i < tablinks.length; i++) {
-                            tablinks[i].className = tablinks[i].className.replace(" active", "");
-                        }
-                        document.getElementById(tabName).style.display = "block";
-                        evt.currentTarget.className += " active";
-                    }
-                </script>
-            </body>
-            </html>
-        `;
+    private static async getHtml(
+        panel: vscode.WebviewPanel,
+        extensionUri: vscode.Uri,
+        title: string,
+        content: string,
+    ): Promise<string> {
+        return loadPanelTemplate(panel.webview, extensionUri, 'table-properties', {
+            PAGE_TITLE: title,
+            CONTENT: content,
+        });
     }
 }

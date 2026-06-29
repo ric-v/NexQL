@@ -4,8 +4,13 @@ import { PostgresMetadata } from '../common/types';
 import { DatabaseTreeItem, DatabaseTreeProvider } from '../providers/DatabaseTreeProvider';
 import { ConnectionManager } from '../services/ConnectionManager';
 import { SecretStorageService } from '../services/SecretStorageService';
+import {
+  applyLocalDeleteCloudChoice,
+  resolveDeleteCloudChoice,
+} from '../features/sync/localDeletePrompt';
 import { resolvePgPassPassword } from '../utils/pgPassUtils';
 import { ErrorHandlers } from './helper';
+import { debugLog } from '../common/logger';
 
 /**
  * createMetadata - Creates metadata for the PostgreSQL connection.
@@ -144,6 +149,15 @@ export async function cmdDisconnectDatabase(item: DatabaseTreeItem, context: vsc
                 return;
             }
 
+            const cloudChoice = await resolveDeleteCloudChoice(
+                context,
+                String(item.connectionId),
+                connectionToDelete.name || String(item.label),
+            );
+            if (!cloudChoice) {
+                return;
+            }
+
             // Remove the connection info from settings
             const updatedConnections = connections.filter(c => c.id !== item.connectionId);
             await config.update('postgresExplorer.connections', updatedConnections, vscode.ConfigurationTarget.Global);
@@ -153,7 +167,7 @@ export async function cmdDisconnectDatabase(item: DatabaseTreeItem, context: vsc
                 await SecretStorageService.getInstance().deletePassword(item.connectionId!);
             } catch (err) {
                 // Password might not exist if connection was created without credentials
-                console.log(`No password to delete for connection ${item.connectionId}`);
+                debugLog(`No password to delete for connection ${item.connectionId}`);
             }
 
             // Close any active connections in ConnectionManager
@@ -167,8 +181,10 @@ export async function cmdDisconnectDatabase(item: DatabaseTreeItem, context: vsc
                 });
             } catch (err) {
                 // Connection might not be open, that's okay
-                console.log(`No active connection to close for ${item.connectionId}`);
+                debugLog(`No active connection to close for ${item.connectionId}`);
             }
+
+            await applyLocalDeleteCloudChoice(String(item.connectionId), cloudChoice);
 
             // Refresh the tree view
             databaseTreeProvider?.refresh();
@@ -291,10 +307,13 @@ export async function showConnectionSafety(): Promise<void> {
         const result = await vscode.window.showInformationMessage(
             title,
             { modal: true, detail: `${message}\n\n${action}` },
-            'Edit Connection'
+            'Configure Sentinel',
+            'Edit Connection',
         );
 
-        if (result === 'Edit Connection') {
+        if (result === 'Configure Sentinel') {
+            await vscode.commands.executeCommand('postgres-explorer.settingsHub', { section: 'sentinel' });
+        } else if (result === 'Edit Connection') {
             await vscode.commands.executeCommand('postgres-explorer.editConnection', 
                 new DatabaseTreeItem(
                     connection.name || connection.host,
@@ -372,4 +391,147 @@ export async function revealInExplorer(databaseTreeProvider: DatabaseTreeProvide
     } catch (err: any) {
         await ErrorHandlers.handleCommandError(err, 'reveal in explorer');
     }
+}
+
+export async function cmdAssignConnectionColor(
+  item: DatabaseTreeItem,
+  context: vscode.ExtensionContext,
+  databaseTreeProvider: DatabaseTreeProvider
+): Promise<void> {
+  try {
+    if (!item?.connectionId) {
+      return;
+    }
+    const config = vscode.workspace.getConfiguration();
+    const connections = config.get<any[]>('postgresExplorer.connections') || [];
+    const connIndex = connections.findIndex((c) => c.id === item.connectionId);
+    if (connIndex === -1) {
+      vscode.window.showErrorMessage('Connection not found');
+      return;
+    }
+    const colors = [
+      { label: '🔴 Red', value: 'red' },
+      { label: '🟠 Orange', value: 'orange' },
+      { label: '🔵 Blue', value: 'blue' },
+      { label: '🟢 Green', value: 'green' },
+      { label: '⚪ Gray', value: 'gray' },
+      { label: 'None', value: undefined }
+    ];
+    const pick = await vscode.window.showQuickPick(colors, {
+      placeHolder: 'Select a color for this connection'
+    });
+    if (pick === undefined) {
+      return;
+    }
+    connections[connIndex].color = pick.value;
+    await config.update(
+      'postgresExplorer.connections',
+      connections,
+      vscode.ConfigurationTarget.Global
+    );
+    databaseTreeProvider.refresh();
+  } catch (err: unknown) {
+    await ErrorHandlers.handleCommandError(err, 'assign connection color');
+  }
+}
+
+export async function cmdSetConnectionGroup(
+  item: DatabaseTreeItem,
+  context: vscode.ExtensionContext,
+  databaseTreeProvider: DatabaseTreeProvider
+): Promise<void> {
+  try {
+    if (!item?.connectionId) {
+      return;
+    }
+    const config = vscode.workspace.getConfiguration();
+    const connections = config.get<any[]>('postgresExplorer.connections') || [];
+    const connIndex = connections.findIndex((c) => c.id === item.connectionId);
+    if (connIndex === -1) {
+      vscode.window.showErrorMessage('Connection not found');
+      return;
+    }
+
+    const persistedGroups = context.globalState.get<string[]>('postgresExplorer.connectionGroups', ['Production', 'Testing', 'Local']);
+    const activeGroups = new Set<string>(persistedGroups);
+    connections.forEach(c => {
+      if (c.group) activeGroups.add(c.group);
+    });
+
+    const groupOptions = Array.from(activeGroups).sort().map(g => ({ label: `Folder: ${g}`, value: g }));
+    const options = [
+      ...groupOptions,
+      { label: '$(add) New Folder...', value: 'new' },
+      { label: 'Ungrouped (Remove from Folder)', value: 'none' }
+    ];
+
+    const pick = await vscode.window.showQuickPick(options, {
+      placeHolder: 'Select a group/folder for this connection'
+    });
+
+    if (!pick) {
+      return;
+    }
+
+    let targetGroup: string | undefined;
+
+    if (pick.value === 'new') {
+      const newName = await vscode.window.showInputBox({
+        prompt: 'Enter new folder name',
+        placeHolder: 'e.g. Staging',
+        validateInput: v => v.trim() ? null : 'Folder name cannot be empty'
+      });
+      if (!newName) {
+        return;
+      }
+      targetGroup = newName.trim();
+      const updatedGroups = Array.from(new Set([...persistedGroups, targetGroup]));
+      await context.globalState.update('postgresExplorer.connectionGroups', updatedGroups);
+    } else if (pick.value === 'none') {
+      targetGroup = undefined;
+    } else {
+      targetGroup = pick.value;
+    }
+
+    connections[connIndex].group = targetGroup;
+    await config.update('postgresExplorer.connections', connections, vscode.ConfigurationTarget.Global);
+    databaseTreeProvider.refresh();
+    vscode.window.showInformationMessage(`Moved connection to "${targetGroup || 'Ungrouped'}"`);
+  } catch (err: unknown) {
+    await ErrorHandlers.handleCommandError(err, 'set connection group');
+  }
+}
+
+export async function cmdPinConnection(
+  item: DatabaseTreeItem,
+  context: vscode.ExtensionContext,
+  databaseTreeProvider: DatabaseTreeProvider
+): Promise<void> {
+  if (!item?.connectionId) return;
+  try {
+    const pinned = context.globalState.get<string[]>('postgresExplorer.pinnedConnections', []);
+    if (!pinned.includes(item.connectionId)) {
+      pinned.push(item.connectionId);
+      await context.globalState.update('postgresExplorer.pinnedConnections', pinned);
+      databaseTreeProvider.refresh();
+    }
+  } catch (err: unknown) {
+    await ErrorHandlers.handleCommandError(err, 'pin connection');
+  }
+}
+
+export async function cmdUnpinConnection(
+  item: DatabaseTreeItem,
+  context: vscode.ExtensionContext,
+  databaseTreeProvider: DatabaseTreeProvider
+): Promise<void> {
+  if (!item?.connectionId) return;
+  try {
+    const pinned = context.globalState.get<string[]>('postgresExplorer.pinnedConnections', []);
+    const updated = pinned.filter(id => id !== item.connectionId);
+    await context.globalState.update('postgresExplorer.pinnedConnections', updated);
+    databaseTreeProvider.refresh();
+  } catch (err: unknown) {
+    await ErrorHandlers.handleCommandError(err, 'unpin connection');
+  }
 }

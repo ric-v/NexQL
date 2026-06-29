@@ -7,8 +7,9 @@ import { ChatViewProvider } from '../providers/ChatViewProvider';
 import { cmdAiAssist } from '../commands/aiAssist';
 import { showColumnProperties, copyColumnName, copyColumnNameQuoted, generateSelectStatement, generateWhereClause, generateAlterColumnScript, generateDropColumnScript, generateRenameColumnScript, addColumnComment, generateIndexOnColumn, viewColumnStatistics, cmdAddColumn } from '../commands/columns';
 import { showConstraintProperties, copyConstraintName, generateDropConstraintScript, generateAlterConstraintScript, validateConstraint, generateAddConstraintScript, viewConstraintDependencies, cmdConstraintOperations, cmdAddConstraint } from '../commands/constraints';
-import { cmdConnectDatabase, cmdDisconnectConnection, cmdDisconnectDatabase, cmdReconnectConnection, cmdDuplicateConnection, showConnectionSafety, revealInExplorer } from '../commands/connection';
+import { cmdConnectDatabase, cmdDisconnectConnection, cmdDisconnectDatabase, cmdReconnectConnection, cmdDuplicateConnection, showConnectionSafety, revealInExplorer, cmdAssignConnectionColor, cmdSetConnectionGroup, cmdPinConnection, cmdUnpinConnection } from '../commands/connection';
 import { cmdImportConnectionFromDatabaseUrl } from '../commands/importConnectionFromDatabaseUrl';
+import { cmdSmartPasteConnection } from '../commands/smartPasteConnection';
 import { showIndexProperties, copyIndexName, generateDropIndexScript, generateReindexScript, generateScriptCreate, analyzeIndexUsage, generateAlterIndexScript, addIndexComment, cmdIndexOperations, cmdAddIndex } from '../commands/indexes';
 import { cmdAddObjectInDatabase, cmdBackupDatabase, cmdCreateDatabase, cmdDatabaseDashboard, cmdDatabaseDashboardFromPalette, cmdDatabaseOperations, cmdDeleteDatabase, cmdDisconnectDatabase as cmdDisconnectDatabaseLegacy, cmdGenerateCreateScript, cmdMaintenanceDatabase, cmdOpenBackupWorkspaceFromPalette, cmdPsqlTool, cmdQueryTool, cmdRestoreDatabase, cmdScriptAlterDatabase, cmdShowConfiguration } from '../commands/database';
 import { cmdDropExtension, cmdEnableExtension, cmdExtensionOperations, cmdRefreshExtension } from '../commands/extensions';
@@ -17,7 +18,7 @@ import { cmdForeignDataWrapperOperations, cmdShowForeignDataWrapperProperties, c
 import { cmdCallFunction, cmdCreateFunction, cmdDropFunction, cmdEditFunction, cmdFunctionOperations, cmdRefreshFunction, cmdShowFunctionProperties } from '../commands/functions';
 import { cmdCallProcedure, cmdCreateProcedure, cmdDropProcedure, cmdEditProcedure, cmdProcedureOperations, cmdRefreshProcedure, cmdShowProcedureProperties } from '../commands/procedures';
 import { cmdCreateMaterializedView, cmdDropMatView, cmdEditMatView, cmdMatViewOperations, cmdRefreshMatView, cmdViewMatViewData, cmdViewMatViewProperties } from '../commands/materializedViews';
-import { cmdNewNotebook, cmdExplainQuery, cmdJumpToSection } from '../commands/notebook';
+import { cmdNewNotebook, cmdExplainQuery, cmdJumpToSection, cmdSwitchNotebookConnection, cmdQuickOpenNotebook } from '../commands/notebook';
 import { toggleFullDatasetForCell, toggleFullDatasetFromCell } from '../commands/fullDataset';
 import { cmdExportNotebook } from '../commands/notebookExport';
 import { cmdCreateObjectInSchema, cmdCreateSchema, cmdSchemaOperations, cmdShowSchemaProperties, cmdPasteTable } from '../commands/schema';
@@ -28,10 +29,14 @@ import { cmdAllOperationsTypes, cmdCreateType, cmdDropType, cmdEditTypes, cmdRef
 import { cmdAddRole, cmdAddUser, cmdDropRole, cmdEditRole, cmdGrantRevokeRole, cmdRefreshRole, cmdRoleOperations, cmdShowRoleProperties } from '../commands/usersRoles';
 import { cmdCreateView, cmdDropView, cmdEditView, cmdRefreshView, cmdScriptCreate as cmdViewScriptCreate, cmdScriptSelect as cmdViewScriptSelect, cmdShowViewProperties, cmdViewData, cmdViewOperations } from '../commands/views';
 
-import { AiSettingsPanel } from '../features/aiAssistant/settings/aiSettingsPanel';
-import { ConnectionFormPanel } from '../features/connections/connectionForm';
-import { ConnectionManagementPanel } from '../features/connections/connectionManagement';
+import { SettingsHubPanel, SettingsHubShowOptions } from '../features/settings/SettingsHubPanel';
+import {
+  cmdCreateNotebookFolder,
+  cmdMoveNotebook,
+  cmdRenameNotebookFolder,
+} from '../features/notebook/notebookFolderCommands';
 import { ConnectionUtils } from '../utils/connectionUtils';
+import { sentinelThemeSwapService } from '../extension';
 
 // Phase 7: Advanced Power User & AI features
 import {
@@ -89,13 +94,37 @@ import {
 import { cmdListRules, cmdDropRule, cmdShowRuleProperties, cmdRuleOperations } from '../commands/rules';
 import { cmdListTablespaces, cmdShowTablespaceProperties, cmdTablespaceOperations } from '../commands/tablespaces';
 import { cmdListPublications, cmdCreatePublication, cmdDropPublication, cmdShowPublicationProperties, cmdListSubscriptions, cmdDropSubscription, cmdShowSubscriptionProperties, cmdPublicationOperations } from '../commands/publications';
-import { cmdDropPolicy } from '../commands/rlsPolicies';
+import { cmdDropPolicy, cmdCreatePolicy } from '../commands/rlsPolicies';
+import { cmdMigrationHub } from '../features/migrations/migrationHub';
 import { cmdOpenListenNotify, cmdOpenListenNotifyFromPalette } from '../commands/listenNotify';
 import { cmdSearchSchema } from '../commands/schemaSearch';
 import { WorkspaceStateService } from '../services/WorkspaceStateService';
 import { switchWorkspaceDefaultConnection } from '../commands/workspaceConnection';
 import { WhatsNewManager } from './WhatsNewManager';
-import { cmdLicenseActivate, cmdLicenseManage, cmdLicenseOpenUpgrade } from '../commands/license';
+import { cmdLicenseActivate, cmdLicenseManage, cmdLicenseOpenUpgrade, cmdLicenseShowUsage } from '../commands/license';
+import {
+  cmdSyncNow,
+  cmdSyncPause,
+  cmdSyncSetup,
+  cmdSyncInviteMember,
+  cmdSyncShareWithTeam,
+  cmdSyncShare,
+  cmdSyncImportShares,
+  cmdSyncShowSecretKey,
+  cmdSyncSignOut,
+  cmdSyncStatus,
+  cmdSyncStatusMenu,
+  cmdSyncPull,
+  cmdSyncPush,
+  cmdSyncPreview,
+  cmdSyncConflicts,
+  cmdSyncReplaceLocal,
+  cmdSyncReplaceRemote,
+  cmdSyncRebuildIndex,
+  cmdSyncRepair,
+  cmdSyncDiagnostics,
+  cmdSyncExcludeItem,
+} from '../features/sync/syncCommands';
 
 export function getCommandSpecs(
   context: vscode.ExtensionContext,
@@ -108,8 +137,100 @@ export function getCommandSpecs(
 ): Array<{ command: string; callback: (...args: any[]) => any }> {
   const commands = [
     {
+      command: 'postgres-explorer.sync.setup',
+      callback: () => cmdSyncSetup(context),
+    },
+    {
+      command: 'postgres-explorer.sync.now',
+      callback: () => cmdSyncNow(),
+    },
+    {
+      command: 'postgres-explorer.sync.status',
+      callback: () => cmdSyncStatus(),
+    },
+    {
+      command: 'postgres-explorer.sync.statusMenu',
+      callback: () => cmdSyncStatusMenu(context),
+    },
+    {
+      command: 'postgres-explorer.sync.showSecretKey',
+      callback: () => cmdSyncShowSecretKey(context),
+    },
+    {
+      command: 'postgres-explorer.sync.pause',
+      callback: () => cmdSyncPause(),
+    },
+    {
+      command: 'postgres-explorer.sync.signOut',
+      callback: () => cmdSyncSignOut(),
+    },
+    {
+      command: 'postgres-explorer.sync.inviteMember',
+      callback: () => cmdSyncInviteMember(context),
+    },
+    {
+      command: 'postgres-explorer.sync.shareWithTeam',
+      callback: (treeItem?: { id?: string; query?: { id?: string }; uri?: vscode.Uri }) =>
+        cmdSyncShareWithTeam(context, treeItem),
+    },
+    {
+      command: 'postgres-explorer.sync.share',
+      callback: () => cmdSyncInviteMember(context),
+    },
+    {
+      command: 'postgres-explorer.sync.importShares',
+      callback: () => cmdSyncImportShares(context),
+    },
+    {
+      command: 'postgres-explorer.sync.pull',
+      callback: () => cmdSyncPull(),
+    },
+    {
+      command: 'postgres-explorer.sync.push',
+      callback: () => cmdSyncPush(),
+    },
+    {
+      command: 'postgres-explorer.sync.preview',
+      callback: () => cmdSyncPreview(),
+    },
+    {
+      command: 'postgres-explorer.sync.conflicts',
+      callback: () => cmdSyncConflicts(),
+    },
+    {
+      command: 'postgres-explorer.sync.replaceLocal',
+      callback: () => cmdSyncReplaceLocal(),
+    },
+    {
+      command: 'postgres-explorer.sync.replaceRemote',
+      callback: () => cmdSyncReplaceRemote(),
+    },
+    {
+      command: 'postgres-explorer.sync.rebuildIndex',
+      callback: () => cmdSyncRebuildIndex(),
+    },
+    {
+      command: 'postgres-explorer.sync.repair',
+      callback: () => cmdSyncRepair(),
+    },
+    {
+      command: 'postgres-explorer.sync.diagnostics',
+      callback: () => cmdSyncDiagnostics(),
+    },
+    {
+      command: 'postgres-explorer.sync.excludeItem',
+      callback: async (treeItem?: { id?: string; query?: { id?: string }; uri?: vscode.Uri }) => {
+        const { resolveSyncItemIdFromTreeItem } = await import('../features/sync/syncCommands');
+        await cmdSyncExcludeItem(await resolveSyncItemIdFromTreeItem(treeItem));
+      },
+    },
+    {
       command: 'postgres-explorer.license.activate',
       callback: (prefillKey?: string) => cmdLicenseActivate(prefillKey)
+    },
+    {
+      command: 'postgres-explorer.migrationHub',
+      callback: () => cmdMigrationHub()
     },
     {
       command: 'postgres-explorer.license.manage',
@@ -120,10 +241,23 @@ export function getCommandSpecs(
       callback: () => cmdLicenseOpenUpgrade()
     },
     {
+      command: 'postgres-explorer.license.showUsage',
+      callback: () => cmdLicenseShowUsage()
+    },
+    {
+      command: 'postgres-explorer.audit.openLog',
+      callback: async () => {
+        const { AuditLogService } = await import('../features/audit/AuditLogService');
+        await AuditLogService.getInstance().openLog();
+      }
+    },
+    {
       command: 'postgres-explorer.addConnection',
       callback: () => {
-        // Explicitly pass undefined to force "Add" mode, ignoring any arguments VS Code might pass
-        ConnectionFormPanel.show(context.extensionUri, context, undefined);
+        SettingsHubPanel.show(context.extensionUri, context, {
+          section: 'connections',
+          addConnection: true,
+        });
       }
     },
     {
@@ -131,12 +265,19 @@ export function getCommandSpecs(
       callback: () => cmdImportConnectionFromDatabaseUrl(context, databaseTreeProvider)
     },
     {
+      command: 'postgres-explorer.smartPasteConnection',
+      callback: () => cmdSmartPasteConnection(context, databaseTreeProvider),
+    },
+    {
       command: 'postgres-explorer.editConnection',
       callback: (item: DatabaseTreeItem) => {
         if (!item || !item.connectionId) return;
         const connection = ConnectionUtils.findConnection(item.connectionId);
         if (connection) {
-          ConnectionFormPanel.show(context.extensionUri, context, connection);
+          SettingsHubPanel.show(context.extensionUri, context, {
+            section: 'connections',
+            editConnectionId: item.connectionId,
+          });
         }
       }
     },
@@ -425,18 +566,48 @@ export function getCommandSpecs(
     {
       command: 'postgres-explorer.manageConnections',
       callback: () => {
-        ConnectionManagementPanel.show(context.extensionUri, context);
+        SettingsHubPanel.show(context.extensionUri, context, { section: 'connections' });
       }
     },
     {
       command: 'postgres-explorer.aiSettings',
       callback: () => {
-        AiSettingsPanel.show(context.extensionUri, context);
+        SettingsHubPanel.show(context.extensionUri, context, { section: 'ai' });
+      }
+    },
+    {
+      command: 'postgres-explorer.settingsHub',
+      callback: (options?: SettingsHubShowOptions) => {
+        SettingsHubPanel.show(context.extensionUri, context, options ?? {}, sentinelThemeSwapService);
       }
     },
     {
       command: 'postgres-explorer.connect',
       callback: async (item: any) => await cmdConnectDatabase(item, context, databaseTreeProvider)
+    },
+    {
+      command: 'postgres-explorer.assignConnectionColor',
+      callback: async (item: DatabaseTreeItem) => await cmdAssignConnectionColor(item, context, databaseTreeProvider)
+    },
+    {
+      command: 'postgres-explorer.setConnectionGroup',
+      callback: async (item: DatabaseTreeItem) => await cmdSetConnectionGroup(item, context, databaseTreeProvider)
+    },
+    {
+      command: 'postgres-explorer.pinConnection',
+      callback: async (item: DatabaseTreeItem) => await cmdPinConnection(item, context, databaseTreeProvider)
+    },
+    {
+      command: 'postgres-explorer.unpinConnection',
+      callback: async (item: DatabaseTreeItem) => await cmdUnpinConnection(item, context, databaseTreeProvider)
+    },
+    {
+      command: 'postgres-explorer.switchNotebookConnection',
+      callback: async () => await cmdSwitchNotebookConnection()
+    },
+    {
+      command: 'postgres-explorer.quickOpenNotebook',
+      callback: async () => await cmdQuickOpenNotebook(context)
     },
     {
       command: 'postgres-explorer.disconnect',
@@ -497,6 +668,30 @@ export function getCommandSpecs(
         if (!newName || newName === oldName) { return; }
         const newUri = vscode.Uri.joinPath(item.uri, '..', `${newName}.pgsql`);
         await vscode.workspace.fs.rename(item.uri, newUri, { overwrite: false });
+        try {
+          const raw = await vscode.workspace.fs.readFile(newUri);
+          const parsed = JSON.parse(Buffer.from(raw).toString()) as Record<string, unknown>;
+          const { readNotebookSyncId } = await import('../features/sync/notebookSyncId');
+          const { SyncIndex } = await import('../features/sync/SyncIndex');
+          const { recordSyncActivity } = await import('../features/sync/SyncActivityLog');
+          const syncId = readNotebookSyncId(parsed);
+          if (syncId) {
+            const index = new SyncIndex(context);
+            index.update(syncId, { kind: 'notebook', name: newName, filePath: newUri.fsPath });
+            await index.flush();
+            recordSyncActivity({
+              kind: 'notebook',
+              action: 'rename',
+              itemId: syncId,
+              name: newName,
+              previousName: oldName,
+            });
+          }
+        } catch {
+          /* index update is best-effort */
+        }
+        const { triggerInstantSync } = await import('../features/sync/syncTriggers');
+        triggerInstantSync();
         notebooksTreeProvider?.refresh();
       }
     },
@@ -504,12 +699,34 @@ export function getCommandSpecs(
       command: 'postgres-explorer.notebooks.delete',
       callback: async (item: NotebookTreeItem) => {
         if (!item?.uri) { return; }
-        const confirm = await vscode.window.showWarningMessage(
-          `Delete "${item.label as string}.pgsql"? This cannot be undone.`,
-          { modal: true }, 'Delete'
-        );
-        if (confirm !== 'Delete') { return; }
+        const notebookName = item.label as string;
+        let syncId: string | undefined;
+        try {
+          const raw = await vscode.workspace.fs.readFile(item.uri);
+          const parsed = JSON.parse(Buffer.from(raw).toString()) as Record<string, unknown>;
+          const { readNotebookSyncId } = await import('../features/sync/notebookSyncId');
+          syncId = readNotebookSyncId(parsed);
+        } catch {
+          /* best-effort */
+        }
+        const { isItemSyncedToCloud, resolveDeleteCloudChoice, applyLocalDeleteCloudChoice } =
+          await import('../features/sync/localDeletePrompt');
+        const synced = !!(syncId && isItemSyncedToCloud(context, syncId));
+        const cloudChoice = syncId
+          ? await resolveDeleteCloudChoice(context, syncId, notebookName)
+          : 'keep-cloud';
+        if (!cloudChoice) { return; }
+        if (!synced) {
+          const confirm = await vscode.window.showWarningMessage(
+            `Delete "${notebookName}.pgsql"? This cannot be undone.`,
+            { modal: true }, 'Delete'
+          );
+          if (confirm !== 'Delete') { return; }
+        }
         await vscode.workspace.fs.delete(item.uri, { recursive: false });
+        if (syncId) {
+          await applyLocalDeleteCloudChoice(syncId, cloudChoice);
+        }
         notebooksTreeProvider?.refresh();
       }
     },
@@ -525,8 +742,28 @@ export function getCommandSpecs(
         );
         if (confirm !== 'Delete Folder') { return; }
         await vscode.workspace.fs.delete(item.uri, { recursive: true, useTrash: false });
+        const { triggerInstantSync } = await import('../features/sync/syncTriggers');
+        triggerInstantSync();
         notebooksTreeProvider?.refresh();
       }
+    },
+    {
+      command: 'postgres-explorer.notebooks.createFolder',
+      callback: async (item?: NotebookTreeItem) => {
+        await cmdCreateNotebookFolder(context, item, notebooksTreeProvider, context.globalStorageUri);
+      },
+    },
+    {
+      command: 'postgres-explorer.notebooks.renameFolder',
+      callback: async (item: NotebookTreeItem) => {
+        await cmdRenameNotebookFolder(context, item, notebooksTreeProvider);
+      },
+    },
+    {
+      command: 'postgres-explorer.notebooks.moveNotebook',
+      callback: async (item: NotebookTreeItem) => {
+        await cmdMoveNotebook(context, item, notebooksTreeProvider, context.globalStorageUri);
+      },
     },
     {
       command: 'postgres-explorer.refresh',
@@ -1263,28 +1500,7 @@ export function getCommandSpecs(
     // Breadcrumb navigation commands
     {
       command: 'postgres-explorer.switchConnection',
-      callback: async () => {
-        const editor = ConnectionUtils.getActivePostgresNotebook();
-        if (!editor) {
-          vscode.window.showWarningMessage('No active PostgreSQL notebook.');
-          return;
-        }
-
-        const metadata = editor.notebook.metadata as any;
-        const selected = await ConnectionUtils.showConnectionPicker(metadata?.connectionId);
-
-        if (selected) {
-          await ConnectionUtils.updateNotebookMetadata(editor.notebook, {
-            connectionId: selected.id,
-            databaseName: selected.database,
-            host: selected.host,
-            port: selected.port,
-            username: selected.username
-          });
-          await WorkspaceStateService.getInstance().recordConnectionSwitch(selected.id, selected.database);
-          vscode.window.showInformationMessage(`Switched to: ${selected.name || selected.host}`);
-        }
-      }
+      callback: async () => await cmdSwitchNotebookConnection()
     },
     {
       command: 'postgres-explorer.showConnectionSafety',
@@ -1553,10 +1769,101 @@ export function getCommandSpecs(
     { command: 'postgres-explorer.listSubscriptions', callback: async (item: DatabaseTreeItem) => await cmdListSubscriptions(item, context) },
     { command: 'postgres-explorer.dropSubscription', callback: async (item: DatabaseTreeItem) => await cmdDropSubscription(item, context) },
     { command: 'postgres-explorer.dropPolicy', callback: async (item: DatabaseTreeItem) => await cmdDropPolicy(item, context) },
+    { command: 'postgres-explorer.createPolicy', callback: async (item: DatabaseTreeItem) => await cmdCreatePolicy(item, context) },
     { command: 'postgres-explorer.showSubscriptionProperties', callback: async (item: DatabaseTreeItem) => await cmdShowSubscriptionProperties(item, context) },
 
     // Phase 2: Schema Search
     { command: 'postgres-explorer.searchSchema', callback: async () => await cmdSearchSchema() },
+
+    // Database Index Grounding Commands
+    {
+      command: 'postgres-explorer.dbindex.openPanel',
+      callback: async () => {
+        const { DbIndexPanel } = await import('../features/dbindex/panel/DbIndexPanel');
+        await DbIndexPanel.show(context.extensionUri, context);
+      }
+    },
+    {
+      command: 'postgres-explorer.dbindex.build',
+      callback: async (item?: DatabaseTreeItem) => {
+        const { IndexBuilder } = await import('../features/dbindex/IndexBuilder');
+        const { IndexStore } = await import('../features/dbindex/IndexStore');
+        const { runGuidedBuildWizard } = await import('../features/dbindex/buildWizard');
+        const store = new IndexStore(context.globalStorageUri);
+        const builder = new IndexBuilder(store);
+        const preselected = item && item.connectionId && item.databaseName ? {
+          connectionId: item.connectionId,
+          databaseName: item.databaseName
+        } : undefined;
+        await runGuidedBuildWizard(context, builder, outputChannel, preselected);
+      }
+    },
+    {
+      command: 'postgres-explorer.dbindex.clear',
+      callback: async () => {
+        const { IndexStore } = await import('../features/dbindex/IndexStore');
+        const store = new IndexStore(context.globalStorageUri);
+        const connection = await ConnectionUtils.showConnectionPicker(undefined, {
+          title: 'Clear Database Index',
+          placeHolder: 'Select a connection',
+        });
+        if (!connection) return;
+        const database = await ConnectionUtils.showDatabasePicker(connection, undefined, {
+          title: 'Clear Database Index',
+          placeHolder: 'Select a database',
+        });
+        if (!database) return;
+        
+        const confirm = await vscode.window.showWarningMessage(
+          `Are you sure you want to delete the local index for "${database}"?`,
+          'Delete'
+        );
+        if (confirm === 'Delete') {
+          await store.clearIndex(connection.id, database);
+          vscode.window.showInformationMessage(`Index cleared for "${database}".`);
+
+          // Refresh active panels
+          try {
+            const { SettingsHubPanel } = await import('../features/settings/SettingsHubPanel');
+            if (SettingsHubPanel.currentPanel) {
+              SettingsHubPanel.currentPanel.refreshSection('dbindex');
+            }
+          } catch {}
+          try {
+            const { DbIndexPanel } = await import('../features/dbindex/panel/DbIndexPanel');
+            if (DbIndexPanel.currentPanel) {
+              DbIndexPanel.currentPanel.refreshState();
+            }
+          } catch {}
+        }
+      }
+    },
+    {
+      command: 'postgres-explorer.dbindex.updateBackground',
+      callback: async (connectionId: string, database: string) => {
+        const { IndexBuilder } = await import('../features/dbindex/IndexBuilder');
+        const { IndexStore } = await import('../features/dbindex/IndexStore');
+        const store = new IndexStore(context.globalStorageUri);
+        const baseDir = store.getBaseDir(connectionId, database);
+        const manifest = await store.readManifest(baseDir);
+        if (!manifest) return; // No index configured
+
+        const builder = new IndexBuilder(store);
+        try {
+          await builder.build(
+            connectionId,
+            database,
+            manifest.scope,
+            manifest.buildDepth,
+            'auto',
+            manifest.environment,
+          );
+          outputChannel.appendLine(`[AutoRefresh] Background index rebuild complete for ${database}.`);
+        } catch (err: any) {
+          outputChannel.appendLine(`[AutoRefresh] Background index rebuild failed: ${err.message || err}`);
+        }
+      }
+    }
   ];
 
   return commands;

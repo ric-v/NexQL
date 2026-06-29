@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { debugLog } from '../common/logger';
 import { CompletionProvider } from './kernel/CompletionProvider';
 import { ParamCommentCodeActionProvider } from './kernel/ParamCommentCodeActionProvider';
 import { SqlExecutor } from './kernel/SqlExecutor';
@@ -119,7 +120,7 @@ export class PostgresKernel implements vscode.Disposable {
     registry.register('notebookOutputToolbar', new NotebookOutputToolbarHandler());
 
     (this._controller as any).onDidReceiveMessage(async (event: any) => {
-      // console.log('[NotebookKernel] onDidReceiveMessage', event.message.type);
+      // debugLog('[NotebookKernel] onDidReceiveMessage', event.message.type);
       const msg = event.message;
 
       // Handle notebook-level TopBar actions
@@ -146,18 +147,7 @@ export class PostgresKernel implements vscode.Disposable {
         return;
       }
       if (msg.type === 'showConnectionInfo') {
-        const notebook = event.editor?.notebook;
-        if (notebook) {
-          const effectiveMetadata = ConnectionUtils.getEffectiveMetadata(notebook.metadata);
-          const conn = ConnectionUtils.findConnectionWithFallback(effectiveMetadata?.connectionId, notebook.metadata);
-          if (conn) {
-            vscode.window.showInformationMessage(
-              `Connection: ${conn.name || conn.host} | Host: ${conn.host}:${conn.port} | Database: ${effectiveMetadata?.databaseName || conn.database}`
-            );
-          } else {
-            vscode.window.showInformationMessage('No active connection for this notebook.');
-          }
-        }
+        await vscode.commands.executeCommand('postgres-explorer.showConnectionSafety');
         return;
       }
 

@@ -41,7 +41,12 @@
     "postgresql vs code extension",
     "postgres database explorer",
     "sql notebook vs code",
-    "ai sql assistant"
+    "ai sql assistant",
+    "neon",
+    "supabase",
+    "timescaledb",
+    "yugabytedb",
+    "serverless postgres"
   ],
   "contributes": {
     "languages": [
@@ -57,7 +62,60 @@
         "configuration": "./language-configuration.json"
       }
     ],
+    "colors": [
+      {
+        "id": "postgres.accent",
+        "description": "NexQL brand accent for tree icons and highlights",
+        "defaults": {
+          "dark": "#3794ff",
+          "light": "#0066bf",
+          "highContrast": "#1aebff"
+        }
+      },
+      {
+        "id": "postgres.envProd",
+        "description": "Production environment indicator",
+        "defaults": {
+          "dark": "#ef4444",
+          "light": "#dc2626",
+          "highContrast": "#ff6b6b"
+        }
+      },
+      {
+        "id": "postgres.envStaging",
+        "description": "Staging environment indicator",
+        "defaults": {
+          "dark": "#f59e0b",
+          "light": "#d97706",
+          "highContrast": "#ffd43b"
+        }
+      },
+      {
+        "id": "postgres.envDev",
+        "description": "Development environment indicator",
+        "defaults": {
+          "dark": "#22c55e",
+          "light": "#16a34a",
+          "highContrast": "#69db7c"
+        }
+      }
+    ],
     "commands": [
+      {
+        "command": "postgres-explorer.dbindex.openPanel",
+        "title": "Database Index: Open Dashboard",
+        "category": "NexQL"
+      },
+      {
+        "command": "postgres-explorer.dbindex.build",
+        "title": "Database Index: Build Index...",
+        "category": "NexQL"
+      },
+      {
+        "command": "postgres-explorer.dbindex.clear",
+        "title": "Database Index: Clear Index...",
+        "category": "NexQL"
+      },
       {
         "command": "postgres-explorer.license.activate",
         "title": "Activate License",
@@ -74,6 +132,121 @@
         "category": "NexQL"
       },
       {
+        "command": "postgres-explorer.license.showUsage",
+        "title": "Show Free Usage",
+        "category": "NexQL"
+      },
+      {
+        "command": "postgres-explorer.audit.openLog",
+        "title": "Open Production Audit Log",
+        "category": "NexQL"
+      },
+      {
+        "command": "postgres-explorer.sync.setup",
+        "title": "Set Up Sync",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.now",
+        "title": "Sync Now",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.status",
+        "title": "Show Sync Status",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.showSecretKey",
+        "title": "Privacy & Security Info",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.pause",
+        "title": "Pause Sync",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.signOut",
+        "title": "Sign Out of Sync",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.inviteMember",
+        "title": "Invite to Workspace…",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.shareWithTeam",
+        "title": "Share with Team…",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.share",
+        "title": "Invite to Workspace…",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.importShares",
+        "title": "Manage Workspaces…",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.statusMenu",
+        "title": "Sync Menu",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.pull",
+        "title": "Pull Only",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.push",
+        "title": "Push Only",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.preview",
+        "title": "Preview Sync",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.conflicts",
+        "title": "Resolve Sync Conflicts",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.replaceLocal",
+        "title": "Replace Local with Cloud",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.replaceRemote",
+        "title": "Replace Cloud with Local",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.rebuildIndex",
+        "title": "Rebuild Sync Index",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.repair",
+        "title": "Repair Sync",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.diagnostics",
+        "title": "Sync Diagnostics",
+        "category": "NexQL Sync"
+      },
+      {
+        "command": "postgres-explorer.sync.excludeItem",
+        "title": "Don't Sync This Item",
+        "category": "NexQL Sync"
+      },
+      {
         "command": "postgres-explorer.addConnection",
         "title": "Add PostgreSQL Connection",
         "icon": "$(add)"
@@ -81,7 +254,12 @@
       {
         "command": "postgres-explorer.importConnectionFromDatabaseUrl",
         "title": "Import Connection from DATABASE_URL (.env)",
-        "icon": "$(file-symlink-file)"
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "postgres-explorer.smartPasteConnection",
+        "title": "Add Connection from Clipboard URL",
+        "icon": "$(clipboard)"
       },
       {
         "command": "postgres-explorer.refreshConnections",
@@ -114,6 +292,22 @@
         "icon": "$(settings-gear)"
       },
       {
+        "command": "postgres-explorer.settingsHub",
+        "title": "Open Settings",
+        "category": "NexQL",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "postgres-explorer.sentinel.toggleNotebookStrip",
+        "title": "Toggle Notebook Context Strip",
+        "category": "NexQL: Sentinel"
+      },
+      {
+        "command": "postgres-explorer.sentinel.openSettings",
+        "title": "Open Sentinel Settings",
+        "category": "NexQL: Sentinel"
+      },
+      {
         "command": "postgres-explorer.aiSettings",
         "title": "AI Settings",
         "icon": "$(sparkle)"
@@ -126,7 +320,7 @@
       {
         "command": "postgres-explorer.newNotebook",
         "title": "New PostgreSQL Notebook",
-        "icon": "$(new-file)"
+        "icon": "$(notebook)"
       },
       {
         "command": "postgres-explorer.jumpToSection",
@@ -163,6 +357,24 @@
         "title": "Delete Folder",
         "category": "NexQL",
         "icon": "$(trash)"
+      },
+      {
+        "command": "postgres-explorer.notebooks.createFolder",
+        "title": "New Folder",
+        "category": "NexQL",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "postgres-explorer.notebooks.renameFolder",
+        "title": "Rename Folder",
+        "category": "NexQL",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "postgres-explorer.notebooks.moveNotebook",
+        "title": "Move to Folder…",
+        "category": "NexQL",
+        "icon": "$(folder-opened)"
       },
       {
         "command": "postgres-explorer.notebooks.refresh",
@@ -207,7 +419,7 @@
       {
         "command": "postgresExplorer.openColumnNotebook",
         "title": "Open Column Analysis",
-        "category": "Postgres Explorer"
+        "category": "NexQL"
       },
       {
         "command": "postgres-explorer.showViewProperties",
@@ -367,37 +579,37 @@
       {
         "command": "postgres-explorer.refreshMaterializedView",
         "title": "Refresh Materialized View",
-        "category": "Postgres Explorer",
+        "category": "NexQL",
         "icon": "$(refresh)"
       },
       {
         "command": "postgres-explorer.materializedViewOperations",
         "title": "Materialized View Operations",
-        "category": "Postgres Explorer",
+        "category": "NexQL",
         "icon": "$(notebook)"
       },
       {
         "command": "postgres-explorer.foreignTableOperations",
         "title": "Foreign Table Operations",
-        "category": "Postgres Explorer",
+        "category": "NexQL",
         "icon": "$(notebook)"
       },
       {
         "command": "postgres-explorer.dropForeignTable",
         "title": "Drop Foreign Table",
-        "category": "Postgres Explorer",
+        "category": "NexQL",
         "icon": "$(trash)"
       },
       {
         "command": "postgres-explorer.typeOperations",
         "title": "Type Operations",
-        "category": "Postgres Explorer",
+        "category": "NexQL",
         "icon": "$(notebook)"
       },
       {
         "command": "postgres-explorer.dropType",
         "title": "Drop Type",
-        "category": "Postgres Explorer",
+        "category": "NexQL",
         "icon": "$(trash)"
       },
       {
@@ -508,19 +720,19 @@
       {
         "command": "postgres-explorer.viewMaterializedViewData",
         "title": "View Data",
-        "category": "Postgres Explorer",
+        "category": "NexQL",
         "icon": "$(table)"
       },
       {
         "command": "postgres-explorer.disconnectConnection",
         "title": "Disconnect",
-        "category": "Postgres Explorer",
+        "category": "NexQL",
         "icon": "$(debug-disconnect)"
       },
       {
         "command": "postgres-explorer.reconnectConnection",
         "title": "Connect",
-        "category": "Postgres Explorer",
+        "category": "NexQL",
         "icon": "$(plug)"
       },
       {
@@ -566,19 +778,19 @@
       {
         "command": "postgres-explorer.dropMatView",
         "title": "Drop Materialized View",
-        "category": "Postgres Explorer",
+        "category": "NexQL",
         "icon": "$(trash)"
       },
       {
         "command": "postgres-explorer.editMaterializedView",
         "title": "Edit Materialized View",
-        "category": "Postgres Explorer",
+        "category": "NexQL",
         "icon": "$(edit)"
       },
       {
         "command": "postgres-explorer.showMaterializedViewProperties",
         "title": "Show Materialized View Properties",
-        "category": "Postgres Explorer",
+        "category": "NexQL",
         "icon": "$(info)"
       },
       {
@@ -634,7 +846,7 @@
       {
         "command": "postgres-explorer.showDashboard",
         "title": "Show Database Dashboard",
-        "icon": "$(graph)"
+        "icon": "$(dashboard)"
       },
       {
         "command": "postgres-explorer.showDashboardFromPalette",
@@ -716,6 +928,12 @@
         "title": "Backup & Restore Workspace: Choose Connection & Database…",
         "category": "PostgreSQL",
         "icon": "$(archive)"
+      },
+      {
+        "command": "postgres-explorer.migrationHub",
+        "title": "Migration Hub: Detect Framework & Show Runbook",
+        "category": "NexQL",
+        "icon": "$(git-commit)"
       },
       {
         "command": "postgres-explorer.generateCreateScript",
@@ -890,7 +1108,7 @@
       {
         "command": "postgres-explorer.generateScriptCreate",
         "title": "CREATE Script",
-        "category": "PostgreSQL Explorer"
+        "category": "NexQL"
       },
       {
         "command": "postgres-explorer.analyzeIndexUsage",
@@ -1032,14 +1250,15 @@
       {
         "command": "postgres-explorer.switchConnectionProfile",
         "title": "Switch Connection Profile",
-        "icon": "$(person)",
+        "icon": "$(account)",
         "category": "NexQL: Profiles"
       },
       {
         "command": "postgres-explorer.switchWorkspaceDefaultConnection",
         "title": "Set Workspace Default PostgreSQL Connection",
         "icon": "$(root-folder)",
-        "category": "NexQL"
+        "category": "NexQL",
+        "enablement": "false"
       },
       {
         "command": "postgres-explorer.createConnectionProfile",
@@ -1250,6 +1469,12 @@
         "command": "postgres-explorer.dropPolicy",
         "title": "Drop RLS Policy",
         "icon": "$(trash)",
+        "category": "NexQL"
+      },
+      {
+        "command": "postgres-explorer.createPolicy",
+        "title": "RLS Policy Studio...",
+        "icon": "$(shield)",
         "category": "NexQL"
       },
       {
@@ -1542,6 +1767,42 @@
         "title": "Search Schema Objects",
         "icon": "$(search)",
         "category": "NexQL"
+      },
+      {
+        "command": "postgres-explorer.assignConnectionColor",
+        "title": "Assign Color",
+        "icon": "$(paintcan)",
+        "category": "NexQL"
+      },
+      {
+        "command": "postgres-explorer.setConnectionGroup",
+        "title": "Move to Folder / Group",
+        "icon": "$(folder-active)",
+        "category": "NexQL"
+      },
+      {
+        "command": "postgres-explorer.pinConnection",
+        "title": "Pin Connection",
+        "icon": "$(pin)",
+        "category": "NexQL"
+      },
+      {
+        "command": "postgres-explorer.unpinConnection",
+        "title": "Unpin Connection",
+        "icon": "$(pinned)",
+        "category": "NexQL"
+      },
+      {
+        "command": "postgres-explorer.switchNotebookConnection",
+        "title": "Switch Notebook Connection",
+        "icon": "$(plug)",
+        "category": "NexQL"
+      },
+      {
+        "command": "postgres-explorer.quickOpenNotebook",
+        "title": "Quick Open Notebook",
+        "icon": "$(go-to-file)",
+        "category": "NexQL"
       }
     ],
     "submenus": [
@@ -1599,7 +1860,8 @@
           "id": "postgresExplorer",
           "name": "Connections",
           "contextualTitle": "NexQL",
-          "icon": "resources/postgres-vsc-icon.png"
+          "icon": "resources/postgres-vsc-icon.png",
+          "canCollapseAll": true
         },
         {
           "id": "postgresExplorer.notebooks",
@@ -1675,6 +1937,46 @@
             ]
           }
         ]
+      },
+      {
+        "id": "pgstudioSyncSetup",
+        "title": "Set up NexQL Sync",
+        "description": "E2E-encrypted sync for connections, notebooks, and saved queries across editors.",
+        "steps": [
+          {
+            "id": "pgstudioSyncSetup.openWizard",
+            "title": "Set up sync",
+            "description": "Run the guided wizard to create or unlock your encrypted vault.\n[Set Up Sync](command:postgres-explorer.sync.setup)",
+            "media": {
+              "markdown": "walkthroughs/step-sync-setup.md",
+              "altText": "Set up NexQL Sync"
+            },
+            "completionEvents": [
+              "onCommand:postgres-explorer.sync.setup"
+            ]
+          },
+          {
+            "id": "pgstudioSyncSetup.chooseItems",
+            "title": "Choose what to sync",
+            "description": "Pick connections, saved queries, notebooks, and optionally passwords during setup.",
+            "media": {
+              "markdown": "walkthroughs/step-sync-items.md",
+              "altText": "Choose sync items"
+            }
+          },
+          {
+            "id": "pgstudioSyncSetup.firstSync",
+            "title": "Run your first sync",
+            "description": "Sync runs automatically after setup. Use the status bar to sync anytime.\n[Sync Now](command:postgres-explorer.sync.now)",
+            "media": {
+              "markdown": "walkthroughs/step-sync-first.md",
+              "altText": "First sync"
+            },
+            "completionEvents": [
+              "onCommand:postgres-explorer.sync.now"
+            ]
+          }
+        ]
       }
     ],
     "notebooks": [
@@ -1717,23 +2019,27 @@
       }
     ],
     "configuration": {
-      "title": "PostgreSQL Explorer",
+      "title": "NexQL",
       "properties": {
+        "postgresExplorer.debug": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "markdownDescription": "Write verbose diagnostic logging to the **NexQL Debug** output channel. Off by default to keep SQL, schema, and AI payloads out of logs."
+        },
         "postgresExplorer.license.enforcement": {
           "type": "string",
           "enum": [
             "off",
-            "soft",
-            "hard"
+            "freemium"
           ],
           "enumDescriptions": [
-            "No gating — all features available to everyone.",
-            "Show upgrade nudges on paid features but never block.",
-            "Require an active subscription to use paid features (default)."
+            "No metering — all features unlimited for everyone (development / dark-ship).",
+            "Freemium: free tier gets daily/weekly per-feature allowances; paid tiers are unlimited (default)."
           ],
-          "default": "hard",
+          "default": "freemium",
           "scope": "machine",
-          "markdownDescription": "Controls premium feature gating. Set to `hard` to require an active subscription for paid features by default."
+          "markdownDescription": "Controls premium feature access. `freemium` (default) gives the free tier metered daily/weekly use of premium features and unlimited use to paid subscribers. `off` disables all metering. Legacy values `soft`/`hard` are treated as `freemium`."
         },
         "postgresExplorer.license.endpoint": {
           "type": "string",
@@ -1801,6 +2107,93 @@
             }
           }
         },
+        "postgresExplorer.sentinel.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Sentinel environment signaling when a tagged .pgsql notebook is focused."
+        },
+        "postgresExplorer.sentinel.statusBarAccent": {
+          "type": "boolean",
+          "default": true,
+          "description": "Tint status bar connection items by environment (production, staging, development)."
+        },
+        "postgresExplorer.sentinel.notebookContextStrip": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show in-notebook connection context strip with environment chip."
+        },
+        "postgresExplorer.sentinel.chromeAccent": {
+          "type": "boolean",
+          "default": true,
+          "description": "Tint workbench title bar, activity bar, and status bar chrome by environment."
+        },
+        "postgresExplorer.sentinel.tabBadges": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show [P]/[S]/[D] badges on open .pgsql notebook tabs for tagged connections."
+        },
+        "postgresExplorer.sentinel.chatEnvChip": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show environment chip in the SQL Assistant context bar."
+        },
+        "postgresExplorer.sentinel.notifyOnTransition": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show a notification when the active notebook environment changes (e.g. staging → production)."
+        },
+        "postgresExplorer.sentinel.themeSwap.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Advanced: suggest or auto-switch the entire color theme by environment."
+        },
+        "postgresExplorer.sentinel.themeSwap.mode": {
+          "type": "string",
+          "enum": [
+            "suggest",
+            "auto"
+          ],
+          "default": "suggest",
+          "description": "How theme swap behaves when themeSwap.enabled is true."
+        },
+        "postgresExplorer.sentinel.themeSwap.themes": {
+          "type": "object",
+          "default": {},
+          "description": "Map of environment (production, staging, development) to color theme label."
+        },
+        "postgresExplorer.sync.auto": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable automatic sync (pull on activation, debounced push, periodic pull)."
+        },
+        "postgresExplorer.sync.notebookFolder": {
+          "type": "string",
+          "default": "~/PgStudioNotebooks",
+          "description": "Folder for synced .pgsql notebooks (supports ~ for home directory)."
+        },
+        "postgresExplorer.sync.pullIntervalMinutes": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "description": "Interval in minutes for periodic sync pulls."
+        },
+        "postgresExplorer.sync.apiEndpoint": {
+          "type": "string",
+          "default": "https://nexql.astrx.dev/api",
+          "scope": "machine",
+          "description": "Base URL for NexQL account and cloud sync API."
+        },
+        "postgresExplorer.sync.postgresConnectionId": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Connection ID for optional team Postgres sync backend (pgstudio_sync schema)."
+        },
+        "postgresExplorer.dbIndex.enableEmbeddings": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable vector embeddings generation for tables and views to support semantic search grounding in AI tools."
+        },
         "postgresExplorer.aiProvider": {
           "type": "string",
           "enum": [
@@ -1831,6 +2224,7 @@
             "vscode-lm",
             "github",
             "cursor",
+            "opencode",
             "openai",
             "anthropic",
             "gemini",
@@ -1852,6 +2246,7 @@
             "vscode-lm",
             "github",
             "cursor",
+            "opencode",
             "openai",
             "anthropic",
             "gemini",
@@ -1872,21 +2267,58 @@
           "default": "",
           "description": "Custom API endpoint (optional)"
         },
+        "postgresExplorer.opencodeCliPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional path to the OpenCode CLI binary. Auto-detected from PATH and common install locations when empty."
+        },
+        "postgresExplorer.opencodeWorkingDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Working directory for OpenCode serve/run. Defaults to the VS Code workspace folder, or ~/.pgstudio/opencode-wd when the host folder is an IDE install path."
+        },
+        "postgresExplorer.opencodeServeUrl": {
+          "type": "string",
+          "default": "",
+          "description": "OpenCode server URL (opencode serve). Auto-populated when opencodeAutoServe starts a managed server."
+        },
+        "postgresExplorer.opencodeAutoServe": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start and reuse a local opencode serve instance for faster SQL Assistant requests."
+        },
+        "postgresExplorer.opencodeShowLog": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the OpenCode output channel while requests are running (View → Output → OpenCode)."
+        },
+        "postgresExplorer.opencodeServePort": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "Fixed port for auto-started opencode serve (0 = pick a free port)."
+        },
+        "postgresExplorer.opencodeSkipPermissions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto-allow OpenCode tool permissions for headless SQL Assistant runs (YOLO mode). Required when attaching to opencode serve."
+        },
+        "postgresExplorer.opencodeAutoApprovePermissions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Poll the OpenCode server and auto-approve any permission prompts during SQL Assistant requests."
+        },
+        "postgresExplorer.opencodePreferSdk": {
+          "type": "boolean",
+          "default": false,
+          "description": "When the OpenCode CLI is not found, fall back to @opencode-ai/sdk if installed."
+        },
         "postgresExplorer.ai.maxContextTokens": {
           "type": "number",
           "default": 8000,
           "minimum": 512,
           "description": "Approximate token budget for AI requests (system prompt + schema context + chat history). Oldest history is dropped first, then schema is trimmed, to keep requests within this budget."
-        },
-        "postgresExplorer.streaming.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable cursor-based streaming for large result sets"
-        },
-        "postgresExplorer.streaming.batchSize": {
-          "type": "number",
-          "default": 200,
-          "description": "Number of rows per batch when streaming results"
         },
         "postgresExplorer.telemetry.mode": {
           "type": "string",
@@ -2137,34 +2569,44 @@
           "group": "navigation"
         },
         {
+          "command": "postgres-explorer.notebooks.createFolder",
+          "when": "view == postgresExplorer.notebooks",
+          "group": "navigation"
+        },
+        {
           "command": "postgres-explorer.addConnection",
           "when": "view == postgresExplorer",
-          "group": "navigation"
-        },
-        {
-          "command": "postgres-explorer.importConnectionFromDatabaseUrl",
-          "when": "view == postgresExplorer",
-          "group": "navigation"
-        },
-        {
-          "command": "postgres-explorer.refreshConnections",
-          "when": "view == postgresExplorer",
-          "group": "navigation"
-        },
-        {
-          "command": "postgres-explorer.ddlViewer.toggleEnabled",
-          "when": "view == postgresExplorer",
-          "group": "navigation"
+          "group": "navigation@1"
         },
         {
           "command": "postgres-explorer.manageConnections",
           "when": "view == postgresExplorer",
-          "group": "navigation"
+          "group": "navigation@2"
+        },
+        {
+          "command": "postgres-explorer.ddlViewer.toggleEnabled",
+          "when": "view == postgresExplorer",
+          "group": "navigation@3"
+        },
+        {
+          "command": "postgres-explorer.refreshConnections",
+          "when": "view == postgresExplorer",
+          "group": "navigation@4"
+        },
+        {
+          "command": "postgres-explorer.importConnectionFromDatabaseUrl",
+          "when": "view == postgresExplorer",
+          "group": "3_phase7@1"
+        },
+        {
+          "command": "postgres-explorer.smartPasteConnection",
+          "when": "view == postgresExplorer",
+          "group": "3_phase7@2"
         },
         {
           "command": "postgres-explorer.aiSettings",
           "when": "view == postgresExplorer",
-          "group": "navigation"
+          "group": "3_phase7@3"
         },
         {
           "command": "postgres-explorer.clearHistory",
@@ -2232,8 +2674,23 @@
         },
         {
           "command": "postgres-explorer.notebooks.deleteFolder",
-          "when": "view == postgresExplorer.notebooks && viewItem =~ /^(connection-folder|db-folder)$/",
+          "when": "view == postgresExplorer.notebooks && viewItem == folder",
           "group": "9_destructive"
+        },
+        {
+          "command": "postgres-explorer.notebooks.createFolder",
+          "when": "view == postgresExplorer.notebooks && (viewItem == folder || !viewItem)",
+          "group": "1_actions"
+        },
+        {
+          "command": "postgres-explorer.notebooks.renameFolder",
+          "when": "view == postgresExplorer.notebooks && viewItem == folder",
+          "group": "1_actions"
+        },
+        {
+          "command": "postgres-explorer.notebooks.moveNotebook",
+          "when": "view == postgresExplorer.notebooks && viewItem == notebook-file",
+          "group": "1_actions"
         },
         {
           "command": "postgres-explorer.copyQuery",
@@ -2252,17 +2709,17 @@
         },
         {
           "command": "postgres-explorer.attachToChat",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition|view|function|procedure|materialized-view|type|foreign-table|schema)$/",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition|view|function|procedure|materialized-view|type|foreign-table|schema)(:|$)/",
           "group": "inline@0"
         },
         {
           "command": "postgres-explorer.openDefinition",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition|view|function|procedure|index|materialized-view|sequence|type|trigger|policy|extension|role|foreign-table|foreign-data-wrapper|foreign-server)$/",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition|view|function|procedure|index|materialized-view|sequence|type|trigger|policy|extension|role|foreign-table|foreign-data-wrapper|foreign-server)(:|$)/",
           "group": "inline@1"
         },
         {
           "command": "postgres-explorer.showTableProperties",
-          "when": "view == postgresExplorer && viewItem == table",
+          "when": "view == postgresExplorer && viewItem =~ /^table(:|$)/",
           "group": "inline@2"
         },
         {
@@ -2272,48 +2729,93 @@
         },
         {
           "command": "postgres-explorer.newNotebook",
-          "when": "view == postgresExplorer && viewItem =~ /^(schema|table|partition)$/",
+          "when": "view == postgresExplorer && viewItem =~ /^(schema|table|partition)(:|$)/",
           "group": "1_actions"
         },
         {
           "command": "postgres-explorer.deleteConnection",
-          "when": "view == postgresExplorer && viewItem == connection",
+          "when": "view == postgresExplorer && viewItem =~ /^(connection|connection-pinned|connection-disconnected|connection-pinned-disconnected)$/",
           "group": "9_delete"
         },
         {
           "command": "postgres-explorer.addToFavorites",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition|view|function|procedure|materialized-view)$/ && !postgresExplorer.isFavorite",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition|view|function|procedure|materialized-view)(:|$)/ && !postgresExplorer.isFavorite",
           "group": "0_favorites"
         },
         {
           "command": "postgres-explorer.removeFromFavorites",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition|view|function|procedure|materialized-view)$/ && postgresExplorer.isFavorite",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition|view|function|procedure|materialized-view)(:|$)/ && postgresExplorer.isFavorite",
           "group": "0_favorites"
         },
         {
           "command": "postgres-explorer.disconnectConnection",
-          "when": "view == postgresExplorer && viewItem == connection",
+          "when": "view == postgresExplorer && (viewItem == connection || viewItem == connection-pinned)",
           "group": "inline@1"
         },
         {
           "command": "postgres-explorer.reconnectConnection",
-          "when": "view == postgresExplorer && viewItem == connection-disconnected",
+          "when": "view == postgresExplorer && (viewItem == connection-disconnected || viewItem == connection-pinned-disconnected)",
           "group": "inline@1"
         },
         {
           "command": "postgres-explorer.editConnection",
-          "when": "view == postgresExplorer && (viewItem == connection || viewItem == connection-disconnected)",
+          "when": "view == postgresExplorer && viewItem =~ /^(connection|connection-pinned|connection-disconnected|connection-pinned-disconnected)$/",
           "group": "inline@2"
         },
         {
           "command": "postgres-explorer.duplicateConnection",
-          "when": "view == postgresExplorer && (viewItem == connection || viewItem == connection-disconnected)",
+          "when": "view == postgresExplorer && viewItem =~ /^(connection|connection-pinned|connection-disconnected|connection-pinned-disconnected)$/",
           "group": "inline@3"
         },
         {
           "command": "postgres-explorer.createDatabase",
-          "when": "view == postgresExplorer && viewItem == connection",
+          "when": "view == postgresExplorer && (viewItem == connection || viewItem == connection-pinned)",
           "group": "1_actions"
+        },
+        {
+          "command": "postgres-explorer.assignConnectionColor",
+          "when": "view == postgresExplorer && viewItem =~ /^(connection|connection-pinned|connection-disconnected|connection-pinned-disconnected)$/",
+          "group": "1_actions@2"
+        },
+        {
+          "command": "postgres-explorer.setConnectionGroup",
+          "when": "view == postgresExplorer && viewItem =~ /^(connection|connection-pinned|connection-disconnected|connection-pinned-disconnected)$/",
+          "group": "1_actions@3"
+        },
+        {
+          "command": "postgres-explorer.pinConnection",
+          "when": "view == postgresExplorer && (viewItem == connection || viewItem == connection-disconnected)",
+          "group": "1_actions@4"
+        },
+        {
+          "command": "postgres-explorer.unpinConnection",
+          "when": "view == postgresExplorer && (viewItem == connection-pinned || viewItem == connection-pinned-disconnected)",
+          "group": "1_actions@4"
+        },
+        {
+          "command": "postgres-explorer.queryTool",
+          "when": "view == postgresExplorer && (viewItem == connection || viewItem == connection-pinned)",
+          "group": "inline@0"
+        },
+        {
+          "command": "postgres-explorer.newNotebook",
+          "when": "view == postgresExplorer && (viewItem == connection || viewItem == connection-pinned)",
+          "group": "inline@4"
+        },
+        {
+          "command": "postgres-explorer.showDashboard",
+          "when": "view == postgresExplorer && (viewItem == connection || viewItem == connection-pinned)",
+          "group": "inline@5"
+        },
+        {
+          "command": "postgres-explorer.notebooks.rename",
+          "when": "view == postgresExplorer.notebooks && viewItem == notebook-file",
+          "group": "inline@2"
+        },
+        {
+          "command": "postgres-explorer.notebooks.delete",
+          "when": "view == postgresExplorer.notebooks && viewItem == notebook-file",
+          "group": "inline@3"
         },
         {
           "command": "postgres-explorer.showViewProperties",
@@ -2372,12 +2874,12 @@
         },
         {
           "command": "postgres-explorer.viewTableData",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)$/",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)(:|$)/",
           "group": "inline@2"
         },
         {
           "command": "postgres-explorer.dropTable",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)$/",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)(:|$)/",
           "group": "9_delete"
         },
         {
@@ -2392,37 +2894,37 @@
         },
         {
           "command": "postgres-explorer.tableOperations",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)$/",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)(:|$)/",
           "group": "1_actions@0"
         },
         {
           "submenu": "postgres-explorer.scriptsMenu",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)$/",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)(:|$)/",
           "group": "1_actions@1"
         },
         {
           "submenu": "postgres-explorer.maintenanceMenu",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)$/",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)(:|$)/",
           "group": "1_actions@2"
         },
         {
           "command": "postgres-explorer.tableProfile",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)$/",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)(:|$)/",
           "group": "2_analysis@0"
         },
         {
           "command": "postgres-explorer.tableActivity",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)$/",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)(:|$)/",
           "group": "2_analysis@1"
         },
         {
           "command": "postgres-explorer.indexUsage",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)$/",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)(:|$)/",
           "group": "2_analysis@2"
         },
         {
           "command": "postgres-explorer.tableDefinition",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)$/",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)(:|$)/",
           "group": "2_analysis@3"
         },
         {
@@ -2442,27 +2944,27 @@
         },
         {
           "command": "postgres-explorer.truncateTable",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)$/",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)(:|$)/",
           "group": "2_operations@1"
         },
         {
           "command": "postgres-explorer.quickClone",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)$/",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)(:|$)/",
           "group": "2_operations@0"
         },
         {
           "command": "postgres-explorer.insertData",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)$/",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)(:|$)/",
           "group": "2_operations@2"
         },
         {
           "command": "postgres-explorer.exportTable",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)$/",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)(:|$)/",
           "group": "2_operations@3"
         },
         {
           "command": "postgres-explorer.updateData",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)$/",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)(:|$)/",
           "group": "2_operations@3"
         },
         {
@@ -2477,7 +2979,7 @@
         },
         {
           "command": "postgres-explorer.pasteTable",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)$/",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)(:|$)/",
           "group": "1_actions"
         },
         {
@@ -2774,6 +3276,16 @@
           "group": "1_operations@2"
         },
         {
+          "command": "postgres-explorer.dbindex.build",
+          "when": "view == postgresExplorer && viewItem == database",
+          "group": "1_operations@9"
+        },
+        {
+          "command": "postgres-explorer.dbindex.openPanel",
+          "when": "view == postgresExplorer && viewItem == database",
+          "group": "1_operations@9.5"
+        },
+        {
           "command": "postgres-explorer.disconnectDatabase",
           "when": "view == postgresExplorer && viewItem == database",
           "group": "9_disconnect"
@@ -2924,18 +3436,38 @@
           "group": "2_delete@1"
         },
         {
+          "command": "postgres-explorer.sync.shareWithTeam",
+          "when": "view == postgresExplorer.savedQueries && viewItem == savedQuery",
+          "group": "3_sync@1"
+        },
+        {
+          "command": "postgres-explorer.sync.excludeItem",
+          "when": "view == postgresExplorer.savedQueries && viewItem == savedQuery",
+          "group": "3_sync@2"
+        },
+        {
+          "command": "postgres-explorer.sync.shareWithTeam",
+          "when": "view == postgresExplorer.notebooks && viewItem == notebook-file",
+          "group": "3_sync@1"
+        },
+        {
+          "command": "postgres-explorer.sync.excludeItem",
+          "when": "view == postgresExplorer.notebooks && viewItem == notebook-file",
+          "group": "3_sync@2"
+        },
+        {
           "command": "postgres-explorer.openTableDesigner",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)$/",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)(:|$)/",
           "group": "1_actions"
         },
         {
           "command": "postgres-explorer.importData",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)$/",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)(:|$)/",
           "group": "1_actions"
         },
         {
           "command": "postgres-explorer.openSchemaDiff",
-          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)$/",
+          "when": "view == postgresExplorer && viewItem =~ /^(table|partition)(:|$)/",
           "group": "1_actions"
         },
         {
@@ -2987,6 +3519,11 @@
           "command": "postgres-explorer.dropPolicy",
           "when": "view == postgresExplorer && viewItem == policy",
           "group": "9_destructive"
+        },
+        {
+          "command": "postgres-explorer.createPolicy",
+          "when": "view == postgresExplorer && viewItem =~ /^table(:|$)/",
+          "group": "1_actions"
         },
         {
           "command": "postgres-explorer.createTrigger",
@@ -3305,6 +3842,7 @@
       "postgres-explorer.maintenanceMenu": [
         {
           "command": "postgres-explorer.maintenanceVacuum",
+          "when": "viewItem =~ /^table/ && !(viewItem =~ /:novacuum/)",
           "group": "1_maintenance"
         },
         {
@@ -3313,6 +3851,7 @@
         },
         {
           "command": "postgres-explorer.maintenanceReindex",
+          "when": "viewItem =~ /^table/ && !(viewItem =~ /:noreindex/)",
           "group": "1_maintenance"
         }
       ],
@@ -3405,6 +3944,17 @@
         "command": "postgres-explorer.searchSchema",
         "key": "ctrl+shift+o",
         "mac": "cmd+shift+o"
+      },
+      {
+        "command": "postgres-explorer.switchNotebookConnection",
+        "key": "ctrl+shift+c",
+        "mac": "cmd+shift+c",
+        "when": "notebookEditorFocused && (notebookType == postgres-notebook || notebookType == postgres-query)"
+      },
+      {
+        "command": "postgres-explorer.quickOpenNotebook",
+        "key": "ctrl+shift+b",
+        "mac": "cmd+shift+b"
       }
     ]
   },
@@ -3430,12 +3980,13 @@
   "main": "./dist/extension.js",
   "scripts": {
     "dev:site": "node scripts/dev-server.js",
-    "build:site": "mkdir -p dist && cp -r docs/* dist/",
+    "prebuild:site": "node scripts/sync-theme-parser.mjs",
+    "build:site": "npm run prebuild:site && mkdir -p dist && cp -r docs/* dist/",
     "vscode:prepublish": "npm run esbuild-base -- --minify && npm run esbuild-renderer -- --minify && npm run esbuild-erd-webview -- --minify",
     "prepare:nightly:manifests": "node ./scripts/prepare-nightly-manifests.js",
     "package:prerelease": "npx @vscode/vsce package --pre-release",
     "package:openvsx:nightly": "npx @vscode/vsce package",
-    "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:ssh2 --external:pg --external:@cursor/sdk --external:@dbml/core --format=cjs --platform=node --main-fields=main",
+    "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:ssh2 --external:pg --external:@cursor/sdk --external:@opencode-ai/sdk --external:@dbml/core --external:onnxruntime-node --external:@huggingface/transformers --format=cjs --platform=node --main-fields=main",
     "esbuild-renderer": "node scripts/clean-dist-chunks.js && esbuild ./src/ui/renderer/renderer_v2.ts --bundle --outdir=dist --format=esm --platform=browser --splitting",
     "esbuild-erd-webview": "esbuild ./src/schemaDesigner/erd/webview/main.ts --bundle --outfile=dist/erd-webview.js --format=iife --platform=browser",
     "copy-templates": "cp -r templates dist/",
@@ -3473,6 +4024,7 @@
   "dependencies": {
     "@cursor/sdk": "^1.0.12",
     "@dbml/core": "^7.1.2",
+    "@huggingface/transformers": "^4.2.0",
     "@types/pg-cursor": "^2.7.2",
     "chart.js": "^4.5.1",
     "d3-force": "^3.0.0",

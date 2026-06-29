@@ -46,9 +46,9 @@ const configHandler = require('../api/config');
 const createSubscriptionHandler = require('../api/create-subscription');
 const verifyPaymentHandler = require('../api/verify-payment');
 const webhookHandler = require('../api/webhook');
-const licenseValidateHandler = require('../api/license/validate');
-const licenseLookupHandler = require('../api/license/lookup');
-const licenseStatusHandler = require('../api/license/status');
+const licenseRouter = require('../api/license/[...route]');
+const authRouter = require('../api/auth/[...route]');
+const syncRouter = require('../api/sync/[...path]');
 const cancelSubscriptionHandler = require('../api/cancel-subscription');
 
 // Standard Express wrapper for Serverless function signature (req, res)
@@ -62,6 +62,21 @@ const wrapServerless = (handler) => {
   };
 };
 
+/** Map Express splat params to Vercel catch-all query shape. */
+const wrapCatchAll = (handler, paramName) => {
+  return wrapServerless(async (req, res) => {
+    const raw = req.params[paramName];
+    let segments = [];
+    if (Array.isArray(raw)) {
+      segments = raw.filter(Boolean);
+    } else if (typeof raw === 'string' && raw.length > 0) {
+      segments = raw.split('/').filter(Boolean);
+    }
+    req.query[paramName] = segments;
+    return handler(req, res);
+  });
+};
+
 // Webhook needs the RAW body for signature verification — register it before
 // the JSON body parser so express.json() doesn't consume the stream.
 app.post('/api/webhook', express.raw({ type: '*/*' }), wrapServerless(webhookHandler));
@@ -70,6 +85,13 @@ app.post('/api/webhook', express.raw({ type: '*/*' }), wrapServerless(webhookHan
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Proxy NexQL theme JSON from sibling repo when available (offline dev without CDN).
+const nexqlThemesDir = path.join(__dirname, '../../NexQL-Themes/themes');
+if (fs.existsSync(nexqlThemesDir)) {
+  app.use('/themes', express.static(nexqlThemesDir));
+  console.log(`Serving /themes from ${nexqlThemesDir}`);
+}
+
 // Serve docs/ statically
 app.use(express.static(path.join(__dirname, '../docs')));
 
@@ -77,9 +99,9 @@ app.use(express.static(path.join(__dirname, '../docs')));
 app.get('/api/config', wrapServerless(configHandler));
 app.post('/api/create-subscription', wrapServerless(createSubscriptionHandler));
 app.post('/api/verify-payment', wrapServerless(verifyPaymentHandler));
-app.post('/api/license/validate', wrapServerless(licenseValidateHandler));
-app.get('/api/license/lookup', wrapServerless(licenseLookupHandler));
-app.post('/api/license/status', wrapServerless(licenseStatusHandler));
+app.all('/api/license/*route', wrapCatchAll(licenseRouter, 'route'));
+app.all('/api/auth/*route', wrapCatchAll(authRouter, 'route'));
+app.all('/api/sync/*path', wrapCatchAll(syncRouter, 'path'));
 app.post('/api/cancel-subscription', wrapServerless(cancelSubscriptionHandler));
 
 // Global Error Handler

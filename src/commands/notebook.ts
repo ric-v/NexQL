@@ -1,8 +1,11 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { DatabaseTreeItem } from '../providers/DatabaseTreeProvider';
 import { getDatabaseConnection, NotebookBuilder, MarkdownUtils, ErrorHandlers, validateNotebookContextItem } from './helper';
 import { PostgresMetadata } from '../common/types';
 import { ConnectionUtils } from '../utils/connectionUtils';
+import { isProFeatureEnabled, ProFeature } from '../services/featureGates';
+import { NotebookIndexService } from '../services/NotebookIndexService';
 
 type NotebookCellSeed = {
   kind: 'markdown' | 'sql';
@@ -71,9 +74,10 @@ async function createNotebookAtUri(
   return vscode.workspace.openNotebookDocument(uri);
 }
 
-async function pickNotebookFromList(
+export async function pickNotebookFromList(
   existingNotebookUris: vscode.Uri[],
-  title: string
+  title: string,
+  allowCreate: boolean = true
 ): Promise<NotebookPickerResult> {
   const existingByName = new Map<string, vscode.Uri>();
   for (const uri of existingNotebookUris) {
@@ -85,7 +89,9 @@ async function pickNotebookFromList(
   }
 
   const existingItems = (await Promise.all(existingNotebookUris.map(async (uri) => {
-    const filename = uri.path.split('/').pop() ?? '';
+    const parts = uri.path.split('/');
+    const filename = parts.pop() ?? '';
+    const dbName = parts.pop() ?? '';
     let sectionCount = 0;
     let modified = '';
 
@@ -117,7 +123,7 @@ async function pickNotebookFromList(
 
     return {
       label: normalizeNotebookName(filename),
-      description: `${prefix} · ${sectionText} · ${dateText}`,
+      description: `${prefix} [${dbName}] · ${sectionText} · ${dateText}`,
       uri,
       itemType: 'existing' as const,
     };
@@ -136,7 +142,7 @@ async function pickNotebookFromList(
       | { label: string; description: string; itemType: 'create-named'; name: string }
     >();
     qp.title = title;
-    qp.placeholder = 'Search notebooks or type a new notebook name';
+    qp.placeholder = allowCreate ? 'Search notebooks or type a new notebook name' : 'Search existing notebooks';
     qp.matchOnDescription = true;
     qp.matchOnDetail = true;
 
@@ -144,7 +150,7 @@ async function pickNotebookFromList(
       const typed = normalizeNotebookName(qp.value);
       const hasTyped = typed.length > 0;
       const hasExisting = hasTyped && existingByName.has(typed.toLowerCase());
-      const createNamedItem = hasTyped && !hasExisting
+      const createNamedItem = allowCreate && hasTyped && !hasExisting
         ? [{
             label: `$(add) Create "${typed}"`,
             description: 'Press Enter to create notebook with this name',
@@ -153,7 +159,7 @@ async function pickNotebookFromList(
           }]
         : [];
 
-      qp.items = [...existingItems, createRandomItem, ...createNamedItem];
+      qp.items = allowCreate ? [...existingItems, createRandomItem, ...createNamedItem] : existingItems;
     };
 
     qp.onDidChangeValue(updateItems);
@@ -168,13 +174,13 @@ async function pickNotebookFromList(
         return;
       }
 
-      if (selected?.itemType === 'create-random') {
+      if (allowCreate && selected?.itemType === 'create-random') {
         qp.hide();
         resolve({ action: 'create-random' });
         return;
       }
 
-      if (selected?.itemType === 'create-named') {
+      if (allowCreate && selected?.itemType === 'create-named') {
         qp.hide();
         resolve({ action: 'create-named', name: selected.name });
         return;
@@ -185,8 +191,10 @@ async function pickNotebookFromList(
         qp.hide();
         if (existing) {
           resolve({ action: 'open', uri: existing });
-        } else {
+        } else if (allowCreate) {
           resolve({ action: 'create-named', name: typed });
+        } else {
+          resolve({ action: 'cancel' });
         }
         return;
       }
@@ -218,6 +226,30 @@ export async function openOrCreateNotebookWithPicker(
   }
 
   await vscode.workspace.fs.createDirectory(folderUri);
+
+  const connectionNameOrId = (metadata?.name ?? metadata?.connectionName ?? metadata?.connectionId) as string | undefined;
+  if (connectionNameOrId) {
+    const { count: totalNotebooks, uris: connectionNotebookUris } = await ConnectionUtils.countNotebooksInConnection(context, connectionNameOrId);
+    const isUnlimited = isProFeatureEnabled(ProFeature.UnlimitedNotebooks);
+
+    if (!isUnlimited && totalNotebooks >= 10) {
+      const choice = await vscode.window.showWarningMessage(
+        `Free tier is limited to 10 notebooks per connection. Upgrade to Sponsor or Team for unlimited notebooks.`,
+        'Open Existing Notebook',
+        'Upgrade'
+      );
+      if (choice === 'Upgrade') {
+        await vscode.commands.executeCommand('postgres-explorer.license.openUpgrade');
+      } else if (choice === 'Open Existing Notebook') {
+        const pick = await pickNotebookFromList(connectionNotebookUris, 'Open Existing Notebook', false);
+        if (pick.action === 'open') {
+          const existingDoc = await vscode.workspace.openNotebookDocument(pick.uri);
+          await vscode.window.showNotebookDocument(existingDoc, { preserveFocus: false });
+        }
+      }
+      return;
+    }
+  }
 
   let existingNotebookUris: vscode.Uri[] = [];
   try {
@@ -487,5 +519,141 @@ export async function cmdExplainQuery(cellUri: vscode.Uri, analyze: boolean) {
 
   } catch (error: any) {
     await ErrorHandlers.handleCommandError(error, 'create EXPLAIN query');
+  }
+}
+
+export async function cmdSwitchNotebookConnection(): Promise<void> {
+  const editor = vscode.window.activeNotebookEditor;
+  if (!editor || (editor.notebook.notebookType !== 'postgres-notebook' && editor.notebook.notebookType !== 'postgres-query')) {
+    vscode.window.showInformationMessage('Please focus an active PostgreSQL notebook to switch connections.');
+    return;
+  }
+
+  const notebook = editor.notebook;
+  const currentMeta = ConnectionUtils.getEffectiveMetadata(notebook.metadata);
+  const currentConnId = currentMeta?.connectionId;
+
+  const connection = await ConnectionUtils.showConnectionPicker(currentConnId, {
+    title: 'Switch Notebook Connection',
+    placeHolder: 'Select a connection for this notebook'
+  });
+
+  if (!connection) {
+    return;
+  }
+
+  const currentDb = currentMeta?.databaseName || connection.database;
+  const dbName = await ConnectionUtils.showDatabasePicker(connection, currentDb, {
+    title: 'Switch Notebook Database',
+    placeHolder: `Select a database (current: ${currentDb})`
+  });
+
+  if (!dbName) {
+    return;
+  }
+
+  const cleanMetadata = {
+    connectionId: connection.id,
+    host: connection.host,
+    port: connection.port,
+    username: connection.username,
+    database: dbName,
+    databaseName: dbName,
+    title: connection.name && dbName ? `${connection.name}-${dbName}` : dbName,
+  };
+
+  const newMetadata = {
+    ...notebook.metadata,
+    ...cleanMetadata,
+    custom: {
+      cells: (notebook.metadata as any)?.custom?.cells || [],
+      metadata: {
+        ...cleanMetadata,
+        enableScripts: true
+      }
+    }
+  };
+
+  const applied = await ConnectionUtils.updateNotebookMetadata(notebook, newMetadata);
+  if (applied) {
+    vscode.window.showInformationMessage(`Notebook switched to "${connection.name || connection.host}" (DB: ${dbName})`);
+    vscode.commands.executeCommand('postgres-explorer.notebooks.refresh');
+    vscode.commands.executeCommand('postgres-explorer.refresh');
+  }
+}
+
+export async function cmdQuickOpenNotebook(context: vscode.ExtensionContext): Promise<void> {
+  const mru = context.globalState.get<string[] | undefined>('postgresExplorer.mruNotebooks', []) || [];
+  const localNotebooks = NotebookIndexService.getInstance().getAllNotebooks();
+  const sharedNotebooks: Array<{ name: string; uri: vscode.Uri; isShared: boolean }> = [];
+  try {
+    const { SyncController } = await import('../features/sync/SyncController');
+    const teamItems = SyncController.getInstance().listTeamItems();
+    for (const { entry } of teamItems) {
+      if (entry.kind === 'notebook' && entry.filePath) {
+        sharedNotebooks.push({
+          name: entry.name || path.basename(entry.filePath, '.pgsql'),
+          uri: vscode.Uri.file(entry.filePath),
+          isShared: true
+        });
+      }
+    }
+  } catch {
+    // Ignore sync failures
+  }
+
+  const allItems: Array<{ label: string; description: string; detail: string; uri: vscode.Uri }> = [];
+  const addedPaths = new Set<string>();
+  const connections = vscode.workspace.getConfiguration().get<any[]>('postgresExplorer.connections') || [];
+  const getConnName = (id?: string) => {
+    if (!id) return '';
+    const c = connections.find(conn => conn.id === id);
+    return c ? `🔌 ${c.name || c.host}` : '';
+  };
+
+  for (const nb of localNotebooks) {
+    if (addedPaths.has(nb.uri.fsPath)) continue;
+    addedPaths.add(nb.uri.fsPath);
+    const connLabel = getConnName(nb.connectionId);
+    allItems.push({
+      label: nb.name,
+      description: connLabel || '(no connection)',
+      detail: nb.uri.fsPath,
+      uri: nb.uri
+    });
+  }
+
+  for (const snb of sharedNotebooks) {
+    if (addedPaths.has(snb.uri.fsPath)) continue;
+    addedPaths.add(snb.uri.fsPath);
+    allItems.push({
+      label: snb.name,
+      description: '👥 Shared / Team',
+      detail: snb.uri.fsPath,
+      uri: snb.uri
+    });
+  }
+
+  allItems.sort((a, b) => {
+    const idxA = mru.indexOf(a.uri.fsPath);
+    const idxB = mru.indexOf(b.uri.fsPath);
+    if (idxA !== -1 && idxB !== -1) {
+      return idxA - idxB;
+    }
+    if (idxA !== -1) return -1;
+    if (idxB !== -1) return 1;
+    return a.label.localeCompare(b.label);
+  });
+
+  const pick = await vscode.window.showQuickPick(allItems, {
+    placeHolder: 'Search notebooks by name or connection...',
+    title: 'Quick Open Notebook'
+  });
+
+  if (pick) {
+    const updatedMru = [pick.uri.fsPath, ...mru.filter(p => p !== pick.uri.fsPath)].slice(0, 50);
+    await context.globalState.update('postgresExplorer.mruNotebooks', updatedMru);
+    const doc = await vscode.workspace.openNotebookDocument(pick.uri);
+    await vscode.window.showNotebookDocument(doc);
   }
 }

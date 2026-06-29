@@ -5,14 +5,19 @@ import {
   buildSelectionId,
   providerDisplayName,
   readAiScopeSettings,
+  getChatCompletionEndpoint,
 } from './aiConfig';
+import { listOpencodeModels } from './opencode';
 import {
   getGitHubSession,
   listAnthropicModels,
   listCursorModels,
   listCustomModels,
+  listDeepSeekModels,
   listGeminiModels,
   listGitHubModels,
+  listMistralModels,
+  listMoonshotModels,
   listOpenAIModels,
   listVsCodeLanguageModels,
 } from './modelListing';
@@ -96,16 +101,43 @@ export class AiModelCatalogService {
       );
     }
 
-    const cursorKey =
-      (await this.credentials.getCursorApiKey()) || process.env.CURSOR_API_KEY || '';
-    if (cursorKey) {
-      await this._appendProviderModels(catalog, 'cursor', async () => {
-        const rows = await listCursorModels(cursorKey);
-        return rows.map((r) => r.displayName || r.id);
+    try {
+      const cursorKey =
+        (await this.credentials.getCursorApiKey()) || process.env.CURSOR_API_KEY || '';
+      const cursorModels = await listCursorModels(cursorKey);
+      const groupLabel = providerDisplayName('cursor');
+      if (cursorModels.length === 0) {
+        catalog.push({
+          selectionId: buildSelectionId('cursor', this._defaultModelForProvider('cursor')),
+          provider: 'cursor',
+          modelId: this._defaultModelForProvider('cursor'),
+          label: `${groupLabel} (no models listed)`,
+          groupLabel,
+        });
+      } else {
+        for (const entry of cursorModels) {
+          catalog.push({
+            selectionId: buildSelectionId('cursor', entry.id),
+            provider: 'cursor',
+            modelId: entry.id,
+            label: entry.displayName || entry.id,
+            groupLabel,
+          });
+        }
+      }
+    } catch {
+      catalog.push({
+        selectionId: buildSelectionId('cursor', this._defaultModelForProvider('cursor')),
+        provider: 'cursor',
+        modelId: this._defaultModelForProvider('cursor'),
+        label: `${providerDisplayName('cursor')} (unavailable)`,
+        groupLabel: providerDisplayName('cursor'),
       });
     }
 
-    for (const provider of ['openai', 'anthropic', 'gemini'] as DirectApiKeyProvider[]) {
+    await this._appendProviderModels(catalog, 'opencode', async () => listOpencodeModels(config));
+
+    for (const provider of ['openai', 'anthropic', 'gemini', 'deepseek', 'moonshot', 'mistral'] as DirectApiKeyProvider[]) {
       const apiKey = await this.credentials.getApiKey(provider);
       if (apiKey) {
         await this._appendProviderModels(catalog, provider, () => this._listForDirectProvider(provider, apiKey));
@@ -113,19 +145,21 @@ export class AiModelCatalogService {
     }
 
     const customKey = await this.credentials.getApiKey('custom');
-    const endpoint = config.get<string>('aiEndpoint') || '';
+    const endpoint = getChatCompletionEndpoint(config.get<string>('aiEndpoint') || '');
     if (customKey && endpoint) {
       await this._appendProviderModels(catalog, 'custom', () =>
         listCustomModels(endpoint, customKey),
       );
     }
 
-    const ollamaEndpoint =
-      config.get<string>('aiEndpoint') || 'http://localhost:11434/v1/chat/completions';
+    const ollamaEndpoint = getChatCompletionEndpoint(
+      config.get<string>('aiEndpoint') || 'http://localhost:11434/v1/chat/completions'
+    );
     await this._appendProviderModels(catalog, 'ollama', () => listCustomModels(ollamaEndpoint, ''));
 
-    const lmEndpoint =
-      config.get<string>('aiEndpoint') || 'http://localhost:1234/v1/chat/completions';
+    const lmEndpoint = getChatCompletionEndpoint(
+      config.get<string>('aiEndpoint') || 'http://localhost:1234/v1/chat/completions'
+    );
     await this._appendProviderModels(catalog, 'lmstudio', () => listCustomModels(lmEndpoint, ''));
 
     if (catalog.length === 0) {
@@ -211,6 +245,12 @@ export class AiModelCatalogService {
         return listAnthropicModels(apiKey);
       case 'gemini':
         return listGeminiModels(apiKey);
+      case 'deepseek':
+        return listDeepSeekModels(apiKey);
+      case 'moonshot':
+        return listMoonshotModels(apiKey);
+      case 'mistral':
+        return listMistralModels(apiKey);
       case 'custom':
         return [];
       default:
@@ -226,9 +266,17 @@ export class AiModelCatalogService {
         return 'claude-sonnet-4-20250514';
       case 'gemini':
         return 'gemini-2.5-flash';
+      case 'deepseek':
+        return 'deepseek-chat';
+      case 'moonshot':
+        return 'moonshot-v1-8k';
+      case 'mistral':
+        return 'mistral-large-latest';
       case 'github':
         return 'openai/gpt-4.1';
       case 'cursor':
+        return 'auto';
+      case 'opencode':
         return 'auto';
       case 'custom':
         return 'custom-model';

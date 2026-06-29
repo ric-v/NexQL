@@ -21,4 +21,6 @@ export interface PromptConnectionContext {
   environment?: 'production' | 'staging' | 'development';
   readOnlyMode?: boolean;
   connectionName?: string;
+  databaseName?: string;
+  useAgentic?: boolean;
 }

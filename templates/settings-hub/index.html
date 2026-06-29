@@ -1,0 +1,1623 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="{{CSP}}">
+  <title>NexQL Settings</title>
+  <style>{{INLINE_STYLES}}</style>
+  <style>
+    .sql-keyword { color: #569CD6; font-weight: bold; }
+    .sql-type { color: #4EC9B0; }
+    .sql-ident { color: #9CDCFE; }
+    .sql-func { color: #DCDCAA; }
+    .sql-comment { color: #6A9955; font-style: italic; }
+    pre code {
+      background: none !important;
+      padding: 0 !important;
+      border-radius: 0 !important;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="hub">
+    <nav class="hub-nav" aria-label="Settings sections">
+      <div class="hub-brand">
+        <img class="hub-brand-logo" src="{{LOGO_URI}}" alt="NexQL">
+        <span class="hub-brand-sub">Settings</span>
+      </div>
+      <ul role="tablist" class="hub-nav-list">
+        <li>
+          <button type="button" role="tab" class="nav-item" data-section="connections" aria-controls="section-connections">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none"><path d="M4 6v4M12 6v4M6 8h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><rect x="2.5" y="4.5" width="11" height="7" rx="1.5" stroke="currentColor" stroke-width="1.4"/></svg></span>
+            <span class="nav-label">Connections</span>
+          </button>
+        </li>
+        <li>
+          <button type="button" role="tab" class="nav-item" data-section="ai" aria-controls="section-ai">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none"><path d="M8 2l1.2 3.4L13 6.7l-2.8 2.1.9 3.5L8 10.6 4.9 12.3l.9-3.5L3 6.7l3.8-1.3L8 2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></span>
+            <span class="nav-label">AI</span>
+          </button>
+        </li>
+        <li>
+          <button type="button" role="tab" class="nav-item" data-section="prefs" aria-controls="section-prefs">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.2" stroke="currentColor" stroke-width="1.4"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.3 3.3l1.1 1.1M11.6 11.6l1.1 1.1M3.3 12.7l1.1-1.1M11.6 4.4l1.1-1.1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></span>
+            <span class="nav-label">Preferences</span>
+          </button>
+        </li>
+        <li>
+          <button type="button" role="tab" class="nav-item" data-section="dbindex" aria-controls="section-dbindex">
+            <span class="nav-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" fill="none">
+                <path d="M2 4.5A2.5 2.5 0 0 1 4.5 2h7A2.5 2.5 0 0 1 14 4.5v7a2.5 2.5 0 0 1-2.5 2.5h-7A2.5 2.5 0 0 1 2 11.5v-7z" stroke="currentColor" stroke-width="1.4"/>
+                <path d="M5 6.5h6M5 9.5h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              </svg>
+            </span>
+            <span class="nav-label">Indexing</span>
+          </button>
+        </li>
+        <li>
+          <button type="button" role="tab" class="nav-item" data-section="sentinel" aria-controls="section-sentinel">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none"><path d="M8 1.5l6 3v4c0 3.5-2.5 5.8-6 6.5C4.5 14.3 2 12 2 8.5v-4l6-3z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M6 8l1.5 1.5L10.5 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            <span class="nav-label">Sentinel</span>
+          </button>
+        </li>
+        <li>
+          <button type="button" role="tab" class="nav-item" data-section="sync" aria-controls="section-sync">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none"><path d="M4.5 11.5a4 4 0 0 1 5.8-3.2M11.5 4.5a4 4 0 0 1-5.8 3.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M11.5 2.5v2h-2M4.5 13.5v-2h2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            <span class="nav-label">Cloud Sync</span>
+          </button>
+        </li>
+        <li>
+          <button type="button" role="tab" class="nav-item" data-section="license" aria-controls="section-license">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none"><circle cx="6.5" cy="6" r="3" stroke="currentColor" stroke-width="1.4"/><path d="M9.2 8.8L14 13.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M5.5 5.2h2M6.5 4.2v2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></span>
+            <span class="nav-label">License</span>
+          </button>
+        </li>
+      </ul>
+    </nav>
+
+    <main class="hub-content">
+
+      <!-- ════════════════ Connections ════════════════ -->
+      <section id="section-connections" class="hub-section" role="tabpanel" aria-label="Connections" hidden>
+        <header class="section-bar">
+          <div>
+            <h1>Connections</h1>
+            <p class="section-sub" id="connSectionSub">PostgreSQL servers available in the explorer</p>
+          </div>
+          <div class="section-actions">
+            <div id="connBulkBar" class="inline-row conn-bulk-bar" hidden>
+              <select id="connBulkEnv" aria-label="Environment for selected connections">
+                <option value="production">Production</option>
+                <option value="staging">Staging</option>
+                <option value="development">Development</option>
+              </select>
+              <button type="button" id="connBulkApplyBtn" class="btn-secondary">Tag selected</button>
+            </div>
+            <button type="button" id="connImportEnvBtn" class="btn-secondary">Import from .env</button>
+            <button type="button" id="connAddBtn" class="btn-primary">+ Add Connection</button>
+          </div>
+        </header>
+
+        <div id="connEnvPicker" class="env-picker" hidden>
+          <div class="env-picker-head">
+            <strong>DATABASE_URL candidates found in workspace .env files</strong>
+            <button type="button" id="connEnvCancelBtn" class="btn-link">Close</button>
+          </div>
+          <ul id="connEnvList" class="env-candidate-list"></ul>
+          <div class="env-paste-row">
+            <label for="connEnvPasteInput" class="label-hint">Or paste a postgres:// URL</label>
+            <div class="inline-row">
+              <input type="text" id="connEnvPasteInput" placeholder="postgresql://user:pass@host:5432/db">
+              <button type="button" id="connEnvPasteBtn" class="btn-secondary">Use URL</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="connListState" class="state-line" role="status">Loading connections…</div>
+
+        <div class="conn-table-wrap pg-panel">
+          <table class="conn-table" id="connTable" hidden>
+            <thead>
+              <tr>
+                <th scope="col" class="th-check"><input type="checkbox" id="connSelectAll" aria-label="Select all connections"></th>
+                <th scope="col">Name</th>
+                <th scope="col">Host</th>
+                <th scope="col">Database</th>
+                <th scope="col">User</th>
+                <th scope="col">Environment</th>
+                <th scope="col">SSL</th>
+                <th scope="col" class="th-actions"><span class="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody id="connTableBody"></tbody>
+          </table>
+          <div id="connEmptyState" class="empty-state" hidden>
+            <div class="empty-icon" aria-hidden="true">
+              <svg viewBox="0 0 48 48" fill="none"><rect x="8" y="14" width="32" height="22" rx="4" stroke="currentColor" stroke-width="2"/><path d="M16 24h16M24 20v8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            </div>
+            <h2>No connections yet</h2>
+            <p>Add a server manually or import one from a workspace <code>.env</code> file.</p>
+            <button type="button" class="btn-primary" id="connEmptyAddBtn">Add Your First Connection</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ════════════════ AI ════════════════ -->
+      <section id="section-ai" class="hub-section" role="tabpanel" aria-label="AI" hidden>
+        <header class="section-bar">
+          <div>
+            <h1>AI Configuration</h1>
+            <p class="section-sub">Configure API keys for any provider — set your default model at the bottom</p>
+          </div>
+        </header>
+
+        <!-- Tab strip -->
+        <div class="hub-tab-strip" role="tablist">
+          <button type="button" class="hub-tab-btn active" data-hub-tab="default" role="tab" aria-selected="true" aria-controls="hub-tab-default">🎯 Default Models</button>
+          <button type="button" class="hub-tab-btn" data-hub-tab="cloud" role="tab" aria-selected="false" aria-controls="hub-tab-cloud">☁️ Cloud AI</button>
+          <button type="button" class="hub-tab-btn" data-hub-tab="platform" role="tab" aria-selected="false" aria-controls="hub-tab-platform">🖥️ IDE &amp; Platform</button>
+          <button type="button" class="hub-tab-btn" data-hub-tab="local" role="tab" aria-selected="false" aria-controls="hub-tab-local">🏠 Local &amp; Custom</button>
+        </div>
+
+        <!-- ── Tab: Default Models ────────────────────────────────── -->
+        <div id="hub-tab-default" class="hub-tab-panel active" role="tabpanel">
+          
+          <div class="hub-hero-container">
+            
+            <!-- Notebook Scope Card -->
+            <div class="hub-hero-card" id="scope-card-Notebook">
+              <div class="hub-hero-card-header">
+                <div class="hub-hero-card-icon-wrap icon-notebook">
+                  <svg viewBox="0 0 16 16" fill="none" class="hub-hero-icon"><path d="M4 2.5h8a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5v-8A1.5 1.5 0 0 1 4 2.5z" stroke="currentColor" stroke-width="1.2"/><path d="M2.5 5.5h11M5.5 8.5h5M5.5 11h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+                </div>
+                <div>
+                  <h3 class="hub-hero-card-title">Notebook &amp; Dashboard AI</h3>
+                  <p class="hub-hero-card-desc">SQL assistant cells, explanation outputs, and dashboard helper tools.</p>
+                </div>
+              </div>
+              
+              <div class="hub-hero-card-body">
+                <div class="hub-hero-field-group">
+                  <label for="defaultNotebookProvider">Service Provider</label>
+                  <div class="field-input-wrap">
+                    <select id="defaultNotebookProvider" required></select>
+                  </div>
+                </div>
+                
+                <div class="hub-hero-field-group">
+                  <label for="defaultNotebookModel">Active Model</label>
+                  <div class="field-input-wrap">
+                    <select id="defaultNotebookModel-select" class="hidden"><option value="">Select a model…</option></select>
+                    <input type="text" id="defaultNotebookModel" placeholder="e.g. gpt-4.1">
+                  </div>
+                </div>
+                
+                <div class="hub-hero-card-actions">
+                  <div class="hub-hero-action-buttons">
+                    <button type="button" class="btn-primary list-default-models-btn" data-scope="Notebook">List Models</button>
+                    <button type="button" class="btn-secondary test-default-btn" data-scope="Notebook">Test Connection</button>
+                  </div>
+                  <span class="hub-card-status" id="defaultNotebookStatus"></span>
+                </div>
+                
+                <div id="defaultNotebookKeyStatus" class="scope-key-status"></div>
+              </div>
+            </div>
+            
+            <!-- Chat Scope Card -->
+            <div class="hub-hero-card" id="scope-card-Chat">
+              <div class="hub-hero-card-header">
+                <div class="hub-hero-card-icon-wrap icon-chat">
+                  <svg viewBox="0 0 16 16" fill="none" class="hub-hero-icon"><path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h8A1.5 1.5 0 0 1 13.5 4v6a1.5 1.5 0 0 1-1.5 1.5H6.5L3 14v-2.5H2.5A1.5 1.5 0 0 1 1 10V4h1.5z" stroke="currentColor" stroke-width="1.2"/><path d="M4.5 5.5h7M4.5 8h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+                </div>
+                <div>
+                  <h3 class="hub-hero-card-title">SQL Assistant Chat</h3>
+                  <p class="hub-hero-card-desc">Interactive chat sidebar, generating code queries, and explanation dialogues.</p>
+                </div>
+              </div>
+              
+              <div class="hub-hero-card-body">
+                <div class="hub-hero-field-group">
+                  <label for="defaultChatProvider">Service Provider</label>
+                  <div class="field-input-wrap">
+                    <select id="defaultChatProvider" required></select>
+                  </div>
+                </div>
+                
+                <div class="hub-hero-field-group">
+                  <label for="defaultChatModel">Active Model</label>
+                  <div class="field-input-wrap">
+                    <select id="defaultChatModel-select" class="hidden"><option value="">Select a model…</option></select>
+                    <input type="text" id="defaultChatModel" placeholder="e.g. claude-sonnet-4">
+                  </div>
+                </div>
+                
+                <div class="hub-hero-card-actions">
+                  <div class="hub-hero-action-buttons">
+                    <button type="button" class="btn-primary list-default-models-btn" data-scope="Chat">List Models</button>
+                    <button type="button" class="btn-secondary test-default-btn" data-scope="Chat">Test Connection</button>
+                  </div>
+                  <span class="hub-card-status" id="defaultChatStatus"></span>
+                </div>
+                
+                <div id="defaultChatKeyStatus" class="scope-key-status"></div>
+              </div>
+            </div>
+            
+          </div>
+          
+        </div><!-- /hub-tab-default -->
+
+        <!-- ── Tab: Cloud AI ─────────────────────────────────────── -->
+        <div id="hub-tab-cloud" class="hub-tab-panel" role="tabpanel">
+
+          <!-- OpenAI -->
+          <div class="hub-setting-card" id="card-openai">
+            <div class="hub-setting-card-header hub-setting-card-header--collapsible">
+              <div class="hub-setting-card-title hub-setting-card-title--inline">
+                <span class="hub-card-icon">🟢</span> OpenAI
+                <span class="hub-card-status-dot empty" id="status-icon-openai" title="No API key saved">○</span>
+              </div>
+              <a class="hub-card-link" href="https://platform.openai.com/api-keys" title="Open platform.openai.com to get your API key">Get API key</a>
+            </div>
+            <div class="hub-setting-card-body">
+              <div class="hub-card-field-row">
+                <label for="apiKey-openai">API Key</label>
+                <div class="field-input-wrap">
+                  <input type="password" id="apiKey-openai" placeholder="sk-…" autocomplete="off">
+                </div>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="model-openai">Model</label>
+                <div class="field-input-wrap">
+                  <select id="model-openai-select" class="hidden"><option value="">Select a model…</option></select>
+                  <input type="text" id="model-openai" placeholder="gpt-4.1">
+                </div>
+              </div>
+              <div class="hub-card-actions">
+                <button type="button" class="btn-secondary list-models-btn" data-provider="openai">List models</button>
+                <button type="button" class="btn-secondary ai-test-btn" data-provider="openai">Test</button>
+                <span class="hub-card-status" id="card-status-openai"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Anthropic -->
+          <div class="hub-setting-card" id="card-anthropic">
+            <div class="hub-setting-card-header hub-setting-card-header--collapsible">
+              <div class="hub-setting-card-title hub-setting-card-title--inline">
+                <span class="hub-card-icon">🟤</span> Anthropic (Claude)
+                <span class="hub-card-status-dot empty" id="status-icon-anthropic" title="No API key saved">○</span>
+              </div>
+              <a class="hub-card-link" href="https://console.anthropic.com/settings/keys" title="Open console.anthropic.com to get your API key">Get API key</a>
+            </div>
+            <div class="hub-setting-card-body">
+              <div class="hub-card-field-row">
+                <label for="apiKey-anthropic">API Key</label>
+                <div class="field-input-wrap">
+                  <input type="password" id="apiKey-anthropic" placeholder="sk-ant-…" autocomplete="off">
+                </div>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="model-anthropic">Model</label>
+                <div class="field-input-wrap">
+                  <select id="model-anthropic-select" class="hidden"><option value="">Select a model…</option></select>
+                  <input type="text" id="model-anthropic" placeholder="claude-sonnet-4-20250514">
+                </div>
+              </div>
+              <div class="hub-card-actions">
+                <button type="button" class="btn-secondary list-models-btn" data-provider="anthropic">List models</button>
+                <button type="button" class="btn-secondary ai-test-btn" data-provider="anthropic">Test</button>
+                <span class="hub-card-status" id="card-status-anthropic"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Google Gemini -->
+          <div class="hub-setting-card" id="card-gemini">
+            <div class="hub-setting-card-header hub-setting-card-header--collapsible">
+              <div class="hub-setting-card-title hub-setting-card-title--inline">
+                <span class="hub-card-icon">🔵</span> Google Gemini
+                <span class="hub-card-status-dot empty" id="status-icon-gemini" title="No API key saved">○</span>
+              </div>
+              <a class="hub-card-link" href="https://aistudio.google.com/apikey" title="Open Google AI Studio to get your API key">Get API key</a>
+            </div>
+            <div class="hub-setting-card-body">
+              <div class="hub-card-field-row">
+                <label for="apiKey-gemini">API Key</label>
+                <div class="field-input-wrap">
+                  <input type="password" id="apiKey-gemini" placeholder="AIza…" autocomplete="off">
+                </div>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="model-gemini">Model</label>
+                <div class="field-input-wrap">
+                  <select id="model-gemini-select" class="hidden"><option value="">Select a model…</option></select>
+                  <input type="text" id="model-gemini" placeholder="gemini-2.5-flash">
+                </div>
+              </div>
+              <div class="hub-card-actions">
+                <button type="button" class="btn-secondary list-models-btn" data-provider="gemini">List models</button>
+                <button type="button" class="btn-secondary ai-test-btn" data-provider="gemini">Test</button>
+                <span class="hub-card-status" id="card-status-gemini"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- DeepSeek -->
+          <div class="hub-setting-card" id="card-deepseek">
+            <div class="hub-setting-card-header hub-setting-card-header--collapsible">
+              <div class="hub-setting-card-title hub-setting-card-title--inline">
+                <span class="hub-card-icon">🐋</span> DeepSeek
+                <span class="hub-card-status-dot empty" id="status-icon-deepseek" title="No API key saved">○</span>
+              </div>
+              <a class="hub-card-link" href="https://platform.deepseek.com/api_keys" title="Open DeepSeek platform to get your API key">Get API key</a>
+            </div>
+            <div class="hub-setting-card-body">
+              <div class="hub-card-field-row">
+                <label for="apiKey-deepseek">API Key</label>
+                <div class="field-input-wrap">
+                  <input type="password" id="apiKey-deepseek" placeholder="sk-…" autocomplete="off">
+                </div>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="model-deepseek">Model</label>
+                <div class="field-input-wrap">
+                  <select id="model-deepseek-select" class="hidden"><option value="">Select a model…</option></select>
+                  <input type="text" id="model-deepseek" placeholder="deepseek-chat">
+                </div>
+              </div>
+              <div class="hub-card-actions">
+                <button type="button" class="btn-secondary list-models-btn" data-provider="deepseek">List models</button>
+                <button type="button" class="btn-secondary ai-test-btn" data-provider="deepseek">Test</button>
+                <span class="hub-card-status" id="card-status-deepseek"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Moonshot / Kimi -->
+          <div class="hub-setting-card" id="card-moonshot">
+            <div class="hub-setting-card-header hub-setting-card-header--collapsible">
+              <div class="hub-setting-card-title hub-setting-card-title--inline">
+                <span class="hub-card-icon">🌙</span> Moonshot / Kimi
+                <span class="hub-card-status-dot empty" id="status-icon-moonshot" title="No API key saved">○</span>
+              </div>
+              <a class="hub-card-link" href="https://platform.moonshot.cn/console/api-keys" title="Open Moonshot platform to get your API key">Get API key</a>
+            </div>
+            <div class="hub-setting-card-body">
+              <div class="hub-card-field-row">
+                <label for="apiKey-moonshot">API Key</label>
+                <div class="field-input-wrap">
+                  <input type="password" id="apiKey-moonshot" placeholder="sk-…" autocomplete="off">
+                </div>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="model-moonshot">Model</label>
+                <div class="field-input-wrap">
+                  <select id="model-moonshot-select" class="hidden"><option value="">Select a model…</option></select>
+                  <input type="text" id="model-moonshot" placeholder="moonshot-v1-8k">
+                </div>
+              </div>
+              <div class="hub-card-actions">
+                <button type="button" class="btn-secondary list-models-btn" data-provider="moonshot">List models</button>
+                <button type="button" class="btn-secondary ai-test-btn" data-provider="moonshot">Test</button>
+                <span class="hub-card-status" id="card-status-moonshot"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Mistral AI -->
+          <div class="hub-setting-card" id="card-mistral">
+            <div class="hub-setting-card-header hub-setting-card-header--collapsible">
+              <div class="hub-setting-card-title hub-setting-card-title--inline">
+                <span class="hub-card-icon">🌀</span> Mistral AI
+                <span class="hub-card-status-dot empty" id="status-icon-mistral" title="No API key saved">○</span>
+              </div>
+              <a class="hub-card-link" href="https://console.mistral.ai/api-keys" title="Open Mistral console to get your API key">Get API key</a>
+            </div>
+            <div class="hub-setting-card-body">
+              <div class="hub-card-field-row">
+                <label for="apiKey-mistral">API Key</label>
+                <div class="field-input-wrap">
+                  <input type="password" id="apiKey-mistral" placeholder="…" autocomplete="off">
+                </div>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="model-mistral">Model</label>
+                <div class="field-input-wrap">
+                  <select id="model-mistral-select" class="hidden"><option value="">Select a model…</option></select>
+                  <input type="text" id="model-mistral" placeholder="mistral-large-latest">
+                </div>
+              </div>
+              <div class="hub-card-actions">
+                <button type="button" class="btn-secondary list-models-btn" data-provider="mistral">List models</button>
+                <button type="button" class="btn-secondary ai-test-btn" data-provider="mistral">Test</button>
+                <span class="hub-card-status" id="card-status-mistral"></span>
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /hub-tab-cloud -->
+
+        <!-- ── Tab: IDE & Platform ─────────────────────────────── -->
+        <div id="hub-tab-platform" class="hub-tab-panel" role="tabpanel">
+
+          <!-- VS Code LM -->
+          <div class="hub-setting-card" id="card-vscode-lm">
+            <div class="hub-setting-card-header hub-setting-card-header--collapsible">
+              <div class="hub-setting-card-title hub-setting-card-title--inline">
+                <span class="hub-card-icon">💠</span> VS Code Language Model
+              </div>
+              <a class="hub-card-link" href="https://marketplace.visualstudio.com/items?itemName=GitHub.copilot" title="Install GitHub Copilot extension">Install Copilot</a>
+            </div>
+            <div class="hub-setting-card-body">
+              <div class="hub-card-info">
+                <span class="hub-card-info-icon">ℹ️</span>
+                <span>Uses GitHub Copilot or other VS Code language model extensions. No API key required.</span>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="model-vscode-lm">Model</label>
+                <div class="field-input-wrap">
+                  <select id="model-vscode-lm-select" class="hidden"><option value="">Select a model…</option></select>
+                  <input type="text" id="model-vscode-lm" placeholder="Leave empty for default">
+                </div>
+              </div>
+              <div class="hub-card-actions">
+                <button type="button" class="btn-secondary list-models-btn" data-provider="vscode-lm">List models</button>
+                <button type="button" class="btn-secondary ai-test-btn" data-provider="vscode-lm">Test</button>
+                <span class="hub-card-status" id="card-status-vscode-lm"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- GitHub Models -->
+          <div class="hub-setting-card" id="card-github">
+            <div class="hub-setting-card-header hub-setting-card-header--collapsible">
+              <div class="hub-setting-card-title hub-setting-card-title--inline">
+                <span class="hub-card-icon">🐙</span> GitHub Models
+                <span class="hub-card-status-dot empty" id="status-icon-github" title="Not connected">○</span>
+              </div>
+              <a class="hub-card-link" href="https://github.com/marketplace/models" title="Browse GitHub Models catalog">Browse models</a>
+            </div>
+            <div class="hub-setting-card-body">
+              <div id="githubAuthBanner" class="hub-card-info">
+                <span class="hub-card-info-icon">🔐</span>
+                <span id="githubAuthStatusText">Not connected — click Connect to sign in with your GitHub account.</span>
+              </div>
+              <div class="hub-github-actions">
+                <button type="button" id="githubConnectBtn" class="btn-secondary">Connect GitHub</button>
+                <button type="button" id="githubDisconnectBtn" class="btn-secondary">Disconnect</button>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="model-github">Model</label>
+                <div class="field-input-wrap">
+                  <select id="model-github-select" class="hidden"><option value="">Select a model…</option></select>
+                  <input type="text" id="model-github" placeholder="openai/gpt-4.1">
+                </div>
+              </div>
+              <div class="hub-card-actions">
+                <button type="button" class="btn-secondary list-models-btn" data-provider="github">List models</button>
+                <button type="button" class="btn-secondary ai-test-btn" data-provider="github">Test</button>
+                <span class="hub-card-status" id="card-status-github"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Cursor SDK -->
+          <div class="hub-setting-card" id="card-cursor">
+            <div class="hub-setting-card-header hub-setting-card-header--collapsible">
+              <div class="hub-setting-card-title hub-setting-card-title--inline">
+                <span class="hub-card-icon">⚙️</span> Cursor SDK
+                <span class="hub-card-status-dot empty" id="status-icon-cursor" title="No API key saved">○</span>
+              </div>
+              <a class="hub-card-link" href="https://cursor.com/dashboard/integrations" title="Open Cursor dashboard to get your API key">Get API key</a>
+            </div>
+            <div class="hub-setting-card-body">
+              <div class="hub-card-field-row">
+                <label for="apiKey-cursor">API Key</label>
+                <div class="field-input-wrap">
+                  <input type="password" id="apiKey-cursor" placeholder="cursor-…" autocomplete="off">
+                </div>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="model-cursor">Model</label>
+                <div class="field-input-wrap">
+                  <select id="model-cursor-select" class="hidden"><option value="">Select a model…</option></select>
+                  <input type="text" id="model-cursor" placeholder="composer-2.5 or auto">
+                </div>
+              </div>
+              <div class="hub-card-actions">
+                <button type="button" class="btn-secondary list-models-btn" data-provider="cursor">List models</button>
+                <button type="button" class="btn-secondary ai-test-btn" data-provider="cursor">Test</button>
+                <span class="hub-card-status" id="card-status-cursor"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- OpenCode -->
+          <div class="hub-setting-card" id="card-opencode">
+            <div class="hub-setting-card-header hub-setting-card-header--collapsible">
+              <div class="hub-setting-card-title hub-setting-card-title--inline">
+                <span class="hub-card-icon">🧠</span> OpenCode
+              </div>
+              <a class="hub-card-link" href="https://opencode.ai" title="OpenCode website">opencode.ai</a>
+            </div>
+            <div class="hub-setting-card-body">
+              <div class="hub-card-info">
+                <span class="hub-card-info-icon">ℹ️</span>
+                <span>Uses the OpenCode CLI on your machine. Configure providers with <code>opencode auth login</code> — no API key needed here.</span>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="opencodeCliPath">CLI path</label>
+                <div class="field-input-wrap">
+                  <input type="text" id="opencodeCliPath" placeholder="Leave empty to auto-detect on PATH">
+                </div>
+              </div>
+              <div class="hub-card-checkbox-row">
+                <input type="checkbox" id="opencodeAutoServe" checked>
+                <span>Auto-start <code>opencode serve</code> (recommended)</span>
+              </div>
+              <div class="hub-card-checkbox-row">
+                <input type="checkbox" id="opencodeShowLog" checked>
+                <span>Show OpenCode log output (View → Output → OpenCode)</span>
+              </div>
+              <div class="hub-card-checkbox-row">
+                <input type="checkbox" id="opencodeSkipPermissions" checked>
+                <span>Headless mode — auto-allow tool permissions</span>
+              </div>
+              <div class="hub-card-checkbox-row">
+                <input type="checkbox" id="opencodeAutoApprovePermissions" checked>
+                <span>Auto-approve server permission prompts</span>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="opencodeServeUrl">Server URL</label>
+                <div class="field-input-wrap">
+                  <input type="text" id="opencodeServeUrl" placeholder="Auto-filled when serve starts">
+                </div>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="opencodeServePort">Port</label>
+                <div class="field-input-wrap">
+                  <input type="number" id="opencodeServePort" min="0" max="65535" placeholder="0 = free port" style="max-width:120px">
+                </div>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="model-opencode">Model</label>
+                <div class="field-input-wrap">
+                  <select id="model-opencode-select" class="hidden"><option value="">Select a model…</option></select>
+                  <input type="text" id="model-opencode" placeholder="provider/model or auto">
+                </div>
+              </div>
+              <div class="hub-card-actions">
+                <button type="button" class="btn-secondary list-models-btn" data-provider="opencode">List models</button>
+                <button type="button" class="btn-secondary ai-test-btn" data-provider="opencode">Test</button>
+                <span class="hub-card-status" id="card-status-opencode"></span>
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /hub-tab-platform -->
+
+        <!-- ── Tab: Local & Custom ─────────────────────────────── -->
+        <div id="hub-tab-local" class="hub-tab-panel" role="tabpanel">
+
+          <!-- Ollama -->
+          <div class="hub-setting-card" id="card-ollama">
+            <div class="hub-setting-card-header hub-setting-card-header--collapsible">
+              <div class="hub-setting-card-title hub-setting-card-title--inline">
+                <span class="hub-card-icon">🦙</span> Ollama
+              </div>
+              <a class="hub-card-link" href="https://ollama.com/download" title="Download Ollama">ollama.com</a>
+            </div>
+            <div class="hub-setting-card-body">
+              <div class="hub-card-info">
+                <span class="hub-card-info-icon">ℹ️</span>
+                <span>Runs models locally. Make sure Ollama is running before testing.</span>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="endpoint-ollama">Endpoint</label>
+                <div class="field-input-wrap">
+                  <input type="text" id="endpoint-ollama" placeholder="http://localhost:11434/v1/chat/completions" value="http://localhost:11434/v1/chat/completions">
+                </div>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="model-ollama">Model</label>
+                <div class="field-input-wrap">
+                  <select id="model-ollama-select" class="hidden"><option value="">Select a model…</option></select>
+                  <input type="text" id="model-ollama" placeholder="llama3, mistral, codellama…">
+                </div>
+              </div>
+              <div class="hub-card-actions">
+                <button type="button" class="btn-secondary list-models-btn" data-provider="ollama">List models</button>
+                <button type="button" class="btn-secondary ai-test-btn" data-provider="ollama">Test</button>
+                <span class="hub-card-status" id="card-status-ollama"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- LM Studio -->
+          <div class="hub-setting-card" id="card-lmstudio">
+            <div class="hub-setting-card-header hub-setting-card-header--collapsible">
+              <div class="hub-setting-card-title hub-setting-card-title--inline">
+                <span class="hub-card-icon">🖥️</span> LM Studio
+              </div>
+              <a class="hub-card-link" href="https://lmstudio.ai" title="LM Studio website">lmstudio.ai</a>
+            </div>
+            <div class="hub-setting-card-body">
+              <div class="hub-card-info">
+                <span class="hub-card-info-icon">ℹ️</span>
+                <span>Runs models locally via LM Studio's built-in server. Start the server first.</span>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="endpoint-lmstudio">Endpoint</label>
+                <div class="field-input-wrap">
+                  <input type="text" id="endpoint-lmstudio" placeholder="http://localhost:1234/v1/chat/completions" value="http://localhost:1234/v1/chat/completions">
+                </div>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="model-lmstudio">Model</label>
+                <div class="field-input-wrap">
+                  <select id="model-lmstudio-select" class="hidden"><option value="">Select a model…</option></select>
+                  <input type="text" id="model-lmstudio" placeholder="Leave empty to use the loaded model">
+                </div>
+              </div>
+              <div class="hub-card-actions">
+                <button type="button" class="btn-secondary list-models-btn" data-provider="lmstudio">List models</button>
+                <button type="button" class="btn-secondary ai-test-btn" data-provider="lmstudio">Test</button>
+                <span class="hub-card-status" id="card-status-lmstudio"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Custom Endpoint -->
+          <div class="hub-setting-card" id="card-custom">
+            <div class="hub-setting-card-header hub-setting-card-header--collapsible">
+              <div class="hub-setting-card-title hub-setting-card-title--inline">
+                <span class="hub-card-icon">🔧</span> Custom Endpoint
+                <span class="hub-card-status-dot empty" id="status-icon-custom" title="Not configured">○</span>
+              </div>
+            </div>
+            <div class="hub-setting-card-body">
+              <div class="hub-card-info">
+                <span class="hub-card-info-icon">⚠️</span>
+                <span>For self-hosted or alternative providers with OpenAI-compatible APIs.</span>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="endpoint-custom">Endpoint <span style="color:var(--danger)">*</span></label>
+                <div class="field-input-wrap">
+                  <input type="text" id="endpoint-custom" placeholder="http://localhost:8080/v1/chat/completions">
+                </div>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="apiKey-custom">API Key</label>
+                <div class="field-input-wrap">
+                  <input type="password" id="apiKey-custom" placeholder="Optional" autocomplete="off">
+                </div>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="model-custom">Model</label>
+                <div class="field-input-wrap">
+                  <input type="text" id="model-custom" placeholder="Model identifier">
+                </div>
+              </div>
+              <div class="hub-card-actions">
+                <button type="button" class="btn-secondary list-models-btn" data-provider="custom">List models</button>
+                <button type="button" class="btn-secondary ai-test-btn" data-provider="custom">Test</button>
+                <span class="hub-card-status" id="card-status-custom"></span>
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /hub-tab-local -->
+
+
+
+        <!-- Save bar -->
+        <div class="hub-save-bar">
+          <span class="hub-save-status" id="aiSaveStatus" role="status"></span>
+          <button type="button" id="aiSaveBtn" class="btn-primary">Save All Settings</button>
+        </div>
+
+      </section>
+
+
+
+      <!-- ════════════════ Preferences ════════════════ -->
+      <section id="section-prefs" class="hub-section" role="tabpanel" aria-label="Preferences" hidden>
+        <header class="section-bar">
+          <div>
+            <h1>Preferences</h1>
+            <p class="section-sub">Editor and explorer behavior</p>
+          </div>
+        </header>
+
+        <div id="prefsState" class="state-line" role="status">Loading preferences…</div>
+
+        <div id="prefsList" hidden>
+          <div class="hub-setting-card">
+            <div class="hub-setting-card-header">
+              <div>
+                <h2 class="hub-setting-card-title">DDL Viewer</h2>
+                <p class="hub-setting-card-desc hub-prose">Generated DDL preview for tables, views, functions and other objects.</p>
+              </div>
+            </div>
+            <div class="hub-setting-card-body">
+              <label class="hub-card-checkbox-row">
+                <input type="checkbox" id="prefDdlEnabled">
+                <span>Enable SQL preview</span>
+              </label>
+              <label class="hub-card-checkbox-row">
+                <input type="checkbox" id="prefDdlOpenOnSelection">
+                <span>Open preview automatically when selecting an object in the explorer</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ════════════════ Sentinel ════════════════ -->
+      <section id="section-sentinel" class="hub-section" role="tabpanel" aria-label="Sentinel" hidden>
+        <header class="section-bar">
+          <div>
+            <h1>Sentinel</h1>
+            <p class="section-sub">Ambient environment signaling — know when you are on production without changing your syntax theme</p>
+          </div>
+        </header>
+
+        <div id="sentinelState" class="state-line" role="status">Loading Sentinel settings…</div>
+
+        <div id="sentinelList" hidden>
+          <div class="hub-setting-card">
+            <div class="hub-setting-card-header">
+              <div>
+                <h2 class="hub-setting-card-title">Environment preview</h2>
+                <p class="hub-setting-card-desc hub-prose">How production, staging, and development accents appear when Sentinel is on.</p>
+              </div>
+            </div>
+            <div class="hub-setting-card-body">
+              <div class="sentinel-preview" aria-hidden="true">
+                <div class="sentinel-swatch sentinel-swatch-prod" title="Production preview">PROD</div>
+                <div class="sentinel-swatch sentinel-swatch-staging" title="Staging preview">STG</div>
+                <div class="sentinel-swatch sentinel-swatch-dev" title="Development preview">DEV</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="hub-setting-card">
+            <div class="hub-setting-card-header">
+              <div>
+                <h2 class="hub-setting-card-title">Visibility</h2>
+                <p class="hub-setting-card-desc hub-prose">Control where environment signals appear across the workbench.</p>
+              </div>
+            </div>
+            <div class="hub-setting-card-body">
+              <label class="hub-card-checkbox-row"><input type="checkbox" id="sentinelEnabled"><span>Enable Sentinel (master switch)</span></label>
+              <label class="hub-card-checkbox-row"><input type="checkbox" id="sentinelStatusBar"><span>Highlight status bar by environment</span></label>
+              <label class="hub-card-checkbox-row"><input type="checkbox" id="sentinelNotebookStrip"><span>Show context inside notebook</span></label>
+              <label class="hub-card-checkbox-row"><input type="checkbox" id="sentinelChrome"><span>Tint workbench chrome</span></label>
+              <label class="hub-card-checkbox-row"><input type="checkbox" id="sentinelTabBadges"><span>Badge notebook tabs [P] / [S] / [D]</span></label>
+              <label class="hub-card-checkbox-row"><input type="checkbox" id="sentinelChatChip"><span>Show environment in SQL Assistant</span></label>
+              <label class="hub-card-checkbox-row"><input type="checkbox" id="sentinelNotify"><span>Notify on environment change</span></label>
+              <p class="label-hint hub-prose" id="sentinelNexqlHint" hidden>
+                Optional <button type="button" id="sentinelNexqlInstallBtn" class="btn-link">NexQL Sentinel themes</button>
+                pair with theme swap.
+                <button type="button" id="sentinelNexqlPrefillBtn" class="btn-link" hidden>Pre-fill theme map</button>
+              </p>
+            </div>
+          </div>
+
+          <div class="hub-setting-card">
+            <div class="hub-setting-card-header">
+              <div>
+                <h2 class="hub-setting-card-title">Advanced — full theme swap</h2>
+                <p class="hub-setting-card-desc hub-prose">Off by default. Swaps the entire VS Code color theme for maximum visual separation.</p>
+              </div>
+            </div>
+            <div class="hub-setting-card-body">
+              <label class="hub-card-checkbox-row"><input type="checkbox" id="sentinelThemeSwap"><span>Enable theme swap</span></label>
+              <div class="hub-card-field-row">
+                <label for="sentinelThemeMode">Swap mode</label>
+                <div class="field-input-wrap">
+                  <select id="sentinelThemeMode">
+                    <option value="suggest">Suggest (ask before switching)</option>
+                    <option value="auto">Auto (switch silently)</option>
+                  </select>
+                </div>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="sentinelThemeProd">Production theme</label>
+                <div class="field-input-wrap"><select id="sentinelThemeProd" class="sentinel-theme-select"></select></div>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="sentinelThemeStaging">Staging theme</label>
+                <div class="field-input-wrap"><select id="sentinelThemeStaging" class="sentinel-theme-select"></select></div>
+              </div>
+              <div class="hub-card-field-row">
+                <label for="sentinelThemeDev">Development theme</label>
+                <div class="field-input-wrap"><select id="sentinelThemeDev" class="sentinel-theme-select"></select></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ════════════════ Cloud Sync ════════════════ -->
+      <section id="section-sync" class="hub-section" role="tabpanel" aria-label="Cloud Sync" hidden>
+        <header class="section-bar">
+          <div>
+            <h1>Cloud Sync</h1>
+            <p class="section-sub">Encrypted sync of connections, saved queries and notebooks</p>
+          </div>
+          <div id="syncSectionActions" class="section-actions" hidden>
+            <button type="button" id="syncNowBtn" class="btn-primary">Sync Now</button>
+            <button type="button" id="syncPauseBtn" class="btn-secondary">Pause</button>
+          </div>
+        </header>
+
+        <div id="syncState" class="state-line" role="status">Loading sync status…</div>
+
+        <div id="syncLocked" class="locked-box" hidden>
+          <div class="locked-icon">☁️🔒</div>
+          <h2>Cloud Sync is not available on this plan</h2>
+          <p>Free includes manual backup to your own Postgres. Sponsor adds automatic multi-device sync via Gist, OneDrive and Google Drive; Teams adds NexQL Cloud and team sharing.</p>
+          <div class="inline-row">
+            <button type="button" id="syncUpgradeBtn" class="btn-primary">View Plans</button>
+            <button type="button" id="syncActivateLink" class="btn-secondary">Go to License</button>
+          </div>
+        </div>
+
+        <div id="syncNotConfigured" class="locked-box" hidden>
+          <div class="locked-icon">☁️</div>
+          <h2>Cloud Sync is not set up</h2>
+          <p>Run the guided wizard to pick a storage backend and create or unlock your encrypted vault. Free plan: manual backup to your own Postgres, bound to this device. Sponsor and Teams add automatic multi-device sync.</p>
+          <button type="button" id="syncSetupBtn" class="btn-primary">Set Up Cloud Sync</button>
+        </div>
+
+        <div id="syncConfigured" hidden>
+          <div id="syncHealthHeader" class="sync-status-strip" hidden>
+            <span id="syncStatusPill" class="sync-status-pill">—</span>
+            <span class="sync-status-sep" aria-hidden="true">·</span>
+            <span id="syncProviderValue">—</span>
+            <span class="sync-status-sep" aria-hidden="true">·</span>
+            <span id="syncAccountValue" class="sync-status-account">—</span>
+            <span class="sync-status-sep" aria-hidden="true">·</span>
+            <button type="button" id="syncConflictsLink" class="sync-status-link">
+              <span id="syncConflictsValue">0</span> conflicts
+            </button>
+            <span id="syncHealthQuota" class="sync-status-quota label-hint" hidden></span>
+          </div>
+          <span id="syncStatusValue" hidden aria-hidden="true">—</span>
+
+          <nav class="hub-tab-strip hub-tab-strip--sync" role="tablist" aria-label="Cloud Sync sections">
+            <button type="button" class="hub-tab-btn active" data-sync-tab="overview" role="tab" aria-selected="true" aria-controls="syncTabOverview">Overview</button>
+            <button type="button" class="hub-tab-btn" data-sync-tab="settings" role="tab" aria-selected="false" aria-controls="syncTabSettings">Settings</button>
+            <button type="button" class="hub-tab-btn" data-sync-tab="local" role="tab" aria-selected="false" aria-controls="syncTabItems">
+              Local <span id="syncItemsTabBadge" class="hub-tab-badge" hidden></span>
+            </button>
+            <button type="button" class="hub-tab-btn" data-sync-tab="preview" role="tab" aria-selected="false" aria-controls="syncTabPreview">Preview</button>
+            <button type="button" class="hub-tab-btn" data-sync-tab="conflicts" role="tab" aria-selected="false" aria-controls="syncTabConflicts">
+              Conflicts <span id="syncConflictsTabBadge" class="hub-tab-badge" hidden></span>
+            </button>
+            <button type="button" class="hub-tab-btn" data-sync-tab="history" role="tab" aria-selected="false" aria-controls="syncTabHistory">History</button>
+            <button type="button" class="hub-tab-btn" data-sync-tab="shares" role="tab" aria-selected="false" aria-controls="syncTabShares">Sharing</button>
+            <button type="button" class="hub-tab-btn" data-sync-tab="devices" role="tab" aria-selected="false" aria-controls="syncTabDevices">Devices</button>
+            <button type="button" class="hub-tab-btn" data-sync-tab="advanced" role="tab" aria-selected="false" aria-controls="syncTabAdvanced">Advanced</button>
+          </nav>
+
+          <div id="syncTabOverview" class="sync-tab-panel">
+            <div class="hub-setting-card">
+              <div class="hub-setting-card-header">
+                <div>
+                  <h2 class="hub-setting-card-title">Sync status</h2>
+                  <p id="syncHealthLast" class="hub-setting-card-desc">Last sync: —</p>
+                </div>
+              </div>
+              <div class="hub-setting-card-body">
+                <div id="syncRunMessage" class="status-line" role="status"></div>
+                <span id="syncHealthError" class="status-line error" hidden></span>
+
+                <div id="syncPostgresErrorSetupBox" class="sync-sql-setup" hidden>
+                  <p class="sync-sql-warn">⚠️ WARNING: Do not run this script on critical or production databases.</p>
+                  <p class="label-hint hub-prose">This sync backend requires Postgres. Other databases are not supported.</p>
+                  <p class="label-hint hub-prose">Execute the following SQL on your sync database to create the required schema:</p>
+                  <pre class="mono sync-sql-block"><code id="syncPostgresErrorSqlCode"><span class="sql-keyword">CREATE SCHEMA IF NOT EXISTS</span> pgstudio_sync;
+
+<span class="sql-keyword">CREATE TABLE IF NOT EXISTS</span> pgstudio_sync.sync_items (
+    account_id   <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,
+    item_id      <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,
+    kind         <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,
+    blob         <span class="sql-type">BYTEA</span> <span class="sql-keyword">NOT NULL</span>,
+    content_hash <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,
+    revision     <span class="sql-type">INTEGER</span> <span class="sql-keyword">NOT NULL</span>,
+    device_id    <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,
+    deleted      <span class="sql-type">BOOLEAN</span> <span class="sql-keyword">NOT NULL</span>,
+    updated_at   <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">now</span>(),
+    <span class="sql-keyword">PRIMARY KEY</span> (account_id, item_id)
+);
+
+<span class="sql-keyword">CREATE TABLE IF NOT EXISTS</span> pgstudio_sync.sync_meta (
+    account_id      <span class="sql-type">TEXT</span> <span class="sql-keyword">PRIMARY KEY</span>,
+    bound_device_id <span class="sql-type">TEXT</span>,
+    updated_at      <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">now</span>()
+);</code></pre>
+                  <div class="inline-row">
+                    <button type="button" id="syncCopyPostgresErrorSqlBtn" class="btn-secondary btn-sm">Copy SQL Script</button>
+                    <button type="button" id="syncOpenNotebookPostgresErrorBtn" class="btn-secondary btn-sm">Open in Notebook</button>
+                  </div>
+                </div>
+
+                <div class="sync-quick-links">
+                  <button type="button" id="syncQuickPending" class="sync-quick-link" hidden>
+                    <span id="syncQuickPendingCount" class="sync-quick-link-count">0</span>
+                    <span class="sync-quick-link-label">pending changes</span>
+                  </button>
+                  <button type="button" id="syncQuickConflicts" class="sync-quick-link" hidden>
+                    <span id="syncQuickConflictsCount" class="sync-quick-link-count">0</span>
+                    <span class="sync-quick-link-label">conflicts to resolve</span>
+                  </button>
+                </div>
+
+                <div class="hub-card-actions">
+                  <button type="button" id="syncSignOutBtn" class="btn-secondary btn-danger-text">Sign Out</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="syncTabSettings" class="sync-tab-panel" hidden>
+            <div class="hub-card-grid">
+              <div class="hub-setting-card">
+                <div class="hub-setting-card-header">
+                  <div>
+                    <h2 class="hub-setting-card-title">What to sync</h2>
+                    <p class="hub-setting-card-desc hub-prose">Choose what gets encrypted and uploaded to your sync backend.</p>
+                  </div>
+                </div>
+                <div class="hub-setting-card-body">
+                  <label class="hub-card-checkbox-row"><input type="checkbox" id="syncFlagConnections"><span>Connections</span></label>
+                  <label class="hub-card-checkbox-row"><input type="checkbox" id="syncFlagQueries"><span>Saved queries</span></label>
+                  <label class="hub-card-checkbox-row"><input type="checkbox" id="syncFlagNotebooks"><span>Notebooks</span></label>
+                  <p class="label-hint hub-prose">Passwords and SSH/SSL key paths stay on this device and are never uploaded.</p>
+                </div>
+              </div>
+
+              <div id="syncPostgresSettingsBlock" class="hub-setting-card" hidden>
+                <div class="hub-setting-card-header">
+                  <div>
+                    <h2 class="hub-setting-card-title">Shared Postgres connection</h2>
+                    <p class="hub-setting-card-desc hub-prose">Connection used for Postgres sync data storage.</p>
+                  </div>
+                </div>
+                <div class="hub-setting-card-body">
+                  <div class="hub-card-field-row">
+                    <label for="syncPostgresConnectionSelect">Sync connection</label>
+                    <div class="field-input-wrap"><select id="syncPostgresConnectionSelect"></select></div>
+                  </div>
+                  <details class="sync-advanced-accordion">
+                    <summary>Database setup instructions &amp; SQL script</summary>
+                    <div class="sync-sql-setup">
+                      <p class="sync-sql-warn">⚠️ WARNING: Do not run this script on critical or production databases.</p>
+                      <p class="label-hint hub-prose">This sync backend requires Postgres.</p>
+                      <pre class="mono sync-sql-block"><code id="syncSettingsPostgresSqlCode"><span class="sql-keyword">CREATE SCHEMA IF NOT EXISTS</span> pgstudio_sync;
+
+<span class="sql-keyword">CREATE TABLE IF NOT EXISTS</span> pgstudio_sync.sync_items (
+    account_id   <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,
+    item_id      <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,
+    kind         <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,
+    blob         <span class="sql-type">BYTEA</span> <span class="sql-keyword">NOT NULL</span>,
+    content_hash <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,
+    revision     <span class="sql-type">INTEGER</span> <span class="sql-keyword">NOT NULL</span>,
+    device_id    <span class="sql-type">TEXT</span> <span class="sql-keyword">NOT NULL</span>,
+    deleted      <span class="sql-type">BOOLEAN</span> <span class="sql-keyword">NOT NULL</span>,
+    updated_at   <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">now</span>(),
+    <span class="sql-keyword">PRIMARY KEY</span> (account_id, item_id)
+);
+
+<span class="sql-keyword">CREATE TABLE IF NOT EXISTS</span> pgstudio_sync.sync_meta (
+    account_id      <span class="sql-type">TEXT</span> <span class="sql-keyword">PRIMARY KEY</span>,
+    bound_device_id <span class="sql-type">TEXT</span>,
+    updated_at      <span class="sql-type">TIMESTAMPTZ</span> <span class="sql-keyword">NOT NULL DEFAULT</span> <span class="sql-func">now</span>()
+);</code></pre>
+                      <div class="inline-row">
+                        <button type="button" id="syncSettingsCopyPostgresSqlBtn" class="btn-secondary btn-sm">Copy SQL Script</button>
+                        <button type="button" id="syncSettingsOpenNotebookPostgresBtn" class="btn-secondary btn-sm">Open in Notebook</button>
+                      </div>
+                    </div>
+                  </details>
+                </div>
+              </div>
+
+              <div class="hub-setting-card">
+                <div class="hub-setting-card-header">
+                  <div>
+                    <h2 class="hub-setting-card-title">Automatic sync</h2>
+                    <p class="hub-setting-card-desc hub-prose">Control when changes are pushed and how often to pull from the cloud.</p>
+                  </div>
+                </div>
+                <div class="hub-setting-card-body">
+                  <label class="hub-card-checkbox-row">
+                    <input type="checkbox" id="syncAutoEnabled">
+                    <span>Sync automatically — <span class="label-hint" id="syncAutoHint">push on changes; pull on the interval below</span></span>
+                  </label>
+                  <div class="hub-card-field-row">
+                    <label for="syncPullInterval">Pull interval (minutes)</label>
+                    <div class="field-input-wrap"><input type="number" id="syncPullInterval" min="1" max="1440" class="num-input"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="hub-setting-card">
+                <div class="hub-setting-card-header">
+                  <div>
+                    <h2 class="hub-setting-card-title">Manual sync</h2>
+                    <p class="hub-setting-card-desc hub-prose">Force a one-way sync without applying the full merge.</p>
+                  </div>
+                </div>
+                <div class="hub-setting-card-body">
+                  <div class="inline-row sync-actions">
+                    <button type="button" id="syncPullBtn" class="btn-secondary">Pull Only</button>
+                    <button type="button" id="syncPushBtn" class="btn-secondary">Push Only</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="syncTabItems" class="sync-tab-panel" hidden>
+            <div class="hub-setting-card">
+              <div class="hub-setting-card-header">
+                <div>
+                  <h2 class="hub-setting-card-title">Pending changes <span id="syncPendingBadge" class="sync-pending-badge" hidden></span></h2>
+                  <p class="hub-setting-card-desc hub-prose">Local changes queued for the next sync.</p>
+                </div>
+              </div>
+              <div class="hub-setting-card-body">
+                <div class="conn-table-wrap pg-panel">
+                  <table class="conn-table sync-items-table">
+                    <thead><tr><th>Action</th><th>Item</th><th>Type</th><th>Queued</th></tr></thead>
+                    <tbody id="syncPendingBody"><tr><td colspan="4" class="empty-state">No pending changes.</td></tr></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div class="hub-setting-card">
+              <div class="hub-setting-card-header">
+                <div>
+                  <h2 class="hub-setting-card-title">On this device &amp; cloud</h2>
+                  <p class="hub-setting-card-desc hub-prose">Items on this device and cloud-only entries not present locally.</p>
+                </div>
+              </div>
+              <div class="hub-setting-card-body">
+                <div class="inline-row sync-items-toolbar">
+                  <button type="button" id="syncLocalRefreshBtn" class="btn-secondary">Refresh</button>
+                  <label for="syncItemsKindFilter" class="pref-row-label">Filter by type</label>
+                  <select id="syncItemsKindFilter" class="sync-kind-filter" aria-label="Filter local items by type">
+                    <option value="all">All types</option>
+                    <option value="connection">Connections</option>
+                    <option value="query">Saved queries</option>
+                    <option value="notebook">Notebooks</option>
+                  </select>
+                </div>
+                <div class="conn-table-wrap pg-panel">
+                  <table class="conn-table sync-items-table">
+                    <thead><tr><th>Item</th><th>Type</th><th>Detail</th><th>Updated</th><th>Location</th><th>Status</th><th></th></tr></thead>
+                    <tbody id="syncItemsBody"><tr><td colspan="7" class="empty-state">Loading…</td></tr></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="syncTabPreview" class="sync-tab-panel" hidden>
+            <div class="hub-setting-card">
+              <div class="hub-setting-card-header">
+                <div>
+                  <h2 class="hub-setting-card-title">Sync preview</h2>
+                  <p class="hub-setting-card-desc hub-prose">Dry-run — review outgoing/incoming changes before applying.</p>
+                </div>
+              </div>
+              <div class="hub-setting-card-body">
+                <div class="inline-row">
+                  <button type="button" id="syncPreviewRefreshBtn" class="btn-secondary">Refresh Preview</button>
+                  <button type="button" id="syncApplyPreviewBtn" class="btn-primary">Apply Preview</button>
+                </div>
+                <h3 class="pref-group-title">Outgoing</h3>
+                <div id="syncPreviewOutgoing" class="sync-preview-list"></div>
+                <h3 class="pref-group-title">Incoming</h3>
+                <div id="syncPreviewIncoming" class="sync-preview-list"></div>
+                <h3 class="pref-group-title">Conflicts</h3>
+                <div id="syncPreviewConflicts" class="sync-preview-list"></div>
+              </div>
+            </div>
+          </div>
+
+          <div id="syncTabConflicts" class="sync-tab-panel" hidden>
+            <div class="hub-setting-card">
+              <div class="hub-setting-card-header">
+                <div>
+                  <h2 class="hub-setting-card-title">Conflicts</h2>
+                  <p class="hub-setting-card-desc hub-prose">Resolve items changed on multiple devices.</p>
+                </div>
+              </div>
+              <div class="hub-setting-card-body"><div id="syncConflictsList"></div></div>
+            </div>
+          </div>
+
+          <div id="syncTabHistory" class="sync-tab-panel" hidden>
+            <div class="hub-setting-card">
+              <div class="hub-setting-card-header">
+                <div>
+                  <h2 class="hub-setting-card-title">Inbound history</h2>
+                  <p class="hub-setting-card-desc hub-prose">Recent items received from other devices.</p>
+                </div>
+              </div>
+              <div class="hub-setting-card-body">
+                <div class="conn-table-wrap pg-panel">
+                  <table class="conn-table sync-items-table">
+                    <thead><tr><th>Item</th><th>From device</th><th>When</th></tr></thead>
+                    <tbody id="syncHistoryBody"><tr><td colspan="3" class="empty-state">No inbound history yet.</td></tr></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="syncTabShares" class="sync-tab-panel" hidden>
+            <div class="hub-setting-card">
+              <div class="hub-setting-card-header">
+                <div>
+                  <h2 class="hub-setting-card-title">Sharing</h2>
+                  <p class="hub-setting-card-desc hub-prose">Share synced items with team members.</p>
+                </div>
+              </div>
+              <div class="hub-setting-card-body">
+                <div id="syncSharingRow" class="inline-row sync-actions" hidden>
+                  <button type="button" id="syncShareBtn" class="btn-secondary">Share Items…</button>
+                  <button type="button" id="syncImportSharesBtn" class="btn-secondary">Import Shared Items…</button>
+                </div>
+                <h3 class="pref-group-title">Outgoing shares</h3>
+                <div id="syncOutgoingShares"></div>
+                <h3 class="pref-group-title">Incoming shares</h3>
+                <div id="syncIncomingShares"></div>
+              </div>
+            </div>
+          </div>
+
+          <div id="syncTabDevices" class="sync-tab-panel" hidden>
+            <div id="syncThisDeviceCard" class="hub-setting-card">
+              <div class="hub-setting-card-header">
+                <div>
+                  <h2 class="hub-setting-card-title">This device</h2>
+                  <p class="hub-setting-card-desc hub-prose">Friendly name shown in sync history and the device list. The device ID stays unique in the cloud.</p>
+                </div>
+              </div>
+              <div class="hub-setting-card-body">
+                <label class="hub-field-label" for="syncDeviceNameInput">Display name</label>
+                <div class="inline-row sync-device-name-row">
+                  <input type="text" id="syncDeviceNameInput" class="hub-input" maxlength="80" autocomplete="off" />
+                  <button type="button" id="syncDeviceNameSaveBtn" class="btn-secondary">Save</button>
+                </div>
+                <p id="syncDeviceIdHint" class="label-hint hub-prose"></p>
+                <div id="syncDeviceRenameMessage" class="status-line" role="status"></div>
+              </div>
+            </div>
+            <div class="hub-setting-card">
+              <div class="hub-setting-card-header">
+                <div>
+                  <h2 class="hub-setting-card-title">Synced devices</h2>
+                  <p class="hub-setting-card-desc hub-prose">Devices connected to your sync account.</p>
+                </div>
+              </div>
+              <div class="hub-setting-card-body"><div id="syncDevicesList"></div></div>
+            </div>
+          </div>
+
+          <div id="syncTabAdvanced" class="sync-tab-panel" hidden>
+            <div class="hub-setting-card">
+              <div class="hub-setting-card-header">
+                <div>
+                  <h2 class="hub-setting-card-title">Advanced</h2>
+                  <p class="hub-setting-card-desc hub-prose">Destructive sync operations and diagnostics.</p>
+                </div>
+              </div>
+              <div class="hub-setting-card-body">
+                <div class="inline-row sync-actions">
+                  <button type="button" id="syncReplaceLocalBtn" class="btn-secondary btn-danger-text">Replace Local with Cloud</button>
+                  <button type="button" id="syncReplaceRemoteBtn" class="btn-secondary btn-danger-text">Replace Cloud with Local</button>
+                  <button type="button" id="syncRebuildIndexBtn" class="btn-secondary">Rebuild Index</button>
+                  <button type="button" id="syncRepairBtn" class="btn-secondary">Repair Sync</button>
+                  <button type="button" id="syncDiagnosticsBtn" class="btn-secondary">Diagnostics</button>
+                </div>
+                <details class="sync-advanced-accordion">
+                  <summary>Use a different backend (Advanced)</summary>
+                  <p class="label-hint hub-prose">Gist, OneDrive, Google Drive, or Shared Postgres — run setup again after signing out.</p>
+                  <button type="button" id="syncAdvancedSetupBtn" class="btn-secondary">Advanced Setup…</button>
+                </details>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="syncWizardBackdrop" class="hub-modal-backdrop" hidden>
+          <aside id="syncWizard" class="hub-modal conn-editor" role="dialog" aria-modal="true">
+            <div class="conn-editor-head"><h2 id="syncWizardTitle">Set Up Cloud Sync</h2></div>
+            <div id="syncWizardBody" class="sync-wizard-body"></div>
+            <div class="inline-row sync-wizard-actions">
+              <button type="button" id="syncWizardBackBtn" class="btn-secondary" hidden>Back</button>
+              <button type="button" id="syncWizardNextBtn" class="btn-primary">Next</button>
+              <button type="button" id="syncWizardCloseBtn" class="btn-secondary">Close</button>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ════════════════ License ════════════════ -->
+      <section id="section-license" class="hub-section" role="tabpanel" aria-label="License" hidden>
+        <header class="section-bar">
+          <div>
+            <h1>License</h1>
+            <p class="section-sub">Subscription status, devices, and usage</p>
+          </div>
+        </header>
+
+        <div id="licenseState" class="state-line" role="status">Loading license…</div>
+
+        <div id="licenseBody" hidden>
+          <div class="hub-setting-card license-card">
+            <div class="hub-setting-card-header">
+              <div>
+                <h2 class="hub-setting-card-title">Subscription</h2>
+                <div class="license-tier-row">
+                  <span id="licenseTierBadge" class="tier-badge">Free</span>
+                  <span id="licenseOfflineNote" class="label-hint" hidden>offline — using cached license</span>
+                </div>
+              </div>
+            </div>
+            <div class="hub-setting-card-body">
+              <dl class="status-grid">
+                <div id="licenseKeyRow" hidden><dt>License key</dt><dd id="licenseKeyValue" class="mono">—</dd></div>
+                <div id="licenseStatusRow" hidden><dt>Subscription</dt><dd id="licenseStatusValue">—</dd></div>
+                <div id="licensePeriodRow" hidden><dt>Billing</dt><dd id="licensePeriodValue">—</dd></div>
+                <div id="licenseExpiryRow" hidden><dt>Renews / expires</dt><dd id="licenseExpiryValue">—</dd></div>
+                <div id="licenseEmailRow" hidden><dt>Email</dt><dd id="licenseEmailValue">—</dd></div>
+                <div id="licenseMemberRow" hidden><dt>Member since</dt><dd id="licenseMemberValue">—</dd></div>
+                <div id="licenseRenewalsRow" hidden><dt>Renewals</dt><dd id="licenseRenewalsValue">—</dd></div>
+                <div id="licenseGraceRow" hidden><dt>Offline grace</dt><dd id="licenseGraceValue">—</dd></div>
+              </dl>
+              <div class="inline-row">
+                <button type="button" id="licenseDeactivateBtn" class="btn-secondary btn-danger-text" hidden>Deactivate</button>
+                <button type="button" id="licenseUpgradeBtn" class="btn-secondary">View Plans / Upgrade</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="licenseActivateBox" class="hub-setting-card">
+            <div class="hub-setting-card-header">
+              <div>
+                <h2 class="hub-setting-card-title">Activate a license</h2>
+              </div>
+            </div>
+            <div class="hub-setting-card-body">
+              <div class="hub-card-field-row">
+                <label for="licenseKeyInput">License key</label>
+                <div class="field-input-wrap inline-row">
+                  <input type="text" id="licenseKeyInput" class="mono license-key-input"
+                    placeholder="PGST-XXXX-XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false"
+                    aria-label="License key">
+                  <button type="button" id="licenseActivateBtn" class="btn-primary">Activate</button>
+                </div>
+              </div>
+              <div id="licenseActivateMessage" class="status-line" role="status"></div>
+            </div>
+          </div>
+
+          <div id="licenseEmailBox" class="hub-setting-card" hidden>
+            <div class="hub-setting-card-header">
+              <div>
+                <h2 class="hub-setting-card-title">Verify email</h2>
+                <p class="hub-setting-card-desc hub-prose">Enter the email on your subscription to view devices and license history.</p>
+              </div>
+            </div>
+            <div class="hub-setting-card-body">
+              <div class="hub-card-field-row">
+                <label for="licenseOwnerEmailInput">Email</label>
+                <div class="field-input-wrap inline-row">
+                  <input type="email" id="licenseOwnerEmailInput" class="license-key-input"
+                    placeholder="you@example.com" autocomplete="email" spellcheck="false"
+                    aria-label="Subscription email">
+                  <button type="button" id="licenseEmailVerifyBtn" class="btn-secondary">Verify</button>
+                </div>
+              </div>
+              <div id="licenseEmailMessage" class="status-line" role="status"></div>
+            </div>
+          </div>
+
+          <div id="licenseDevicesBox" class="hub-setting-card" hidden>
+            <div class="hub-setting-card-header">
+              <div>
+                <h2 id="licenseDevicesTitle" class="hub-setting-card-title">Devices</h2>
+                <p class="hub-setting-card-desc hub-prose">Friendly names appear here and in Cloud Sync → Devices.</p>
+              </div>
+            </div>
+            <div class="hub-setting-card-body">
+              <div id="licenseThisDeviceRename" class="license-device-rename" hidden>
+                <label class="hub-field-label" for="licenseDeviceNameInput">This device</label>
+                <div class="inline-row sync-device-name-row">
+                  <input type="text" id="licenseDeviceNameInput" class="hub-input" maxlength="80" autocomplete="off" />
+                  <button type="button" id="licenseDeviceNameSaveBtn" class="btn-secondary">Save</button>
+                </div>
+                <p id="licenseDeviceIdHint" class="label-hint hub-prose"></p>
+              </div>
+              <div class="conn-table-wrap pg-panel">
+                <table class="conn-table license-devices-table">
+                  <thead><tr><th scope="col">Device</th><th scope="col">Last seen</th><th scope="col"></th></tr></thead>
+                  <tbody id="licenseDevicesBody"></tbody>
+                </table>
+              </div>
+              <div id="licenseDeviceMessage" class="status-line" role="status"></div>
+            </div>
+          </div>
+
+          <div id="licenseHistoryBox" class="hub-setting-card" hidden>
+            <div class="hub-setting-card-header">
+              <div><h2 class="hub-setting-card-title">History</h2></div>
+            </div>
+            <div class="hub-setting-card-body">
+              <ul id="licenseHistoryList" class="license-history-list" aria-label="License history"></ul>
+            </div>
+          </div>
+
+          <div id="licenseQuotaBox" class="hub-setting-card" hidden>
+            <div class="hub-setting-card-header">
+              <div><h2 id="licenseQuotaTitle" class="hub-setting-card-title">Free usage remaining</h2></div>
+            </div>
+            <div class="hub-setting-card-body">
+              <div class="conn-table-wrap pg-panel">
+                <table class="conn-table quota-table">
+                  <thead><tr><th scope="col">Feature</th><th scope="col">Remaining</th><th scope="col">Resets</th></tr></thead>
+                  <tbody id="licenseQuotaBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ════════════════ Indexing ════════════════ -->
+      <section id="section-dbindex" class="hub-section" role="tabpanel" aria-label="Indexing" hidden>
+        <header class="section-bar">
+          <div>
+            <h1>Database Indexing</h1>
+            <p class="section-sub">Local knowledge catalogs that feed AI prompt grounding and agent tool loops offline</p>
+          </div>
+          <div class="section-actions">
+            <button type="button" id="dbindexBuildBtn" class="btn-primary">+ Index Database</button>
+          </div>
+        </header>
+
+        <div id="dbindexState" class="state-line" role="status">Loading indexes…</div>
+
+        <div id="dbindexListContainer" hidden>
+          <div class="hub-setting-card">
+            <div class="hub-setting-card-header">
+              <div>
+                <h2 class="hub-setting-card-title">General Configuration</h2>
+                <p class="hub-setting-card-desc hub-prose">Embed tables and columns using active model keys (OpenAI, Gemini, Ollama, etc.) for semantic search.</p>
+              </div>
+            </div>
+            <div class="hub-setting-card-body">
+              <label class="hub-card-checkbox-row">
+                <input type="checkbox" id="dbindexEnableEmbeddings">
+                <span>Enable Semantic Search (Embeddings)</span>
+              </label>
+            </div>
+          </div>
+
+          <div id="dbindexCards" class="hub-cards-grid">
+            <!-- Cards loaded dynamically by scripts.js -->
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- Connection editor modal -->
+  <div id="connModalBackdrop" class="hub-modal-backdrop" hidden>
+    <aside id="connEditor" class="hub-modal conn-editor" role="dialog" aria-modal="true" aria-labelledby="connEditorTitle" tabindex="-1">
+      <div class="conn-editor-head">
+        <h2 id="connEditorTitle">New Connection</h2>
+        <button type="button" id="connEditorCloseBtn" class="conn-modal-close" aria-label="Close editor">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+
+      <form id="connectionForm">
+        <div class="form-group full-width platform-preset-block">
+          <label for="platformPreset">Database platform</label>
+          <span class="label-hint">Pre-fills SSL and port for hosted Postgres providers (PostgreSQL 12+)</span>
+          <select id="platformPreset" data-pg-select-variant="platform"></select>
+          <p id="platformPresetHint" class="platform-preset-hint" hidden></p>
+        </div>
+
+        <div class="form-group full-width conn-url-paste-block">
+          <label for="connUrlPasteInput">Connection URL</label>
+          <span class="label-hint">Paste postgresql://… to autofill host, port, database, and SSL</span>
+          <div class="inline-row">
+            <input type="text" id="connUrlPasteInput" placeholder="postgresql://user:pass@host:5432/db?sslmode=require" autocomplete="off">
+            <button type="button" id="connUrlPasteApplyBtn" class="btn-secondary">Apply URL</button>
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="name">Connection Name <span class="required-indicator">*</span></label>
+            <input type="text" id="name" required placeholder="e.g., Production Database">
+          </div>
+          <div class="form-group">
+            <label for="group">Group</label>
+            <input type="text" id="group" placeholder="Optional folder">
+          </div>
+          <div class="form-group">
+            <label for="host">Host <span class="required-indicator">*</span></label>
+            <input type="text" id="host" required placeholder="localhost">
+          </div>
+          <div class="form-group">
+            <label for="port">Port <span class="required-indicator">*</span></label>
+            <input type="number" id="port" value="5432" required>
+          </div>
+          <div class="form-group full-width">
+            <label for="database">Database</label>
+            <span class="label-hint">Leave empty to use the default (postgres)</span>
+            <input type="text" id="database" placeholder="postgres">
+          </div>
+          <div class="form-group">
+            <label for="username">Username</label>
+            <span class="label-hint">Leave empty to use your OS username</span>
+            <input type="text" id="username" placeholder="postgres">
+          </div>
+          <div class="form-group">
+            <label for="password">Password</label>
+            <span class="label-hint">Stored in VS Code secret storage</span>
+            <input type="password" id="password" placeholder="••••••••">
+          </div>
+          <div class="form-group full-width">
+            <label for="cloudAuthKind">Cloud authentication</label>
+            <span class="label-hint">Tag for AWS RDS IAM, Entra ID, or GCP IAM — token-based IAM is planned.</span>
+            <select id="cloudAuthKind">
+              <option value="none">Password / standard PostgreSQL</option>
+              <option value="aws-iam">AWS IAM (RDS) — planned</option>
+              <option value="azure-ad">Microsoft Entra ID (Azure) — planned</option>
+              <option value="gcp-iam">GCP Cloud SQL IAM — planned</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="environment">Environment</label>
+            <select id="environment">
+              <option value="">None</option>
+              <option value="development">Development</option>
+              <option value="staging">Staging</option>
+              <option value="production">Production</option>
+            </select>
+            <p class="label-hint">Tags this connection for Sentinel safety signals. <button type="button" id="connSentinelLink" class="btn-link">Configure Sentinel</button></p>
+          </div>
+          <div class="form-group checkbox-cell">
+            <label class="checkbox-label">
+              <input type="checkbox" id="readOnlyMode">
+              <span>Read-Only Mode</span>
+            </label>
+            <span class="label-hint">Force all transactions to be read-only</span>
+          </div>
+        </div>
+
+        <div id="productionWarning" class="production-warning" hidden>
+          <span aria-hidden="true">⚠️</span>
+          <div>
+            <strong>Production Database Connection</strong>
+            <div>Enable <strong>Read-Only Mode</strong> to prevent accidental modifications.
+              <a id="enableReadOnlyLink" class="production-warning-link" href="#">Enable Read-Only Mode</a></div>
+          </div>
+        </div>
+
+        <details class="form-details" id="sshDetails">
+          <summary>SSH Tunnel</summary>
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="sshEnabled">
+              <span>Enable SSH Tunnel</span>
+            </label>
+          </div>
+          <div id="ssh-fields" class="form-grid ssh-fields-disabled">
+            <div class="form-group">
+              <label for="sshHost">SSH Host</label>
+              <input type="text" id="sshHost" placeholder="bastion.example.com">
+            </div>
+            <div class="form-group">
+              <label for="sshPort">SSH Port</label>
+              <input type="number" id="sshPort" value="22">
+            </div>
+            <div class="form-group">
+              <label for="sshUsername">SSH Username</label>
+              <input type="text" id="sshUsername" placeholder="ec2-user">
+            </div>
+            <div class="form-group">
+              <label for="sshKeyPath">Private Key Path</label>
+              <input type="text" id="sshKeyPath" placeholder="~/.ssh/id_rsa">
+            </div>
+          </div>
+        </details>
+
+        <details class="form-details" id="advancedDetails">
+          <summary>Advanced Options</summary>
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="sslmode">SSL Mode</label>
+              <select id="sslmode">
+                <option value="">Default (prefer)</option>
+                <option value="disable">Disable — No SSL</option>
+                <option value="allow">Allow — Try non-SSL first</option>
+                <option value="prefer">Prefer — Try SSL first</option>
+                <option value="require">Require — SSL required</option>
+                <option value="verify-ca">Verify CA — Verify server cert</option>
+                <option value="verify-full">Verify Full — Verify server + hostname</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="applicationName">Application Name</label>
+              <span class="label-hint">Shown in pg_stat_activity</span>
+              <input type="text" id="applicationName" placeholder="NexQL">
+            </div>
+          </div>
+          <div id="ssl-cert-fields" hidden>
+            <div class="form-grid">
+              <div class="form-group full-width">
+                <label for="sslRootCertPath">CA Certificate Path</label>
+                <input type="text" id="sslRootCertPath" placeholder="/path/to/ca-certificate.crt">
+              </div>
+              <div class="form-group">
+                <label for="sslCertPath">Client Certificate Path</label>
+                <input type="text" id="sslCertPath" placeholder="/path/to/client-cert.crt">
+              </div>
+              <div class="form-group">
+                <label for="sslKeyPath">Client Key Path</label>
+                <input type="text" id="sslKeyPath" placeholder="/path/to/client-key.key">
+              </div>
+            </div>
+          </div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="connectTimeout">Connection Timeout</label>
+              <span class="label-hint">Seconds (default: 15)</span>
+              <input type="number" id="connectTimeout" placeholder="15" min="1" max="300">
+            </div>
+            <div class="form-group">
+              <label for="statementTimeout">Statement Timeout</label>
+              <span class="label-hint">Milliseconds (0 = no limit)</span>
+              <input type="number" id="statementTimeout" placeholder="0" min="0">
+            </div>
+            <div class="form-group full-width">
+              <label for="options">Additional Options</label>
+              <span class="label-hint">Raw connection parameters (e.g., -c search_path=myschema)</span>
+              <input type="text" id="options" placeholder="-c search_path=public">
+            </div>
+          </div>
+        </details>
+
+        <div id="connFormMessage" class="message" hidden></div>
+        <div class="actions">
+          <button type="button" id="connTestBtn" class="btn-secondary">Test Connection</button>
+          <button type="submit" id="connSaveBtn" class="btn-primary" disabled>Add Connection</button>
+        </div>
+      </form>
+    </aside>
+  </div>
+
+  <script nonce="{{NONCE}}">{{INLINE_SCRIPTS}}</script>
+</body>
+
+</html>
