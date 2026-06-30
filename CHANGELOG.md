@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ---
 
 ## [2.0.2] - 2026-06-30
+> Nightly releases -  v2.0.1 • v2.1.0 • v2.1.1 • v2.1.2 • v2.1.3 • v2.1.4 • v2.1.5 
 
 ### Added
 
