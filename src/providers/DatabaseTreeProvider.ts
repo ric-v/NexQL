@@ -180,17 +180,40 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     });
   }
 
+  private _getConnectionItem(connectionId: string): DatabaseTreeItem | undefined {
+    const connections = vscode.workspace.getConfiguration().get<any[]>('postgresExplorer.connections') || [];
+    const conn = connections.find(c => c.id === connectionId);
+    if (!conn) return undefined;
+
+    return new DatabaseTreeItem(
+      conn.name || `${conn.host}:${conn.port}`,
+      vscode.TreeItemCollapsibleState.Collapsed,
+      'connection',
+      conn.id,
+      undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined,
+      this.disconnectedConnections.has(conn.id),
+      undefined, undefined, undefined, undefined,
+      conn.environment,
+      conn.readOnlyMode,
+      undefined, undefined, undefined, undefined,
+      conn.color
+    );
+  }
+
   markConnectionDisconnected(connectionId: string): void {
     this.disconnectedConnections.add(connectionId);
-    // Fire a full refresh to update tree state and collapse items
-    this._onDidChangeTreeData.fire(undefined);
+    this._cache.invalidateConnection(connectionId);
+    const item = this._getConnectionItem(connectionId);
+    this._onDidChangeTreeData.fire(item);
     this._autoRefreshService?.onConnectionDisconnected(connectionId);
   }
 
   public markConnectionConnected(connectionId: string): void {
     this.disconnectedConnections.delete(connectionId);
-    // Fire a full refresh to update tree state
-    this._onDidChangeTreeData.fire(undefined);
+    this._cache.invalidateConnection(connectionId);
+    const item = this._getConnectionItem(connectionId);
+    this._onDidChangeTreeData.fire(item);
     this._autoRefreshService?.onConnectionConnected(connectionId);
   }
 
@@ -665,6 +688,9 @@ export class DatabaseTreeItem extends vscode.TreeItem {
     public readonly color?: 'red' | 'orange' | 'blue' | 'green' | 'gray',
   ) {
     super(label, collapsibleState);
+    if (type === 'connection' && connectionId) {
+      this.id = connectionId;
+    }
     if (type === 'category' && label) {
       // Create specific context value for categories (e.g., category-tables, category-views)
       const suffix = label.toLowerCase().replace(/\s+&\s+/g, '-').replace(/\s+/g, '-');

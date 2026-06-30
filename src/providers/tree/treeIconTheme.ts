@@ -875,14 +875,28 @@ function generateCustomIconSvg(
   }
 }
 
+const iconCache = new Map<string, vscode.Uri>();
+
+export function clearIconCache(): void {
+  iconCache.clear();
+}
+
 export function getDatabaseTreeIcon(
   type: DatabaseTreeIconType,
   options: DatabaseTreeIconOptions = {},
 ): vscode.ThemeIcon | vscode.Uri | undefined {
+  const cacheKey = `${type}:${options.isDisconnected ?? ''}:${options.isInstalled ?? ''}:${options.color ?? ''}:${options.label ?? ''}`;
+  const cached = iconCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   const svgStr = generateCustomIconSvg(type, options);
   if (svgStr) {
     const base64 = Buffer.from(svgStr).toString('base64');
-    return vscode.Uri.parse(`data:image/svg+xml;base64,${base64}`);
+    const uri = vscode.Uri.parse(`data:image/svg+xml;base64,${base64}`);
+    iconCache.set(cacheKey, uri);
+    return uri;
   }
   return undefined;
 }

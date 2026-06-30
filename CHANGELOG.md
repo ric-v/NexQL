@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.0.2] - 2026-06-30
+
+### Added
+
+- **Connection-Level Query History & Saved Queries** — Implemented connection-specific tracking of query history and saved queries under the database explorer tree.
+  - Added preference `postgresExplorer.queryHistory.maxItems` for controlling query history size, with settings hub UI integration.
+  - Updated QueryHistoryService to log connection ID and database name, trimming old entries per connection.
+- **Results Toolbar Dropdown Menu** — Replaced result toolbar hover actions with an actions popover menu dropdown in the query result view.
+- **Inline Full Dataset Re-Runs** — Supported inline re-runs of full dataset queries by updating and executing the source cell when sourceCellIndex is available.
+- **Cloud Sync Promo** — Added a cloud sync promotion layout displaying sync advantages to free-tier users before sync setup.
+
+### Refactored
+
+- **Complete Rebranding to NexQL** — Refactored all remaining references, email templates, database schemas, assets, documentation, and website links to point to the new NexQL branding instead of PgStudio.
+
+### Enhanced
+
+- **Connection-Specific Tree Refreshes** — Refactored tree provider to perform connection-specific or item-specific refreshes instead of full tree refreshes when connecting or disconnecting.
+- **Catalog Query Batching** — Optimized SQL autocomplete catalog loading by batching metadata queries, reducing connection roundtrips and UI lag.
+- **Autocomplete Optimization** — Cached constructed completion item lists on the schema cache to avoid O(N) allocation overhead on every keystroke in large databases.
+- **Instant Schema Tree Invalidation** — Automatically invalidates the explorer schema cache and refreshes the database sidebar immediately when catalog-invalidating DDL queries are executed.
+- **Cursor Count Timeout** — Applied a 1000ms `statement_timeout` to nested cursor row count queries to prevent connection hangs on tables with millions of records.
+- **Schema Poller Backoff** — Implemented an exponential poll-interval backoff (up to 5 minutes) when no schema fingerprint changes are detected to save database and network resources.
+- **Schema Cache Capping** — Capped the local schema cache size to 1500 entries to prevent memory leaks during long-running sessions.
+
+### Fixed
+
+- **Column Deduplication in Query Results** — Automatically deduplicates duplicate column names in query results (e.g., duplicate select columns or expressions) by appending a count suffix like `(1)`, `(2)`, etc.
+- **Nameless/Empty Columns Mapping** — Maps nameless/empty columns to `?column?` and deduplicates them accordingly to avoid key collisions.
+- **Query & Cursor Array-Mode Execution** — Reconfigured database query execution and cursor result fetching to use array row-mode, ensuring row values map correctly to the deduplicated columns without data loss or key collision issues.
+
+---
+
 ## [2.0.0] - 2026-06-29
 > Subscription enables the product to provide high-quality features while keeping the core product free and open-source.
 

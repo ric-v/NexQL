@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { BaseLoader, LoaderContext } from './BaseLoader';
 import { DatabaseTreeItem } from '../../DatabaseTreeProvider';
 import type { DatabaseTreeProvider } from '../../DatabaseTreeProvider';
-import { SchemaCache } from '../../../lib/schema-cache';
+import { getSchemaCache, SchemaCache } from '../../../lib/schema-cache';
 import { NotebookIndexService } from '../../../services/NotebookIndexService';
 import { SavedQueriesService } from '../../../features/savedQueries/SavedQueriesService';
 import { QueryHistoryService } from '../../../services/QueryHistoryService';
@@ -85,70 +85,78 @@ export class ConnectionLoader extends BaseLoader {
 
     switch (element.type) {
       case 'connection': {
-        const items: DatabaseTreeItem[] = [];
         if (!element.connectionId) return [];
+        const cacheKey = SchemaCache.buildKey(element.connectionId!, 'postgres', undefined, 'connection-items');
+        return await getSchemaCache().getOrFetch(cacheKey, async () => {
+          const items: DatabaseTreeItem[] = [];
 
-        const connectionFavorites = provider.getFavoriteKeys().filter(key => key.split(':')[1] === element.connectionId);
-        if (connectionFavorites.length > 0) {
-          items.push(new DatabaseTreeItem('Favorites', vscode.TreeItemCollapsibleState.Collapsed, 'favorites-group', element.connectionId));
-        }
+          const connectionFavorites = provider.getFavoriteKeys().filter(key => key.split(':')[1] === element.connectionId);
+          if (connectionFavorites.length > 0) {
+            items.push(new DatabaseTreeItem('Favorites', vscode.TreeItemCollapsibleState.Collapsed, 'favorites-group', element.connectionId));
+          }
 
-        const connectionRecent = provider.getRecentKeys().filter(key => key.split(':')[1] === element.connectionId);
-        if (connectionRecent.length > 0) {
-          items.push(new DatabaseTreeItem('Recent', vscode.TreeItemCollapsibleState.Collapsed, 'recent-group', element.connectionId));
-        }
+          const connectionRecent = provider.getRecentKeys().filter(key => key.split(':')[1] === element.connectionId);
+          if (connectionRecent.length > 0) {
+            items.push(new DatabaseTreeItem('Recent', vscode.TreeItemCollapsibleState.Collapsed, 'recent-group', element.connectionId));
+          }
 
-        const dbCountResult = await client.query("SELECT COUNT(*) FROM pg_database WHERE has_database_privilege(datname, 'CONNECT')");
-        items.push(new DatabaseTreeItem('Databases', vscode.TreeItemCollapsibleState.Collapsed, 'databases-group', element.connectionId, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, dbCountResult.rows[0].count));
+          const countsRes = await client.query(`
+            SELECT
+              (SELECT COUNT(*) FROM pg_database WHERE has_database_privilege(datname, 'CONNECT')) AS db_count,
+              (SELECT COUNT(*) FROM pg_roles) AS roles_count,
+              (SELECT COUNT(*) FROM pg_tablespace) AS tablespace_count
+          `);
+          const row = countsRes.rows[0];
 
-        const notebooks = NotebookIndexService.getInstance().getNotebooksForConnection(element.connectionId);
-        items.push(new DatabaseTreeItem(
-          'Notebooks',
-          vscode.TreeItemCollapsibleState.Collapsed,
-          'connection-notebooks-folder',
-          element.connectionId,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          notebooks.length
-        ));
+          items.push(new DatabaseTreeItem('Databases', vscode.TreeItemCollapsibleState.Collapsed, 'databases-group', element.connectionId, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, Number(row.db_count || 0)));
 
-        const savedCount = SavedQueriesService.getInstance().getByConnection(element.connectionId).length;
-        items.push(new DatabaseTreeItem(
-          'Saved Queries',
-          vscode.TreeItemCollapsibleState.Collapsed,
-          'connection-saved-queries-folder',
-          element.connectionId,
-          undefined, undefined, undefined, undefined, undefined,
-          undefined, undefined, undefined, undefined, undefined,
-          savedCount
-        ));
+          const notebooks = NotebookIndexService.getInstance().getNotebooksForConnection(element.connectionId!);
+          items.push(new DatabaseTreeItem(
+            'Notebooks',
+            vscode.TreeItemCollapsibleState.Collapsed,
+            'connection-notebooks-folder',
+            element.connectionId,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            notebooks.length
+          ));
 
-        const historyCount = QueryHistoryService.getInstance().getByConnection(element.connectionId).length;
-        items.push(new DatabaseTreeItem(
-          'Query History',
-          vscode.TreeItemCollapsibleState.Collapsed,
-          'connection-query-history-folder',
-          element.connectionId,
-          undefined, undefined, undefined, undefined, undefined,
-          undefined, undefined, undefined, undefined, undefined,
-          historyCount
-        ));
+          const savedCount = SavedQueriesService.getInstance().getByConnection(element.connectionId!).length;
+          items.push(new DatabaseTreeItem(
+            'Saved Queries',
+            vscode.TreeItemCollapsibleState.Collapsed,
+            'connection-saved-queries-folder',
+            element.connectionId,
+            undefined, undefined, undefined, undefined, undefined,
+            undefined, undefined, undefined, undefined, undefined,
+            savedCount
+          ));
 
-        const rolesCountResult = await client.query('SELECT COUNT(*) FROM pg_roles');
-        items.push(new DatabaseTreeItem('Users & Roles', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, rolesCountResult.rows[0].count));
+          const historyCount = QueryHistoryService.getInstance().getByConnection(element.connectionId!).length;
+          items.push(new DatabaseTreeItem(
+            'Query History',
+            vscode.TreeItemCollapsibleState.Collapsed,
+            'connection-query-history-folder',
+            element.connectionId,
+            undefined, undefined, undefined, undefined, undefined,
+            undefined, undefined, undefined, undefined, undefined,
+            historyCount
+          ));
 
-        const tablespaceCountResult = await client.query("SELECT COUNT(*) FROM pg_tablespace");
-        items.push(new DatabaseTreeItem('Tablespaces', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, tablespaceCountResult.rows[0].count));
+          items.push(new DatabaseTreeItem('Users & Roles', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, Number(row.roles_count || 0)));
 
-        return items;
+          items.push(new DatabaseTreeItem('Tablespaces', vscode.TreeItemCollapsibleState.Collapsed, 'category', element.connectionId, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, Number(row.tablespace_count || 0)));
+
+          return items;
+        });
       }
 
       case 'databases-group': {
