@@ -573,7 +573,12 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         element.type === 'system-databases-group' ||
         element.type === 'favorites-group' ||
         element.type === 'recent-group' ||
-        element.type === 'connection-notebooks-folder'
+        element.type === 'connection-notebooks-folder' ||
+        element.type === 'connection-notebooks-db' ||
+        element.type === 'connection-saved-queries-folder' ||
+        element.type === 'connection-saved-queries-db' ||
+        element.type === 'connection-query-history-folder' ||
+        element.type === 'connection-query-history-db'
       ) {
         return await this.connectionLoader.getChildren(ctx);
       }
@@ -636,7 +641,7 @@ export class DatabaseTreeItem extends vscode.TreeItem {
   constructor(
     public readonly label: string,
     public readonly collapsibleState: vscode.TreeItemCollapsibleState,
-    public readonly type: 'connection' | 'database' | 'schema' | 'table' | 'view' | 'function' | 'procedure' | 'column' | 'category' | 'materialized-view' | 'type' | 'foreign-table' | 'extension' | 'role' | 'databases-group' | 'system-databases-group' | 'favorites-group' | 'recent-group' | 'constraint' | 'index' | 'foreign-data-wrapper' | 'foreign-server' | 'user-mapping' | 'connection-group' | 'trigger' | 'sequence' | 'partition' | 'domain' | 'aggregate' | 'event-trigger' | 'rule' | 'tablespace' | 'publication' | 'subscription' | 'cron-job' | 'policy' | 'sponsor-badge' | 'team-badge' | 'connection-notebooks-folder' | 'connection-notebook-file',
+    public readonly type: 'connection' | 'database' | 'schema' | 'table' | 'view' | 'function' | 'procedure' | 'column' | 'category' | 'materialized-view' | 'type' | 'foreign-table' | 'extension' | 'role' | 'databases-group' | 'system-databases-group' | 'favorites-group' | 'recent-group' | 'constraint' | 'index' | 'foreign-data-wrapper' | 'foreign-server' | 'user-mapping' | 'connection-group' | 'trigger' | 'sequence' | 'partition' | 'domain' | 'aggregate' | 'event-trigger' | 'rule' | 'tablespace' | 'publication' | 'subscription' | 'cron-job' | 'policy' | 'sponsor-badge' | 'team-badge' | 'connection-notebooks-folder' | 'connection-notebooks-db' | 'connection-notebook-file' | 'connection-saved-queries-folder' | 'connection-saved-queries-db' | 'connection-saved-query-item' | 'connection-query-history-folder' | 'connection-query-history-db' | 'connection-query-history-item',
     public readonly connectionId?: string,
     public readonly databaseName?: string,
     public readonly schema?: string,

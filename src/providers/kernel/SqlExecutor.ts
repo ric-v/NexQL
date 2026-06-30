@@ -1064,7 +1064,9 @@ export class SqlExecutor {
             durationMs,
             slow: isSlow,
             rowCount: result.rowCount ?? rows.length,
-            connectionName: connection.name
+            connectionName: connection.name,
+            connectionId: connection.id,
+            databaseName: metadata.databaseName || connection.database
           });
 
           // Collect successful result
@@ -1154,7 +1156,9 @@ export class SqlExecutor {
             duration: executionTime,
             durationMs,
             slow: isSlow,
-            connectionName: connection.name
+            connectionName: connection.name,
+            connectionId: connection.id,
+            databaseName: metadata.databaseName || connection.database
           });
 
           // Collect error result

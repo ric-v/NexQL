@@ -2332,6 +2332,11 @@ $('prefDdlEnabled').addEventListener('change', (e) => {
 $('prefDdlOpenOnSelection').addEventListener('change', (e) => {
   vscode.postMessage({ command: 'prefs/update', key: 'ddlOpenOnSelection', value: e.target.checked });
 });
+$('prefHistoryMaxItems').addEventListener('change', (e) => {
+  const n = Math.max(10, Math.min(1000, parseInt(e.target.value, 10) || 200));
+  e.target.value = n;
+  vscode.postMessage({ command: 'prefs/update', key: 'historyMaxItems', value: n });
+});
 
 function handlePrefsMessage(message) {
   switch (message.type) {
@@ -2340,6 +2345,7 @@ function handlePrefsMessage(message) {
       $('prefsList').hidden = false;
       $('prefDdlEnabled').checked = !!message.prefs.ddlEnabled;
       $('prefDdlOpenOnSelection').checked = !!message.prefs.ddlOpenOnSelection;
+      $('prefHistoryMaxItems').value = message.prefs.historyMaxItems ?? 200;
       break;
     case 'prefs/error':
       $('prefsState').hidden = false;
